@@ -12,8 +12,9 @@ import httpx
 import pytest
 
 from api.config import get_settings
-from api.dependencies import get_redis
+from api.dependencies import get_qdrant, get_redis
 from api.main import create_app
+from api.services.budget import KILL_SWITCH_KEY, today_key
 from api.services.rate_limit import quota_for
 
 from .conftest import build_request
@@ -28,6 +29,15 @@ def _client(app, redis_client, settings) -> httpx.AsyncClient:
     app.dependency_overrides[get_settings] = lambda: settings
     transport = httpx.ASGITransport(app=app, client=CALLER)
     return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+
+
+@pytest.fixture
+def stream_client(redis_client, anon_settings, monkeypatch):
+    """A client for /chat/stream, with Qdrant stubbed out."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    app = create_app()
+    app.dependency_overrides[get_qdrant] = lambda: object()
+    return _client(app, redis_client, anon_settings)
 
 
 @pytest.fixture
@@ -101,6 +111,48 @@ async def test_unverifiable_bearer_token_does_not_grant_identity(client, spend):
         ).json()
     assert body["scope"] == "ip"
     assert body["used"] == 2
+
+
+async def test_kill_switch_returns_503_before_spending_quota(
+    stream_client, redis_client, anon_settings
+):
+    """
+    A shut-off deployment must not consume someone's allowance on a request
+    it isn't going to answer.
+    """
+    await redis_client.set(KILL_SWITCH_KEY, "Down for maintenance.")
+
+    async with stream_client as http:
+        response = await http.post("/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Down for maintenance."
+
+    quota = quota_for(None, build_request(peer=CALLER_IP), anon_settings)
+    assert await redis_client.get(quota.key) is None
+
+
+async def test_exhausted_budget_returns_503(
+    stream_client, redis_client, anon_settings
+):
+    await redis_client.set(today_key(), anon_settings.daily_cost_budget_micros)
+
+    async with stream_client as http:
+        response = await http.post("/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 503
+    assert "daily usage limit" in response.json()["detail"]
+
+
+async def test_oversized_message_is_rejected_before_any_work(stream_client):
+    from api.models.chat import MAX_MESSAGE_CHARS
+
+    async with stream_client as http:
+        response = await http.post(
+            "/chat/stream", json={"message": "a" * (MAX_MESSAGE_CHARS + 1)}
+        )
+
+    assert response.status_code == 422
 
 
 async def test_verified_token_switches_to_the_user_bucket(

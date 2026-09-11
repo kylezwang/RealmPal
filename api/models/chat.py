@@ -1,10 +1,17 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal, Optional
+
+# Outer bounds on request size. Input tokens are billed, so an unbounded
+# message or history is an unbounded bill. These are deliberately generous |
+# anything past them is abuse rather than a long question. History is also
+# trimmed further when the prompt is assembled.
+MAX_MESSAGE_CHARS = 16_000
+MAX_HISTORY_MESSAGES = 50
 
 
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
-    content: str
+    content: str = Field(max_length=MAX_MESSAGE_CHARS)
 
 
 class ChatAttachment(BaseModel):
@@ -20,9 +27,11 @@ class ChatAttachment(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str
-    history: list[ChatMessage] = []
-    session_id: str  # client-generated UUID, used for rate limiting
+    message: str = Field(max_length=MAX_MESSAGE_CHARS)
+    history: list[ChatMessage] = Field(default=[], max_length=MAX_HISTORY_MESSAGES)
+    # Retained for backward compatibility. No longer used for rate limiting:
+    # it was client-generated, so callers could mint themselves a new quota.
+    session_id: str = ""
     ign: Optional[str] = None  # in-game name for context
     attachment: Optional[ChatAttachment] = None
 

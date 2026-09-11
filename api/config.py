@@ -60,6 +60,25 @@ class Settings(BaseSettings):
     # Falls back to jwt_secret when unset; set it explicitly in production.
     pii_hash_secret: str = ""
 
+    # Daily ceiling for legacy magic-link subscribers. They used to bypass
+    # limits entirely, which left one compromised token able to spend without
+    # bound.
+    paid_message_limit: int = 200
+
+    # --- Cost ceilings ---
+    # Per-identity quotas stop one abuser; they don't stop a crowd. Once the
+    # day's recorded spend reaches this, chat refuses new work until tomorrow.
+    monthly_cost_budget_usd: float = 20.0
+    # Claude pricing per million tokens. Update alongside claude_model.
+    model_input_cost_per_mtok_usd: float = 3.0
+    model_output_cost_per_mtok_usd: float = 15.0
+    # Bounds the worst case for a single response.
+    max_response_tokens: int = 4096
+    anthropic_timeout_seconds: float = 120.0
+    # Static off switch. The Redis kill switch is preferred | it takes effect
+    # without a redeploy.
+    chat_enabled: bool = True
+
     # Stripe
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
@@ -87,6 +106,16 @@ class Settings(BaseSettings):
     app_url: str = "http://localhost:3000"
     api_url: str = "http://localhost:8000"
     debug: bool = False
+
+    @property
+    def daily_cost_budget_micros(self) -> int:
+        """
+        Daily spend ceiling in micro-dollars.
+
+        A flat 30ths split of the monthly budget rather than a calendar-aware
+        one: the point is a predictable daily cap, not exact monthly accrual.
+        """
+        return max(0, round(self.monthly_cost_budget_usd / 30 * 1_000_000))
 
     @property
     def namespace_slug(self) -> str:

@@ -65,7 +65,8 @@ class Quota:
         return self.scope == ANONYMOUS_SCOPE
 
 
-def _hash_identifier(value: str, settings: Settings) -> str:
+def hash_identifier(value: str, settings: Settings) -> str:
+    """Keyed hash of an identifier, so raw IPs and emails never reach Redis."""
     secret = settings.pii_hash_secret or settings.jwt_secret
     digest = hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256)
     return digest.hexdigest()[:32]
@@ -103,7 +104,7 @@ def quota_for(
 ) -> Quota:
     """Resolve the quota bucket for this caller."""
     if user is not None:
-        label = _hash_identifier(user.subject, settings)
+        label = hash_identifier(user.subject, settings)
         return Quota(
             scope=USER_SCOPE,
             key=f"ratelimit:{USER_SCOPE}:{user.subject}",
@@ -111,7 +112,7 @@ def quota_for(
             label=label[:12],
         )
 
-    hashed = _hash_identifier(client_ip(request, settings), settings)
+    hashed = hash_identifier(client_ip(request, settings), settings)
     return Quota(
         scope=ANONYMOUS_SCOPE,
         key=f"ratelimit:{ANONYMOUS_SCOPE}:{hashed}",

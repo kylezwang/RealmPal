@@ -43,7 +43,15 @@ from ..services.rag import build_system_prompt, retrieve_context
 from ..services.scraper import scrape_player_profile, ScraperError
 from ..services.ingestion import ingest_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
-from ..services.rate_limit import Quota, consume, peek, quota_for
+from ..services.rate_limit import (
+    USER_SCOPE,
+    Quota,
+    consume,
+    hash_identifier,
+    peek,
+    quota_for,
+)
+from ..services.budget import disabled_reason, record_usage
 from ..auth import decode_jwt
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -51,6 +59,9 @@ FEEDBACK_LOG_MAX = 10_000
 RESPONSE_CAP = 20_000
 TEXT_CAP = 4_000
 MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+# Prior turns are replayed on every request, so an unbounded history makes
+# each message in a long conversation progressively more expensive.
+HISTORY_CONTENT_CAP = 4_000
 ALLOWED_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 ALLOWED_DOCUMENT_TYPES = frozenset({"application/pdf"})
 
@@ -120,6 +131,9 @@ async def _enforce_quota(
 ) -> None:
     """Count this request against its quota, or raise 402 once it's spent."""
     if _has_legacy_paid_token(auth_header, settings):
+        # Still metered, just far more generously. An unlimited bypass meant
+        # one leaked token could spend without bound.
+        await _enforce_paid_ceiling(auth_header, redis, settings)
         return
 
     count = await consume(redis, quota)
@@ -159,6 +173,46 @@ async def _enforce_quota(
     )
 
 
+async def _enforce_paid_ceiling(
+    auth_header: Optional[str],
+    redis: aioredis.Redis,
+    settings: Settings,
+) -> None:
+    """
+    Apply a generous daily ceiling to legacy subscribers.
+
+    Keyed on a hash of the token's subject rather than the token itself, so
+    the counter survives a re-issue and the key isn't a credential.
+    """
+    token = bearer_token(auth_header) or ""
+    try:
+        claims = decode_jwt(token, settings.jwt_secret, settings.jwt_algorithm)
+    except Exception:
+        return
+    subject = str(claims.get("email") or claims.get("sub") or "").strip().lower()
+    if not subject:
+        return
+
+    quota = Quota(
+        scope=USER_SCOPE,
+        key=f"ratelimit:paid:{hash_identifier(subject, settings)}",
+        limit=settings.paid_message_limit,
+        label="paid",
+    )
+    count = await consume(redis, quota)
+    if count <= quota.limit:
+        return
+
+    logger.bind(used=count, limit=quota.limit).warning("Paid daily ceiling reached")
+    raise HTTPException(
+        status_code=429,
+        detail=(
+            f"You've reached the daily limit of {quota.limit} messages. "
+            "It resets tomorrow."
+        ),
+    )
+
+
 def _checkout_url_for(quota: Quota, settings: Settings) -> Optional[str]:
     if not (settings.stripe_secret_key and settings.stripe_price_id):
         return None
@@ -182,24 +236,46 @@ async def _stream_response(
     messages: list[dict],
     system_prompt: str,
     settings: Settings,
+    redis: aioredis.Redis,
 ) -> AsyncGenerator[str, None]:
     """
     Stream Claude response as SSE chunks.
     Yields: `data: {"content": "...", "done": false}\n\n`
     Final: `data: {"content": "", "done": true}\n\n`
+
+    Records what the call cost once it finishes, so the daily ceiling in
+    api/services/budget.py reflects real token counts rather than estimates.
     """
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=settings.anthropic_timeout_seconds,
+    )
 
     try:
         async with client.messages.stream(
             model=settings.claude_model,
-            max_tokens=8192,
+            max_tokens=settings.max_response_tokens,
             system=system_prompt,
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
                 chunk = json.dumps({"content": text, "done": False})
                 yield f"data: {chunk}\n\n"
+
+            # Usage is only final once the stream completes. A client that
+            # disconnects early leaves this unrecorded, which under-counts
+            # rather than over-counts | acceptable, since the alternative is
+            # billing people for tokens we can't measure.
+            try:
+                final = await stream.get_final_message()
+                await record_usage(
+                    redis,
+                    settings,
+                    input_tokens=final.usage.input_tokens,
+                    output_tokens=final.usage.output_tokens,
+                )
+            except Exception:
+                logger.exception("Could not record spend for a completed stream")
 
         yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
 
@@ -293,6 +369,12 @@ async def chat_stream(
     if body.attachment is not None:
         _validate_attachment(body.attachment)
 
+    # Checked before the quota so a shut-off deployment doesn't silently
+    # consume someone's allowance on a request it won't answer.
+    unavailable = await disabled_reason(redis, settings)
+    if unavailable:
+        raise HTTPException(status_code=503, detail=unavailable)
+
     quota = quota_for(user, request, settings)
     await _enforce_quota(quota, redis, settings, authorization)
 
@@ -377,10 +459,12 @@ async def chat_stream(
 
     system_prompt = build_system_prompt(context, ign=body.ign)
 
-    # Build message history for Claude
+    # Build message history for Claude. Both the turn count and the size of
+    # each turn are capped: input tokens are billed, and a long conversation
+    # would otherwise grow the cost of every subsequent message.
     messages = [
-        {"role": msg.role, "content": msg.content}
-        for msg in body.history[-10:]  # last 10 messages for context window
+        {"role": msg.role, "content": msg.content[:HISTORY_CONTENT_CAP]}
+        for msg in body.history[-10:]
     ] + [{"role": "user", "content": body.message}]
 
     logger.bind(
@@ -390,7 +474,7 @@ async def chat_stream(
     ).info("Chat stream started")
 
     return StreamingResponse(
-        _stream_response(messages, system_prompt, settings),
+        _stream_response(messages, system_prompt, settings, redis),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
