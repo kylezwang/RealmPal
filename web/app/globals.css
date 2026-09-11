@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #1a1a1a;
+  color: #ececec;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar styling | thin, Claude-like. Height is required or a
+ * horizontal table scroller is effectively invisible on narrow views. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
+/* Prose styling for markdown in AI responses */
+.prose-realm {
+  line-height: 1.7;
+}
+.prose-realm p { margin: 0.5rem 0; }
+.prose-realm code {
+  background: #303030;
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+  font-size: 0.875em;
+  font-family: var(--font-geist-mono), monospace;
+}
+.prose-realm pre {
+  background: #262626;
+  border: 1px solid #404040;
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+.prose-realm pre code { background: transparent; padding: 0; }
+.prose-realm strong { color: #ececec; font-weight: 600; }
+.prose-realm ul, .prose-realm ol { padding-left: 1.5rem; }
+.prose-realm li { margin: 0.25rem 0; }
+
+/* Wide markdown tables (player gear, RealmShark loadouts) keep their
+ * columns and scroll sideways instead of wrapping into a stacked jumble. */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: #262626;
+  border-radius: 4px;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.thinking-subtitle {
+  animation: thinking-pulse 1.6s ease-in-out infinite;
+}
+
+/* Loading glimmer for item chips and cards while wiki infoboxes scrape */
+@keyframes glimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+.glimmer {
+  background-image: linear-gradient(
+    90deg,
+    #2a2a2a 0%,
+    #3d3d3d 45%,
+    #2a2a2a 90%
+  );
+  background-size: 200% 100%;
+  animation: glimmer 1.15s ease-in-out infinite;
+}
