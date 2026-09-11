@@ -55,7 +55,7 @@ async def retrieve_context(
         )
 
     results = await client.search(
-        collection_name="realm_pal",
+        collection_name=settings.qdrant_collection_name,
         query_vector=vectors[0],
         limit=top_k,
         query_filter=search_filter,

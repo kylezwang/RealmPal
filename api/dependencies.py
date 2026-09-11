@@ -8,6 +8,7 @@ from qdrant_client import AsyncQdrantClient
 
 from .config import Settings, get_settings
 from .identity import AuthenticatedUser, IdentityError, bearer_token, verify_access_token
+from .redis_namespace import namespaced
 
 
 @lru_cache
@@ -23,7 +24,12 @@ def _get_qdrant(qdrant_url: str, qdrant_api_key: str) -> AsyncQdrantClient:
 
 
 async def get_redis(settings: Annotated[Settings, Depends(get_settings)]) -> aioredis.Redis:
-    return _get_redis(settings.redis_url)
+    """
+    Redis scoped to this deployment. Every key written through this client is
+    prefixed, so two environments sharing an instance can't read each other's
+    caches or quota counters.
+    """
+    return namespaced(_get_redis(settings.redis_url), settings.redis_key_prefix)
 
 
 async def get_qdrant(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncQdrantClient:

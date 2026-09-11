@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "realm_pal"
 
+    # Scopes Redis keys and the Qdrant collection to one deployment, so
+    # several environments can share an instance without reading each other's
+    # caches. Leave blank for a single-environment setup.
+    deployment_namespace: str = ""
+
     # Redis
     redis_url: str = "redis://localhost:6379"
 
@@ -82,6 +87,30 @@ class Settings(BaseSettings):
     app_url: str = "http://localhost:3000"
     api_url: str = "http://localhost:8000"
     debug: bool = False
+
+    @property
+    def namespace_slug(self) -> str:
+        """Normalized deployment namespace, safe for use in identifiers."""
+        return "".join(
+            c for c in self.deployment_namespace.strip().lower() if c.isalnum() or c == "_"
+        )
+
+    @property
+    def qdrant_collection_name(self) -> str:
+        """
+        The collection to read and write. Namespacing lives here rather than
+        at the call sites so `qdrant_collection` is honoured everywhere | it
+        used to be defined and then ignored, with "realm_pal" hardcoded in
+        both the ingestion and retrieval paths.
+        """
+        slug = self.namespace_slug
+        return f"{self.qdrant_collection}_{slug}" if slug else self.qdrant_collection
+
+    @property
+    def redis_key_prefix(self) -> str:
+        """Prefix applied to every Redis key. Empty means no namespacing."""
+        slug = self.namespace_slug
+        return f"{slug}:" if slug else ""
 
     @property
     def auth_algorithm_list(self) -> tuple[str, ...]:

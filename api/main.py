@@ -63,6 +63,30 @@ def _warn_on_unsafe_proxy_config(settings) -> None:
         )
 
 
+async def _ensure_qdrant_collection(settings) -> None:
+    """
+    Create this deployment's collection if it's missing.
+
+    Without this, a newly namespaced deployment has no collection, and every
+    request logs a retrieval failure and answers with no context until a seed
+    script happens to run. Failure here is non-fatal: chat still works, just
+    without retrieval.
+    """
+    from .dependencies import _get_qdrant
+    from .services.ingestion import ensure_collection
+
+    try:
+        client = _get_qdrant(settings.qdrant_url, settings.qdrant_api_key)
+        await ensure_collection(client)
+        logger.bind(collection=settings.qdrant_collection_name).info(
+            "Qdrant collection ready"
+        )
+    except Exception as exc:
+        logger.bind(
+            collection=settings.qdrant_collection_name, error=str(exc)
+        ).warning("Could not prepare Qdrant collection; retrieval may be degraded")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -70,8 +94,10 @@ async def lifespan(app: FastAPI):
         debug=settings.debug,
         model=settings.claude_model,
         auth=settings.auth_provider or "anonymous",
+        namespace=settings.namespace_slug or "none",
     ).info("Realm Pal API starting")
     _warn_on_unsafe_proxy_config(settings)
+    await _ensure_qdrant_collection(settings)
     yield
     logger.info("Realm Pal API shutting down")
 

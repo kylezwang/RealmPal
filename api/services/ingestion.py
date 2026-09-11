@@ -22,6 +22,7 @@ from qdrant_client.models import (
     PayloadSchemaType,
 )
 
+from ..config import get_settings
 from ..models.player import PlayerProfile
 from ..models.item import ItemProfile
 from ..models.build import AbilityScalingEdge, StatScalingGraph
@@ -38,8 +39,18 @@ from .realmshark import (
     loadouts_from_rows,
 )
 
-COLLECTION = "realm_pal"
 VECTOR_SIZE = 768  # nomic-embed-text / voyage-3-lite dimension
+
+
+def collection() -> str:
+    """
+    Deployment-scoped collection name.
+
+    Resolved per call rather than pinned to a module constant, which is what
+    let `settings.qdrant_collection` sit unused while "realm_pal" was
+    hardcoded here and in the retrieval path.
+    """
+    return get_settings().qdrant_collection_name
 
 
 def _sanitize(text: str) -> str:
@@ -63,14 +74,15 @@ def _doc_id(source: str, key: str) -> str:
 
 async def ensure_collection(client: AsyncQdrantClient) -> None:
     """Create the Qdrant collection if it doesn't exist."""
+    name = collection()
     collections = await client.get_collections()
     names = [c.name for c in collections.collections]
-    if COLLECTION not in names:
+    if name not in names:
         await client.create_collection(
-            collection_name=COLLECTION,
+            collection_name=name,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
-        logger.bind(collection=COLLECTION).info("Created Qdrant collection")
+        logger.bind(collection=name).info("Created Qdrant collection")
 
 
 async def ingest_player(client: AsyncQdrantClient, profile: PlayerProfile) -> None:
@@ -97,7 +109,7 @@ async def ingest_player(client: AsyncQdrantClient, profile: PlayerProfile) -> No
     url = f"https://www.realmeye.com/player/{profile.username}"
 
     await client.upsert(
-        collection_name=COLLECTION,
+        collection_name=collection(),
         points=[
             PointStruct(
                 id=doc_id,
@@ -145,7 +157,7 @@ async def ingest_item(client: AsyncQdrantClient, item: ItemProfile) -> None:
         payload["shiny_sprite_url"] = item.shiny_sprite_url
 
     await client.upsert(
-        collection_name=COLLECTION,
+        collection_name=collection(),
         points=[PointStruct(id=doc_id, vector=vectors[0], payload=payload)],
     )
     logger.bind(item_name=item.name).info("Ingested item to Qdrant")
@@ -189,7 +201,7 @@ async def ingest_guide(
             )
         )
 
-    await client.upsert(collection_name=COLLECTION, points=points)
+    await client.upsert(collection_name=collection(), points=points)
     logger.bind(title=title, chunks=len(chunks), source=source).info("Ingested guide")
 
 
@@ -321,7 +333,7 @@ async def ingest_dps_graph(client: AsyncQdrantClient, graph: StatScalingGraph) -
             )
         )
 
-    await client.upsert(collection_name=COLLECTION, points=points)
+    await client.upsert(collection_name=collection(), points=points)
     logger.bind(builds=len(graph.edges)).info("Ingested RealmShark DPS knowledge graph")
 
 
