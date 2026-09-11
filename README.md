@@ -103,7 +103,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium
 cd ..
-uvicorn api.main:app --host 127.0.0.1 --port 8000
+uvicorn api.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
 ```bash
@@ -113,6 +113,19 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Default compose/API port is **8000**; keep `web/.env.local` in sync.
+
+Always start the API with `--no-proxy-headers`. Uvicorn otherwise rewrites the client address from a caller-supplied `X-Forwarded-For`, which lets anyone reset their own rate limit. Proxy trust is configured instead via `TRUST_FORWARDED_FOR` and `FORWARDED_PROXY_HOPS`.
+
+### 4. Tests
+
+Covers the security-critical paths: access token verification, quota keying, and proxy-header spoofing.
+
+```bash
+cd api
+pip install -r requirements-dev.txt
+cd ..
+pytest
+```
 
 API docs (when `DEBUG=true`): [http://localhost:8000/docs](http://localhost:8000/docs).
 

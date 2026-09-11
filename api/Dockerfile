@@ -18,4 +18,8 @@ WORKDIR /app
 COPY . ./api/
 ENV PYTHONPATH=/app
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# --no-proxy-headers is deliberate: uvicorn would otherwise rewrite
+# request.client.host from a caller-supplied X-Forwarded-For, which silently
+# overrides the trust decision made in api/services/rate_limit.py. Proxy trust
+# is configured there via TRUST_FORWARDED_FOR / FORWARDED_PROXY_HOPS.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-proxy-headers"]

@@ -1,11 +1,13 @@
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Optional
 
 import redis.asyncio as aioredis
-from fastapi import Depends
+from fastapi import Depends, Header, HTTPException
+from loguru import logger
 from qdrant_client import AsyncQdrantClient
 
 from .config import Settings, get_settings
+from .identity import AuthenticatedUser, IdentityError, bearer_token, verify_access_token
 
 
 @lru_cache
@@ -26,3 +28,41 @@ async def get_redis(settings: Annotated[Settings, Depends(get_settings)]) -> aio
 
 async def get_qdrant(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncQdrantClient:
     return _get_qdrant(settings.qdrant_url, settings.qdrant_api_key)
+
+
+async def get_optional_user(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: Annotated[Optional[str], Header()] = None,
+) -> Optional[AuthenticatedUser]:
+    """
+    The verified caller, or None for anonymous traffic.
+
+    Endpoints that serve both signed-in and guest users depend on this. An
+    invalid token is treated as anonymous rather than an error, so a stale
+    token in someone's browser degrades to the free tier instead of a hard
+    failure | but it never grants identity.
+    """
+    token = bearer_token(authorization)
+    if not token or not settings.auth_configured:
+        return None
+    try:
+        return await verify_access_token(token, settings)
+    except IdentityError as exc:
+        logger.bind(reason=str(exc)).debug("Ignoring unverifiable access token")
+        return None
+
+
+async def require_user(
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthenticatedUser:
+    """The verified caller, or 401. Use on anything that must not be anonymous."""
+    if not settings.auth_configured:
+        raise HTTPException(status_code=503, detail="Authentication is not configured")
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign-in required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user

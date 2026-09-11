@@ -28,7 +28,8 @@ from qdrant_client import AsyncQdrantClient
 import redis.asyncio as aioredis
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis, get_qdrant
+from ..dependencies import get_optional_user, get_redis, get_qdrant
+from ..identity import AuthenticatedUser, bearer_token
 from ..models.chat import (
     ChatAttachment,
     ChatRequest,
@@ -42,11 +43,10 @@ from ..services.rag import build_system_prompt, retrieve_context
 from ..services.scraper import scrape_player_profile, ScraperError
 from ..services.ingestion import ingest_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
+from ..services.rate_limit import Quota, consume, peek, quota_for
 from ..auth import decode_jwt
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-RATE_LIMIT_TTL = 60 * 60 * 24  # 24 hours
 FEEDBACK_LOG_MAX = 10_000
 RESPONSE_CAP = 20_000
 TEXT_CAP = 4_000
@@ -93,73 +93,89 @@ def _user_content(body: ChatRequest) -> str | list[dict]:
     return [file_block, {"type": "text", "text": caption}]
 
 
-def _rate_limit_key(session_id: str) -> str:
-    return f"ratelimit:{session_id}"
+def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings) -> bool:
+    """
+    True for a still-valid magic-link JWT from the pre-identity-provider flow.
 
-
-async def _used_count(redis: aioredis.Redis, session_id: str) -> int:
-    raw = await redis.get(_rate_limit_key(session_id))
-    if raw is None:
-        return 0
+    Signature and expiry are checked, but entitlement is not | a cancelled or
+    refunded plan keeps working until the token expires. Fixing that needs
+    durable subscription state, which lands with the billing work. Until then
+    this only honours tokens we minted ourselves.
+    """
+    token = bearer_token(auth_header)
+    if not token:
+        return False
     try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return 0
+        claims = decode_jwt(token, settings.jwt_secret, settings.jwt_algorithm)
+    except Exception:
+        return False
+    return bool(claims.get("paid"))
 
 
-async def _check_rate_limit(
-    session_id: str,
+async def _enforce_quota(
+    quota: Quota,
     redis: aioredis.Redis,
     settings: Settings,
     auth_header: Optional[str],
 ) -> None:
-    """
-    Raise HTTP 402 if the session has exceeded the free message limit.
-    Paid users (valid JWT in Authorization header) bypass the check.
-    """
-    # Paid users bypass rate limit
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.removeprefix("Bearer ").strip()
-        try:
-            decode_jwt(token, settings.jwt_secret, settings.jwt_algorithm)
-            return  # Valid paid user | no limit
-        except Exception:
-            pass  # Invalid token | fall through to rate limit
+    """Count this request against its quota, or raise 402 once it's spent."""
+    if _has_legacy_paid_token(auth_header, settings):
+        return
 
-    key = _rate_limit_key(session_id)
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, RATE_LIMIT_TTL)
+    count = await consume(redis, quota)
+    if count <= quota.limit:
+        return
 
-    if count > settings.free_message_limit:
-        # Create Stripe checkout URL if configured
-        checkout_url = None
-        if settings.stripe_secret_key and settings.stripe_price_id:
-            try:
-                stripe.api_key = settings.stripe_secret_key
-                session = stripe.checkout.Session.create(
-                    mode="subscription",
-                    payment_method_types=["card"],
-                    line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
-                    success_url=f"{settings.app_url}?upgraded=true",
-                    cancel_url=settings.app_url,
-                    metadata={"session_id": session_id},
-                )
-                checkout_url = session.url
-            except Exception:
-                logger.exception("Failed to create Stripe checkout session")
-
-        limit = settings.free_message_limit
-        remaining = max(0, limit - count)
-        raise HTTPException(
-            status_code=402,
-            detail=PaywallResponse(
-                checkout_url=checkout_url,
-                used=min(count, limit),
-                limit=limit,
-                remaining=remaining,
-            ).model_dump(),
+    # Anonymous callers have a free way out | sign in. Only prompt for money
+    # once someone signed in has actually used up their allowance. Before an
+    # identity provider is configured there's nothing to sign into, so fall
+    # back to the checkout prompt rather than a dead end.
+    if quota.is_anonymous and settings.auth_configured:
+        message = (
+            f"You've used your {quota.limit} free messages. "
+            "Sign in to keep going."
         )
+        checkout_url = None
+    else:
+        message = (
+            f"You've used your {quota.limit} free messages. "
+            "Join Realm Pal for $7/month to continue."
+        )
+        checkout_url = _checkout_url_for(quota, settings)
+
+    logger.bind(scope=quota.scope, bucket=quota.label, used=count, limit=quota.limit).info(
+        "Quota exhausted"
+    )
+    raise HTTPException(
+        status_code=402,
+        detail=PaywallResponse(
+            message=message,
+            checkout_url=checkout_url,
+            scope=quota.scope,
+            used=min(count, quota.limit),
+            limit=quota.limit,
+            remaining=0,
+        ).model_dump(),
+    )
+
+
+def _checkout_url_for(quota: Quota, settings: Settings) -> Optional[str]:
+    if not (settings.stripe_secret_key and settings.stripe_price_id):
+        return None
+    try:
+        stripe.api_key = settings.stripe_secret_key
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            payment_method_types=["card"],
+            line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
+            success_url=f"{settings.app_url}?upgraded=true",
+            cancel_url=settings.app_url,
+            metadata={"quota_scope": quota.scope},
+        )
+        return session.url
+    except Exception:
+        logger.exception("Failed to create Stripe checkout session")
+        return None
 
 
 async def _stream_response(
@@ -195,20 +211,30 @@ async def _stream_response(
 
 @router.get("/usage")
 async def chat_usage(
-    session_id: str,
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
 ) -> UsageResponse:
-    """How many free messages this guest session has used / has left."""
-    if not session_id.strip():
-        raise HTTPException(status_code=400, detail="session_id is required")
+    """
+    Usage for whoever is calling: the signed-in account, or this IP.
+
+    `session_id` is still accepted for backward compatibility but no longer
+    affects the answer | it was client-supplied, so it could never be a
+    reliable key.
+    """
+    quota = quota_for(user, request, settings)
     try:
-        used = await _used_count(redis, session_id)
+        used = await peek(redis, quota)
     except Exception:
         logger.exception("Failed to read chat usage")
         raise HTTPException(status_code=503, detail="Usage unavailable")
-    limit = settings.free_message_limit
-    return UsageResponse(used=used, limit=limit, remaining=max(0, limit - used))
+    return UsageResponse(
+        used=used,
+        limit=quota.limit,
+        remaining=max(0, quota.limit - used),
+        scope=quota.scope,
+    )
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
@@ -257,16 +283,18 @@ async def chat_stream(
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     qdrant: Annotated[AsyncQdrantClient, Depends(get_qdrant)],
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
     authorization: Annotated[Optional[str], Header()] = None,
 ) -> StreamingResponse:
-    """Stream a chat response. Enforces rate limit for non-paid sessions."""
+    """Stream a chat response. Quota is keyed on the verified caller or their IP."""
 
     if not body.message.strip() and body.attachment is None:
         raise HTTPException(status_code=400, detail="Message is empty")
     if body.attachment is not None:
         _validate_attachment(body.attachment)
 
-    await _check_rate_limit(body.session_id, redis, settings, authorization)
+    quota = quota_for(user, request, settings)
+    await _enforce_quota(quota, redis, settings, authorization)
 
     # Auto-scrape player if IGN provided and not in Qdrant
     if body.ign:

@@ -5,6 +5,7 @@ Intentionally small (~50 lines). All logic lives in routers and services.
 Learned from Certio: never build a 4000-line main.py God file.
 """
 import asyncio
+import os
 import sys
 from contextlib import asynccontextmanager
 
@@ -41,10 +42,36 @@ logger.add(
 )
 
 
+def _warn_on_unsafe_proxy_config(settings) -> None:
+    """
+    Uvicorn rewrites request.client.host from X-Forwarded-For by default,
+    which silently overrides the proxy trust decision in
+    api/services/rate_limit.py and lets callers pick their own quota bucket.
+    Every launch path we ship passes --no-proxy-headers; this catches the case
+    where someone re-enabled it out of band.
+    """
+    allow_ips = os.environ.get("FORWARDED_ALLOW_IPS")
+    if allow_ips and not settings.trust_forwarded_for:
+        logger.bind(forwarded_allow_ips=allow_ips).warning(
+            "FORWARDED_ALLOW_IPS is set but TRUST_FORWARDED_FOR is off. If uvicorn "
+            "is running without --no-proxy-headers, clients can spoof their IP and "
+            "reset their own rate limit."
+        )
+    if settings.trust_forwarded_for:
+        logger.bind(hops=settings.forwarded_proxy_hops).info(
+            "Trusting X-Forwarded-For for client IP"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logger.bind(debug=settings.debug, model=settings.claude_model).info("Realm Pal API starting")
+    logger.bind(
+        debug=settings.debug,
+        model=settings.claude_model,
+        auth=settings.auth_provider or "anonymous",
+    ).info("Realm Pal API starting")
+    _warn_on_unsafe_proxy_config(settings)
     yield
     logger.info("Realm Pal API shutting down")
 

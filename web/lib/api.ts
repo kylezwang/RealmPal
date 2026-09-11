@@ -141,10 +141,15 @@ export interface ChatChunk {
   error?: string;
 }
 
+/** Which bucket a quota was counted against: an account, or a client IP. */
+export type QuotaScope = "user" | "ip";
+
 export interface PaywallInfo {
   upgrade: true;
   message: string;
   checkout_url?: string;
+  /** "ip" means the caller can sign in for a larger allowance instead of paying. */
+  scope?: QuotaScope;
   used?: number;
   limit?: number;
   remaining?: number | null;
@@ -154,6 +159,7 @@ export interface ChatUsage {
   used: number;
   limit: number;
   remaining: number;
+  scope?: QuotaScope;
 }
 
 /** Generate a stable session ID persisted in localStorage */

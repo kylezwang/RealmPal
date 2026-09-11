@@ -31,14 +31,18 @@ class UsageResponse(BaseModel):
     used: int
     limit: int
     remaining: int
+    # "user" once signed in, "ip" for anonymous callers.
+    scope: str = "ip"
 
 
 class PaywallResponse(BaseModel):
     upgrade: bool = True
-    message: str = "You've used your 3 free messages. Join Realm Pal for $7/month to continue."
+    message: str = "You've run out of free messages."
     checkout_url: Optional[str] = None
-    used: int = 3
-    limit: int = 3
+    # Anonymous callers get a sign-in prompt; signed-in ones get checkout.
+    scope: str = "ip"
+    used: int = 0
+    limit: int = 0
     remaining: int = 0
 
 

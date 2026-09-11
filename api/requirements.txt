@@ -7,7 +7,7 @@ qdrant-client==1.13.0
 redis[asyncio]==5.2.1
 playwright==1.49.1
 loguru==0.7.3
-PyJWT==2.10.1
+PyJWT[crypto]==2.10.1
 stripe==11.4.1
 httpx==0.28.1
 llama-index==0.12.5

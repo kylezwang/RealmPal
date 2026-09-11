@@ -129,7 +129,7 @@ if (Test-PortInUse $ApiPort) {
 `$Host.UI.RawUI.WindowTitle = 'Realm Pal API'
 Set-Location '$Root'
 `$env:PYTHONPATH = '$Root'
-& '$VenvUvicorn' api.main:app --host 127.0.0.1 --port $ApiPort
+& '$VenvUvicorn' api.main:app --host 127.0.0.1 --port $ApiPort --no-proxy-headers
 "@
     $apiProc = Start-Process -FilePath "powershell.exe" `
         -ArgumentList @("-NoExit", "-NoProfile", "-Command", $apiCmd) `
