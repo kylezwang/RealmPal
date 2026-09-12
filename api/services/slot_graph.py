@@ -2,16 +2,16 @@
 
 Weapon, Ability, Armor, and Ring each read only their RealmEye pages so
 an Attack Archer question cannot pick up Magic-ring MP numbers. A full
-"best build" fans out to all four and asks for a balanced loadout. A
-rings-only follow-up runs just the Ring agent. A named shiny/divine set
+"best build" fans out to all four plus Enchantment and asks for a
+balanced loadout. A rings-only follow-up runs just the Ring agent. An
+enchant-only follow-up reads RealmEye /wiki/enchanting tables (and Umi
+BIS notes when a class is known). A DPS-only question uses wiki item
+shot data plus RealmShark as a reference board. A named shiny/divine set
 runs the Set visualizer, which expands nicknames (QOT, Vest, Lean) to
 wiki titles. A skin/outfit dye preview runs the Skin visualizer, which
 composites the base sprite with clothing and accessory dyes. A player lookup
 runs the Player agent. A dungeon guide question runs the Dungeon agent, which
 scrapes the RealmEye wiki walkthrough itself.
-
-Backlog: Enchantment specialist for item enchant rolls / bonuses. Do not
-add a slot for it until we have a dedicated RealmEye enchant scrape.
 """
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ import redis.asyncio as aioredis
 from loguru import logger
 
 from .chunks import wrap_slot_chunk
+from .dps_specialist import is_dps_query, retrieve_dps_brief
 from .dungeon_guide import extract_dungeon_query, retrieve_dungeon_guide
+from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .item_aliases import is_set_visualize_query, retrieve_set_visualizer
 from .skin_visualizer import is_skin_visualize_query, retrieve_skin_visualizer
 from .player_lookup import extract_player_ign, format_player_brief, get_or_scrape_player
@@ -34,11 +36,20 @@ from .wiki_scaling import (
     retrieve_weapon_brief,
 )
 
-SlotName = Literal["weapon", "ability", "armor", "ring", "set", "skin", "player", "dungeon"]
+SlotName = Literal[
+    "weapon",
+    "ability",
+    "armor",
+    "ring",
+    "enchantment",
+    "dps",
+    "set",
+    "skin",
+    "player",
+    "dungeon",
+]
 Depth = Literal["brief", "deep"]
-
-# Planned, not implemented: an "enchantment" SlotName that would read
-# RealmEye enchant tables the same way Ring reads ring hubs.
+_GEAR_SLOTS = ("weapon", "ability", "armor", "ring")
 
 
 class SlotState(TypedDict, total=False):
@@ -51,6 +62,7 @@ class SlotState(TypedDict, total=False):
     slots: list[str]
     depth: Depth
     ttl_seconds: int
+    player_ttl_seconds: int
     reports: Annotated[list[str], operator.add]
     combined: str
 
@@ -96,20 +108,36 @@ def route_slots(
     ):
         named.append("ability")
 
+    enchant_only = is_enchant_query(message)
+    dps_only = is_dps_query(message)
     buildish = bool(
         re.search(r"\b(build|loadout|gear|equip|best items?)\b", lower)
         or (class_name and stat and not named)
     )
     slots: list[SlotName] = []
     depth: Depth = "brief"
-    if buildish or (class_name and stat and len(named) != 1):
-        slots = ["weapon", "ability", "armor", "ring"]
+    if enchant_only and not buildish and not named:
+        slots = ["enchantment"]
+        depth = "deep"
+    elif dps_only and not buildish and not named:
+        slots = ["dps"]
+        depth = "deep"
+    elif buildish or (class_name and stat and len(named) != 1):
+        slots = ["weapon", "ability", "armor", "ring", "enchantment"]
+        if dps_only:
+            slots.append("dps")
         depth = "brief"
     elif named:
         slots = list(named)
+        if enchant_only:
+            slots.append("enchantment")
+        if dps_only:
+            slots.append("dps")
         depth = "deep"
     elif class_name or stat:
-        slots = ["weapon", "ability", "armor", "ring"]
+        slots = ["weapon", "ability", "armor", "ring", "enchantment"]
+        if dps_only:
+            slots.append("dps")
         depth = "brief"
 
     extras: list[SlotName] = []
@@ -158,6 +186,7 @@ async def run_slot_agents(
     message: str,
     *,
     ttl_seconds: int,
+    player_ttl_seconds: int = 120,
     user_history: Optional[list[str]] = None,
     class_name: Optional[str] = None,
     stat: Optional[str] = None,
@@ -173,6 +202,7 @@ async def run_slot_agents(
         "player_ign": player_ign,
         "dungeon_name": dungeon_name,
         "ttl_seconds": ttl_seconds,
+        "player_ttl_seconds": player_ttl_seconds,
         "reports": [],
         "combined": "",
     }
@@ -235,6 +265,18 @@ def _compile_graph(redis: aioredis.Redis):
             ]
         }
 
+    async def enchantment(state: SlotState) -> dict:
+        return {
+            "reports": [
+                wrap_slot_chunk("enchantment", await _enchantment_agent(redis, state))
+            ]
+        }
+
+    async def dps(state: SlotState) -> dict:
+        return {
+            "reports": [wrap_slot_chunk("dps", await _dps_agent(redis, state))]
+        }
+
     def synthesize(state: SlotState) -> dict:
         return {"combined": _join_reports(state)}
 
@@ -244,6 +286,8 @@ def _compile_graph(redis: aioredis.Redis):
     graph.add_node("ability", ability)
     graph.add_node("armor", armor)
     graph.add_node("ring", ring)
+    graph.add_node("enchantment", enchantment)
+    graph.add_node("dps", dps)
     graph.add_node("player", player)
     graph.add_node("dungeon", dungeon)
     graph.add_node("set", set_visualizer)
@@ -251,7 +295,18 @@ def _compile_graph(redis: aioredis.Redis):
     graph.add_node("synthesize", synthesize)
     graph.add_edge(START, "intent")
     graph.add_conditional_edges("intent", _fan_out)
-    for slot in ("weapon", "ability", "armor", "ring", "set", "skin", "player", "dungeon"):
+    for slot in (
+        "weapon",
+        "ability",
+        "armor",
+        "ring",
+        "enchantment",
+        "dps",
+        "set",
+        "skin",
+        "player",
+        "dungeon",
+    ):
         graph.add_edge(slot, "synthesize")
     graph.add_edge("synthesize", END)
     return graph.compile()
@@ -269,6 +324,8 @@ async def _run_specialists(redis: aioredis.Redis, seed: SlotState) -> str:
         "dungeon": _dungeon_agent,
         "set": _set_agent,
         "skin": _skin_agent,
+        "enchantment": _enchantment_agent,
+        "dps": _dps_agent,
     }
     texts = []
     for slot in state.get("slots") or []:
@@ -287,9 +344,7 @@ def _join_reports(state: SlotState) -> str:
     class_name = state.get("class_name") or "this class"
     stat = state.get("stat") or "the requested stat"
     slots = state.get("slots") or []
-    if "set" in slots and not any(
-        slot in slots for slot in ("weapon", "ability", "armor", "ring")
-    ):
+    if "set" in slots and not any(slot in slots for slot in _GEAR_SLOTS):
         header = (
             "SET VISUALIZER. Copy the [loadout ...] flags and [item:Wiki Title] "
             "tokens from the set chunk in order (weapon, ability, armor, ring). "
@@ -297,7 +352,7 @@ def _join_reports(state: SlotState) -> str:
             "Short confirmation only. Do not substitute other items."
         )
     elif "skin" in slots and not any(
-        slot in slots for slot in ("weapon", "ability", "armor", "ring", "set")
+        slot in slots for slot in (*_GEAR_SLOTS, "set")
     ):
         header = (
             "SKIN VISUALIZER. Copy the [skin:Class|Skin Name|Clothing|Accessory] "
@@ -314,9 +369,23 @@ def _join_reports(state: SlotState) -> str:
             "characters and do not write a Class/Fame/Weapon/Ability/Armor/"
             "Ring table. The UI already renders the scraped character cards."
         )
-    elif "dungeon" in slots and not any(
-        slot in slots for slot in ("weapon", "ability", "armor", "ring")
+    elif slots == ["enchantment"] or (
+        depth == "deep" and slots == ["enchantment"]
     ):
+        header = (
+            "ENCHANTMENT FOLLOW-UP. Stay on rolls and eligible slots from "
+            "the enchantment chunk. Copy I/II/III/IV and unique values "
+            "exactly. RealmEye is truth; Umi notes are supplementary. "
+            "Do not invent a roll that is not in the chunk."
+        )
+    elif slots == ["dps"] or (depth == "deep" and slots == ["dps"]):
+        header = (
+            "DPS FOLLOW-UP. Use the wiki formula numbers from the dps "
+            "chunk. Treat RealmShark rows as potential-DPS reference "
+            "(5s window, 8 ability uses), not live combat logs. Do not "
+            "invent Damage, Shots, or Rate of Fire."
+        )
+    elif "dungeon" in slots and not any(slot in slots for slot in _GEAR_SLOTS):
         header = (
             "DUNGEON GUIDE. Walk the user through the route from the dungeon "
             "chunk. Open with a level-1 heading such as # Moonlight Village "
@@ -330,15 +399,18 @@ def _join_reports(state: SlotState) -> str:
             "Hardmode Shatters bosses are Valen the Unbreakable, then Nox the "
             "Wild Shadow, then King Azamoth and The Shattered Queen. Before "
             "Valen, kill the Stone Idol via the Void Phantasm; do not break "
-            "all 8 monuments until the Idol is dead. Cite every "
+            "all 8 monuments until the Idol is dead. After the purple dome on "
+            "the clear to Nox, drag all 4 branches/flames to the center — "
+            "never call those wings (that is regular The Shatters). Cite every "
             "Source URL in the chunk."
         )
     elif depth == "brief":
         header = (
             f"BALANCED LOADOUT ({stat} {class_name}). Cover Weapon, Ability, "
-            "Armor, and Ring in similar depth — 2-3 alternatives each. Do not "
-            "open with a rings-only table or list five rings. Rings are one "
-            "slot, same weight as the others."
+            "Armor, Ring, and Enchantments in similar depth — 2-3 alternatives "
+            "each. Do not open with a rings-only table or list five rings. "
+            "Rings are one slot, same weight as the others. Enchant rolls "
+            "come from the enchantment chunk only."
         )
     else:
         header = (
@@ -371,6 +443,7 @@ async def _weapon_agent(redis: aioredis.Redis, state: SlotState) -> str:
         ttl_seconds=state["ttl_seconds"],
         limit=3 if brief else 5,
         brief=brief,
+        cache_only=True,
     )
     return wrap_slot_chunk("weapon", text, source="realmeye-weapons")
 
@@ -386,6 +459,7 @@ async def _ability_agent(redis: aioredis.Redis, state: SlotState) -> str:
         stat=state.get("stat"),
         ttl_seconds=state["ttl_seconds"],
         brief=brief,
+        cache_only=True,
     )
 
 
@@ -402,6 +476,7 @@ async def _armor_agent(redis: aioredis.Redis, state: SlotState) -> str:
         ttl_seconds=state["ttl_seconds"],
         limit=3 if brief else 5,
         brief=brief,
+        cache_only=True,
     )
 
 
@@ -416,6 +491,7 @@ async def _ring_agent(redis: aioredis.Redis, state: SlotState) -> str:
         ttl_seconds=state["ttl_seconds"],
         limit=3 if brief else 5,
         brief=brief,
+        cache_only=True,
     )
 
 
@@ -425,7 +501,9 @@ async def _player_agent(redis: aioredis.Redis, state: SlotState) -> str:
         return ""
     try:
         profile = await get_or_scrape_player(
-            redis, username, ttl_seconds=state["ttl_seconds"]
+            redis,
+            username,
+            ttl_seconds=int(state.get("player_ttl_seconds") or 120),
         )
     except Exception as e:
         logger.bind(username=username, error=str(e)).warning(
@@ -441,7 +519,10 @@ async def _dungeon_agent(redis: aioredis.Redis, state: SlotState) -> str:
         return ""
     try:
         return await retrieve_dungeon_guide(
-            redis, dungeon_name, ttl_seconds=state["ttl_seconds"]
+            redis,
+            dungeon_name,
+            ttl_seconds=state["ttl_seconds"],
+            cache_only=True,
         )
     except Exception as e:
         logger.bind(dungeon=dungeon_name, error=str(e)).warning(
@@ -457,6 +538,7 @@ async def _set_agent(redis: aioredis.Redis, state: SlotState) -> str:
             state["message"],
             ttl_seconds=state["ttl_seconds"],
             class_name=state.get("class_name"),
+            allow_scrape=False,
         )
     except Exception as e:
         logger.bind(error=str(e)).warning("Set visualizer specialist unavailable")
@@ -474,5 +556,35 @@ async def _skin_agent(redis: aioredis.Redis, state: SlotState) -> str:
         )
     except Exception as e:
         logger.bind(error=str(e)).warning("Skin visualizer specialist unavailable")
+        return ""
+
+
+async def _enchantment_agent(redis: aioredis.Redis, state: SlotState) -> str:
+    try:
+        return await retrieve_enchanting_brief(
+            redis,
+            state["message"],
+            ttl_seconds=state["ttl_seconds"],
+            class_name=state.get("class_name"),
+            stat=state.get("stat"),
+            cache_only=True,
+        )
+    except Exception as e:
+        logger.bind(error=str(e)).warning("Enchantment specialist unavailable")
+        return ""
+
+
+async def _dps_agent(redis: aioredis.Redis, state: SlotState) -> str:
+    try:
+        return await retrieve_dps_brief(
+            redis,
+            state["message"],
+            ttl_seconds=state["ttl_seconds"],
+            class_name=state.get("class_name"),
+            stat=state.get("stat"),
+            cache_only=True,
+        )
+    except Exception as e:
+        logger.bind(error=str(e)).warning("DPS specialist unavailable")
         return ""
 

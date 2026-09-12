@@ -8,6 +8,26 @@ const TILE = 80;
 const SKIN_IMG = 60;
 const DYE_ICON = 48;
 
+function GlimmerTile({ label, caption }: { label: string; caption?: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 min-w-[80px]">
+      <span className="text-[10px] uppercase tracking-wide text-[#8a8a8a]">{label}</span>
+      <div
+        className="glimmer rounded-lg"
+        style={{ width: TILE, height: TILE }}
+        aria-hidden
+      />
+      {caption ? (
+        <span className="text-[11px] leading-tight text-center text-[#8a8a8a] max-w-[88px]">
+          {caption}
+        </span>
+      ) : (
+        <div className="glimmer h-3 w-16 rounded" />
+      )}
+    </div>
+  );
+}
+
 function DyeTile({ dye, label }: { dye?: DyeChip | null; label: string }) {
   const hasSprite =
     Boolean(dye?.sprite_sheet_url) && dye?.sprite_x != null && dye?.sprite_y != null;
@@ -38,12 +58,18 @@ function DyeTile({ dye, label }: { dye?: DyeChip | null; label: string }) {
   );
 }
 
-export function SkinPortrait({ spec }: { spec: SkinSpec }) {
+export function SkinPortrait({ spec }: { spec?: SkinSpec | null }) {
   const [portrait, setPortrait] = useState<SkinPortraitData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!spec) {
+      setPortrait(null);
+      setError(null);
+      return;
+    }
     let cancelled = false;
+    setPortrait(null);
     setError(null);
     fetchSkinPortrait({
       className: spec.className,
@@ -60,10 +86,20 @@ export function SkinPortrait({ spec }: { spec: SkinSpec }) {
     return () => {
       cancelled = true;
     };
-  }, [spec.className, spec.skinName, spec.clothing, spec.accessory]);
+  }, [spec?.className, spec?.skinName, spec?.clothing, spec?.accessory]);
 
   if (error) {
     return <p className="mt-3 text-sm text-[#c4a882]">{error}</p>;
+  }
+
+  if (!portrait) {
+    return (
+      <div className="mt-3 flex flex-wrap items-start gap-3" aria-busy="true" aria-label="Loading outfit">
+        <GlimmerTile label="Skin" caption={spec?.skinName} />
+        <GlimmerTile label="Clothing" caption={spec?.clothing} />
+        <GlimmerTile label="Accessory" caption={spec?.accessory} />
+      </div>
+    );
   }
 
   return (
@@ -74,7 +110,7 @@ export function SkinPortrait({ spec }: { spec: SkinSpec }) {
           className="flex items-center justify-center rounded-lg border border-[#404040] bg-[#2a2a2a] p-2 overflow-hidden"
           style={{ width: TILE, height: TILE }}
         >
-          {portrait?.portrait_data_uri ? (
+          {portrait.portrait_data_uri ? (
             <img
               src={portrait.portrait_data_uri}
               alt={portrait.skin_name}
@@ -83,19 +119,15 @@ export function SkinPortrait({ spec }: { spec: SkinSpec }) {
               style={{ imageRendering: "pixelated", width: SKIN_IMG, height: SKIN_IMG }}
             />
           ) : (
-            <div
-              className="rounded-md border border-dashed border-[#444444]"
-              style={{ width: SKIN_IMG, height: SKIN_IMG }}
-              aria-hidden
-            />
+            <div className="glimmer rounded-md" style={{ width: SKIN_IMG, height: SKIN_IMG }} aria-hidden />
           )}
         </div>
         <span className="text-[11px] leading-tight text-center text-[#d4d4d4] max-w-[110px]">
-          {portrait?.skin_name || spec.skinName}
+          {portrait.skin_name || spec?.skinName}
         </span>
       </div>
-      <DyeTile dye={portrait?.clothing} label="Clothing" />
-      <DyeTile dye={portrait?.accessory} label="Accessory" />
+      <DyeTile dye={portrait.clothing} label="Clothing" />
+      <DyeTile dye={portrait.accessory} label="Accessory" />
     </div>
   );
 }

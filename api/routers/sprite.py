@@ -12,28 +12,34 @@ from fastapi.responses import RedirectResponse
 from loguru import logger
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis
+from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..services.scraper import scrape_item, ScraperError
+from ..services.validation import sanitize_lookup_name
+from ..services.wiki_scaling import read_cached_item, write_cached_item
 
 router = APIRouter(tags=["sprite"])
 
 
-@router.get("/sprite")
+@router.get("/sprite", dependencies=[Depends(enforce_lookup_rate_limit)])
 async def get_item_sprite(
     name: str,
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
 ) -> RedirectResponse:
     """Redirect to the RealmEye wiki sprite for an item by name."""
+    name = sanitize_lookup_name(name, field="name")
     cache_key = f"sprite:{name.lower()}"
     cached = await redis.get(cache_key)
     if cached:
         return RedirectResponse(cached, status_code=302)
 
-    try:
-        item = await scrape_item(name)
-    except ScraperError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    item = await read_cached_item(redis, name)
+    if item is None or not item.sprite_url:
+        try:
+            item = await scrape_item(name)
+        except ScraperError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        await write_cached_item(redis, item, settings.wiki_ttl_seconds, name)
 
     if not item.sprite_url:
         raise HTTPException(status_code=404, detail=f"No sprite found for '{name}'")

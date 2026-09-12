@@ -1,7 +1,7 @@
 "use client";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ItemProfile } from "@/lib/api";
-import { cleanItemName, ITEM_CARD_ROW_SIZE, skipDungeonItemCard } from "@/lib/itemLookup";
+import { cleanItemName, isGridWearableItem, ITEM_CARD_ROW_SIZE, skipDungeonItemCard } from "@/lib/itemLookup";
 import { ShinyStar } from "./SpriteIcon";
 
 const ITEM_ROW_MAX_HEIGHT = 170;
@@ -248,13 +248,23 @@ export function ItemCardGrid({
   items?: ItemProfile[];
   pendingNames?: string[];
 }) {
-  const loaded = items ?? [];
+  const loaded = (items ?? []).filter(isGridWearableItem);
+  const hidden = new Set(
+    (items ?? [])
+      .filter((item) => !isGridWearableItem(item))
+      .flatMap((item) => [item.name, item.requestedAs ?? ""])
+      .map((name) => cleanItemName(name).toLowerCase())
+      .filter(Boolean),
+  );
   const byKey = new Map(loaded.map((item) => [cleanItemName(item.name).toLowerCase(), item]));
   const order = (
     pendingNames && pendingNames.length > 0
       ? pendingNames
       : loaded.map((item) => item.name)
-  ).filter((name) => !skipDungeonItemCard(name));
+  ).filter(
+    (name) =>
+      !skipDungeonItemCard(name) && !hidden.has(cleanItemName(name).toLowerCase()),
+  );
   if (order.length === 0) return null;
 
   const ready = order.filter((name) => byKey.has(cleanItemName(name).toLowerCase()));

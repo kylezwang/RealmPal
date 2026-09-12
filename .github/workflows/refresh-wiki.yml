@@ -1,0 +1,36 @@
+# Not a PR check. A full specialist warm (hubs, items, dungeons, DPS)
+# can take over an hour and writes to the deployment Redis/Qdrant —
+# it must not run on every push.
+#
+# Once a week (Monday 08:00 UTC) plus manual "Run workflow".
+# Set repo secrets REDIS_URL and QDRANT_URL (the deployed instances).
+# If those are unset the job exits without scraping.
+name: Refresh wiki specialists
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refresh stored wiki
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: |
+          if [ -z "$REDIS_URL" ] || [ -z "$QDRANT_URL" ]; then
+            echo "REDIS_URL / QDRANT_URL secrets are not set; skip scrape."
+            exit 0
+          fi
+          python -m pip install -r api/requirements.txt
+          python -m playwright install --with-deps chromium
+          python -m api.scripts.refresh_wiki

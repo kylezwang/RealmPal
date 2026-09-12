@@ -5,22 +5,28 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis
+from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..models.dungeon import DungeonDrop, DungeonGuide, DungeonLayout
 from ..services.dungeon_guide import _skip_dungeon_drop, load_dungeon_guide
+from ..services.validation import sanitize_lookup_name
 
 router = APIRouter(prefix="/dungeons", tags=["dungeons"])
 
 
-@router.get("/{name}", response_model=DungeonGuide)
+@router.get(
+    "/{name}",
+    response_model=DungeonGuide,
+    dependencies=[Depends(enforce_lookup_rate_limit)],
+)
 async def get_dungeon(
     name: str,
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
 ) -> DungeonGuide:
     """Match a dungeon on RealmEye indexes and return portal, graves, layouts, drops."""
+    name = sanitize_lookup_name(name, field="name")
     media = await load_dungeon_guide(
-        redis, name, ttl_seconds=settings.scrape_ttl_hours * 3600
+        redis, name, ttl_seconds=settings.wiki_ttl_seconds
     )
     if not media or not media.get("title"):
         raise HTTPException(status_code=404, detail=f"Dungeon '{name}' not found")

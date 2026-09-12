@@ -43,6 +43,7 @@ from ..identity import AuthenticatedUser
 
 USER_SCOPE = "user"
 ANONYMOUS_SCOPE = "ip"
+LOOKUP_SCOPE = "lookup"
 
 # Quota windows roll every 24h.
 QUOTA_TTL_SECONDS = 60 * 60 * 24
@@ -137,4 +138,55 @@ async def consume(redis: aioredis.Redis, quota: Quota) -> int:
     count = await redis.incr(quota.key)
     if count == 1:
         await redis.expire(quota.key, QUOTA_TTL_SECONDS)
+    return int(count)
+
+
+@dataclass(frozen=True)
+class WindowedQuota:
+    """
+    A short-window sibling of `Quota`, for endpoints that aren't a daily
+    free-message allowance but still shouldn't be free to hammer.
+
+    Player/item/dungeon/skin lookups scrape RealmEye on a cache miss, which
+    means launching a real headless browser. `Quota`'s 24h window is the
+    wrong shape for that: a burst of a few hundred requests in one minute is
+    the problem, not the day's total. This resolves the same way (verified
+    subject, else hashed IP) with its own key namespace and TTL.
+    """
+
+    key: str
+    limit: int
+    window_seconds: int
+    label: str
+
+
+def lookup_quota_for(
+    user: Optional[AuthenticatedUser],
+    request: Request,
+    settings: Settings,
+) -> WindowedQuota:
+    """Resolve the burst-limit bucket for a scrape-triggering lookup."""
+    if user is not None:
+        label = hash_identifier(user.subject, settings)
+        return WindowedQuota(
+            key=f"ratelimit:{LOOKUP_SCOPE}:{USER_SCOPE}:{user.subject}",
+            limit=settings.lookup_rate_limit_user,
+            window_seconds=settings.lookup_rate_window_seconds,
+            label=label[:12],
+        )
+
+    hashed = hash_identifier(client_ip(request, settings), settings)
+    return WindowedQuota(
+        key=f"ratelimit:{LOOKUP_SCOPE}:{ANONYMOUS_SCOPE}:{hashed}",
+        limit=settings.lookup_rate_limit_anonymous,
+        window_seconds=settings.lookup_rate_window_seconds,
+        label=hashed[:12],
+    )
+
+
+async def consume_windowed(redis: aioredis.Redis, quota: WindowedQuota) -> int:
+    """Count one request against a short-window quota and return the total."""
+    count = await redis.incr(quota.key)
+    if count == 1:
+        await redis.expire(quota.key, quota.window_seconds)
     return int(count)

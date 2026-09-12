@@ -15,7 +15,7 @@ import { PetSprite } from "./PetCompanion";
 import { MessageActions } from "./MessageActions";
 import { cleanItemName, findItem, itemTokensToLinks, stripItemTokens } from "@/lib/itemLookup";
 import { resolveLoadoutShowcase, stripLoadoutToken } from "@/lib/loadoutShowcase";
-import { parseSkinToken, stripSkinToken } from "@/lib/skinShowcase";
+import { inferSkinVisualize, parseSkinToken, stripSkinToken } from "@/lib/skinShowcase";
 
 const THINKING_LINES = ["Thinking...", "Working on it...", "Looking that up..."];
 const AVATAR_SIZE = 52;
@@ -348,6 +348,8 @@ export function MessageBubble({
     ? resolveLoadoutShowcase(prompt, content, showcaseItemCount)
     : null;
   const skinSpec = !isUser && !loadout ? parseSkinToken(content) : null;
+  const showSkin =
+    Boolean(skinSpec) || Boolean(!isUser && !loadout && inferSkinVisualize(prompt));
   const markdownSource = skinSpec
     ? stripSkinToken(stripLoadoutToken(guideBody || displayContent))
     : loadout
@@ -415,11 +417,11 @@ export function MessageBubble({
         {!isUser && playerProfile && (
           <PlayerCard profile={playerProfile} showExaltationTable={showExaltationTable} />
         )}
-        {!isUser && skinSpec && <SkinPortrait spec={skinSpec} />}
+        {!isUser && showSkin && <SkinPortrait spec={skinSpec} />}
         {!isUser && loadout && (
           <LoadoutRow items={items} pendingNames={pendingItemNames} showcase={loadout} />
         )}
-        {!isUser && !loadout && !skinSpec && (
+        {!isUser && !loadout && !showSkin && (
           <ItemCardGrid items={items} pendingNames={pendingItemNames} />
         )}
         {!isUser && !isStreaming && Boolean(content.trim()) && messageId && onFeedback && (

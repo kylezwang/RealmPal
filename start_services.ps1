@@ -25,7 +25,7 @@ function Ensure-EnvFiles {
             throw "Missing .env.example - cannot create .env"
         }
         Copy-Item $rootExample $rootEnv
-        Write-Host "Created .env from .env.example - set ANTHROPIC_API_KEY and JWT_SECRET" -ForegroundColor Yellow
+        Write-Host "Created .env from .env.example - set JWT_SECRET and either ANTHROPIC_API_KEY or Foundry (FOUNDRY_RESOURCE + Entra/key)" -ForegroundColor Yellow
     }
 
     $webEnv = Join-Path $Root "web\.env.local"
@@ -80,8 +80,10 @@ Write-Step "Checking environment files"
 Ensure-EnvFiles
 Import-DotEnv (Join-Path $Root ".env")
 
-if (-not $env:ANTHROPIC_API_KEY -or $env:ANTHROPIC_API_KEY -like "sk-ant-...*") {
-    Write-Host "Warning: ANTHROPIC_API_KEY looks unset in .env" -ForegroundColor Yellow
+$hasAnthropic = $env:ANTHROPIC_API_KEY -and $env:ANTHROPIC_API_KEY -notlike "sk-ant-...*"
+$hasFoundry = $env:FOUNDRY_RESOURCE -or $env:FOUNDRY_BASE_URL
+if (-not $hasAnthropic -and -not $hasFoundry) {
+    Write-Host "Warning: set ANTHROPIC_API_KEY, or FOUNDRY_RESOURCE / FOUNDRY_BASE_URL, in .env" -ForegroundColor Yellow
 }
 
 Write-Step "Starting Qdrant + Redis (Docker)"

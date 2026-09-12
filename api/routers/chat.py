@@ -14,12 +14,12 @@ Streaming design (learned from Certio improvements):
 """
 import base64
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, AsyncGenerator, Optional
 
 import stripe
-from anthropic import AsyncAnthropic
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
@@ -38,11 +38,17 @@ from ..models.chat import (
     PaywallResponse,
     UsageResponse,
 )
-from ..models.build import CLASS_ABILITY_HUB, STAT_RING_HUB
-from ..services.rag import build_system_prompt, retrieve_context
-from ..services.scraper import scrape_player_profile, ScraperError
+from ..models.build import CLASS_ABILITY_HUB
+from ..services.rag import build_system_prompt, rag_exclude_slugs, retrieve_context
+from ..services.scraper import ScraperError
 from ..services.ingestion import ingest_player
+from ..services.player_lookup import PLAYER_CACHE_PREFIX, get_or_scrape_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
+from ..services.dungeon_guide import extract_dungeon_query
+from ..services.item_aliases import is_set_visualize_query
+from ..services.player_lookup import extract_player_ign
+from ..services.skin_visualizer import is_skin_visualize_query
+from ..services.dev_access import is_debug_unlimited
 from ..services.rate_limit import (
     USER_SCOPE,
     Quota,
@@ -51,8 +57,10 @@ from ..services.rate_limit import (
     peek,
     quota_for,
 )
-from ..services.budget import disabled_reason, record_usage
-from ..auth import decode_jwt
+from ..services.budget import disabled_reason, record_llm_failure, record_usage
+from ..services.llm import build_chat_client
+from ..services import entitlements
+from ..auth import decode_jwt, email_from_session_header
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 FEEDBACK_LOG_MAX = 10_000
@@ -104,14 +112,19 @@ def _user_content(body: ChatRequest) -> str | list[dict]:
     return [file_block, {"type": "text", "text": caption}]
 
 
-def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings) -> bool:
+async def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings) -> bool:
     """
-    True for a still-valid magic-link JWT from the pre-identity-provider flow.
+    True for a still-valid magic-link JWT from the pre-identity-provider flow,
+    *and* a durable entitlement that hasn't been revoked.
 
-    Signature and expiry are checked, but entitlement is not | a cancelled or
-    refunded plan keeps working until the token expires. Fixing that needs
-    durable subscription state, which lands with the billing work. Until then
-    this only honours tokens we minted ourselves.
+    Signature and expiry alone used to be the whole check | a cancelled or
+    refunded plan kept working until the token expired (up to
+    JWT_EXPIRY_DAYS). api/services/entitlements.py now holds what Stripe's
+    webhooks actually know: only an email with an active/trialing row
+    passes. Since `/auth/request-link` hands out a magic link to anyone,
+    signature and expiry alone are satisfied by every free sign-in too, so
+    an unknown or inactive email fails here even with a validly signed,
+    unexpired token.
     """
     token = bearer_token(auth_header)
     if not token:
@@ -120,7 +133,13 @@ def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings) -> bo
         claims = decode_jwt(token, settings.jwt_secret, settings.jwt_algorithm)
     except Exception:
         return False
-    return bool(claims.get("paid"))
+    email = str(claims.get("email") or "").strip()
+    if not email:
+        return bool(claims.get("paid"))
+    # The JWT `paid` claim is stale the moment someone finishes Stripe
+    # Checkout — the webhook / confirm path writes entitlements, not a
+    # new token. Always trust the store for a signed-in email.
+    return await entitlements.is_active(email, settings)
 
 
 async def _enforce_quota(
@@ -128,9 +147,12 @@ async def _enforce_quota(
     redis: aioredis.Redis,
     settings: Settings,
     auth_header: Optional[str],
+    user: Optional[AuthenticatedUser] = None,
 ) -> None:
     """Count this request against its quota, or raise 402 once it's spent."""
-    if _has_legacy_paid_token(auth_header, settings):
+    if await is_debug_unlimited(user, settings):
+        return
+    if await _has_legacy_paid_token(auth_header, settings):
         # Still metered, just far more generously. An unlimited bypass meant
         # one leaked token could spend without bound.
         await _enforce_paid_ceiling(auth_header, redis, settings)
@@ -155,7 +177,7 @@ async def _enforce_quota(
             f"You've used your {quota.limit} free messages. "
             "Join Realm Pal for $7/month to continue."
         )
-        checkout_url = _checkout_url_for(quota, settings)
+        checkout_url = _checkout_url_for(quota, settings, auth_header)
 
     logger.bind(scope=quota.scope, bucket=quota.label, used=count, limit=quota.limit).info(
         "Quota exhausted"
@@ -213,18 +235,25 @@ async def _enforce_paid_ceiling(
     )
 
 
-def _checkout_url_for(quota: Quota, settings: Settings) -> Optional[str]:
-    if not (settings.stripe_secret_key and settings.stripe_price_id):
+def _checkout_url_for(
+    quota: Quota, settings: Settings, auth_header: Optional[str]
+) -> Optional[str]:
+    if not settings.stripe_configured:
         return None
+    email = email_from_session_header(auth_header, settings)
     try:
         stripe.api_key = settings.stripe_secret_key
+        extra: dict = {}
+        if email:
+            extra["customer_email"] = email
         session = stripe.checkout.Session.create(
             mode="subscription",
             payment_method_types=["card"],
             line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
-            success_url=f"{settings.app_url}?upgraded=true",
+            success_url=f"{settings.app_url}?upgraded=true&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=settings.app_url,
-            metadata={"quota_scope": quota.scope},
+            metadata={"quota_scope": quota.scope, "email": email or ""},
+            **extra,
         )
         return session.url
     except Exception:
@@ -245,11 +274,12 @@ async def _stream_response(
 
     Records what the call cost once it finishes, so the daily ceiling in
     api/services/budget.py reflects real token counts rather than estimates.
+    Provider errors are counted separately for monitoring; exception text is
+    not logged, because the SDK has previously rendered keys into the sink.
     """
-    client = AsyncAnthropic(
-        api_key=settings.anthropic_api_key,
-        timeout=settings.anthropic_timeout_seconds,
-    )
+    provider = settings.llm_provider
+    client = build_chat_client(settings)
+    started = time.perf_counter()
 
     try:
         async with client.messages.stream(
@@ -273,16 +303,28 @@ async def _stream_response(
                     settings,
                     input_tokens=final.usage.input_tokens,
                     output_tokens=final.usage.output_tokens,
+                    provider=provider,
                 )
             except Exception:
                 logger.exception("Could not record spend for a completed stream")
 
         yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
 
-    except Exception as e:
-        logger.bind(error=str(e)).error("Error during Claude streaming")
+    except Exception as exc:
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        logger.bind(
+            provider=provider,
+            error_type=type(exc).__name__,
+            elapsed_ms=elapsed_ms,
+        ).error("Error during Claude streaming")
+        await record_llm_failure(redis, settings, provider=provider)
         error_chunk = json.dumps({"error": "Claude stream failed", "done": True})
         yield f"data: {error_chunk}\n\n"
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            logger.bind(provider=provider).warning("Could not close chat client")
 
 
 @router.get("/usage")
@@ -300,6 +342,20 @@ async def chat_usage(
     reliable key.
     """
     quota = quota_for(user, request, settings)
+    if await is_debug_unlimited(user, settings):
+        return UsageResponse(
+            used=0,
+            limit=settings.paid_message_limit,
+            remaining=settings.paid_message_limit,
+            scope="user",
+        )
+    if user and user.email and await entitlements.is_active(user.email, settings):
+        return UsageResponse(
+            used=0,
+            limit=settings.paid_message_limit,
+            remaining=settings.paid_message_limit,
+            scope="user",
+        )
     try:
         used = await peek(redis, quota)
     except Exception:
@@ -376,23 +432,26 @@ async def chat_stream(
         raise HTTPException(status_code=503, detail=unavailable)
 
     quota = quota_for(user, request, settings)
-    await _enforce_quota(quota, redis, settings, authorization)
+    await _enforce_quota(quota, redis, settings, authorization, user)
 
-    # Auto-scrape player if IGN provided and not in Qdrant
+    # Player profiles change constantly — scrape on lookup. The short TTL
+    # only collapses sidebar + chat hitting RealmEye twice in one session.
     if body.ign:
-        ign_key = f"scraped:player:{body.ign.lower()}"
-        if not await redis.exists(ign_key):
-            try:
-                profile = await scrape_player_profile(body.ign)
+        cache_key = f"{PLAYER_CACHE_PREFIX}{body.ign.lower()}"
+        had_cached = settings.player_ttl_seconds > 0 and await redis.exists(cache_key)
+        try:
+            profile = await get_or_scrape_player(
+                redis, body.ign, ttl_seconds=settings.player_ttl_seconds
+            )
+            if not had_cached:
                 await ingest_player(qdrant, profile)
-                await redis.setex(ign_key, settings.scrape_ttl_hours * 3600, "1")
-            except ScraperError as e:
-                logger.bind(ign=body.ign, error=str(e)).warning("Could not scrape player on chat request")
-            except Exception as e:
-                # e.g. embeddings backend (Ollama) unreachable | don't block chat
-                logger.bind(ign=body.ign, error=str(e)).warning(
-                    "Could not ingest scraped player profile on chat request"
-                )
+        except ScraperError as e:
+            logger.bind(ign=body.ign, error=str(e)).warning("Could not scrape player on chat request")
+        except Exception as e:
+            # e.g. embeddings backend (Ollama) unreachable | don't block chat
+            logger.bind(ign=body.ign, error=str(e)).warning(
+                "Could not ingest scraped player profile on chat request"
+            )
 
     # Retrieve RAG context. A degraded embeddings/vector backend (e.g. Ollama
     # not running locally) must never take down the whole chat feature |
@@ -401,39 +460,52 @@ async def chat_stream(
         msg.content for msg in body.history[-10:] if msg.role == "user"
     ]
     history_texts = user_history
+    player_only = False
     try:
         query_text = body.message.strip()
         if not query_text and body.attachment is not None:
             query_text = body.attachment.filename
-        class_name, stat, _ = parse_query(query_text, history=user_history)
-        rag_query = " ".join(
-            part
-            for part in (
-                class_name,
-                stat,
-                user_history[-1] if user_history else "",
-                query_text,
-            )
-            if part
+        class_name, stat, buildish = parse_query(query_text, history=user_history)
+        this_class, _this_stat, _this_build = parse_query(query_text)
+        dungeon_only = bool(
+            extract_dungeon_query(query_text, history=user_history)
+        ) and not buildish
+        # This-turn IGN lookups stay off the wiki/DPS path even if an
+        # earlier Bard/Huntress question would inherit as buildish.
+        player_only = bool(extract_player_ign(query_text)) or (
+            bool(extract_player_ign(query_text, history=user_history))
+            and not this_class
         )
-        exclude_rings = [
-            slug
-            for other, slug in STAT_RING_HUB.items()
-            if stat and other != stat
-        ]
-        context = await retrieve_context(
-            qdrant, rag_query, exclude_url_substrings=exclude_rings
-        )
-        if class_name:
-            hub = CLASS_ABILITY_HUB.get(class_name, "")
-            extra_q = " ".join(
-                part for part in (class_name, hub, stat, "ability scaling") if part
+        # Specialists already inject the right chunk. Extra wiki RAG pads
+        # the bill and, if we glue on the previous user turn, mixes topics
+        # (player lookup + Bard attack → off-class bows).
+        if (
+            dungeon_only
+            or player_only
+            or is_skin_visualize_query(query_text)
+            or is_set_visualize_query(query_text)
+        ):
+            context = ""
+        else:
+            rag_query = " ".join(
+                part
+                for part in (class_name, stat, query_text)
+                if part
             )
-            extra = await retrieve_context(
-                qdrant, extra_q, exclude_url_substrings=exclude_rings
+            exclude_hubs = rag_exclude_slugs(class_name, stat)
+            context = await retrieve_context(
+                qdrant, rag_query, exclude_url_substrings=exclude_hubs
             )
-            if extra and extra not in context:
-                context = f"{context}\n\n---\n\n{extra}" if context else extra
+            if class_name:
+                hub = CLASS_ABILITY_HUB.get(class_name, "")
+                extra_q = " ".join(
+                    part for part in (class_name, hub, stat, "ability scaling") if part
+                )
+                extra = await retrieve_context(
+                    qdrant, extra_q, exclude_url_substrings=exclude_hubs
+                )
+                if extra and extra not in context:
+                    context = f"{context}\n\n---\n\n{extra}" if context else extra
     except Exception as e:
         logger.bind(error=str(e)).warning(
             "RAG context retrieval failed, answering without retrieved context"
@@ -447,13 +519,19 @@ async def chat_stream(
         build_ctx = await retrieve_build_knowledge(
             redis,
             body.message,
-            ttl_seconds=settings.scrape_ttl_hours * 3600,
+            ttl_seconds=settings.wiki_ttl_seconds,
+            player_ttl_seconds=settings.player_ttl_seconds,
             history=history_texts,
         )
         if build_ctx:
-            citation = "Source: https://tracker.realmshark.cc/dps-leaderboards"
-            block = f"{citation}\n{build_ctx}"
-            context = f"{context}\n\n---\n\n{block}" if context else block
+            if player_only:
+                context = (
+                    f"{context}\n\n---\n\n{build_ctx}" if context else build_ctx
+                )
+            else:
+                citation = "Source: https://tracker.realmshark.cc/dps-leaderboards"
+                block = f"{citation}\n{build_ctx}"
+                context = f"{context}\n\n---\n\n{block}" if context else block
     except Exception as e:
         logger.bind(error=str(e)).warning("RealmShark build knowledge unavailable")
 
@@ -470,6 +548,7 @@ async def chat_stream(
     logger.bind(
         session_id=body.session_id[:8],
         ign=body.ign,
+        provider=settings.llm_provider,
         context_chunks=context.count("---") + 1 if context else 0,
     ).info("Chat stream started")
 

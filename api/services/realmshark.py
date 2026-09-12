@@ -22,6 +22,7 @@ from loguru import logger
 
 from ..models.build import (
     CLASS_ALIASES,
+    CLASS_ARMOR_HUB,
     PLAYER_STATS,
     STAT_ALIASES,
     WEAPON_SHARE_GROUPS,
@@ -36,7 +37,13 @@ from .item_aliases import is_set_visualize_query
 from .skin_visualizer import is_skin_visualize_query
 from .player_lookup import extract_player_ign
 from .slot_graph import run_slot_agents
-from .wiki_scaling import retrieve_umi_bis
+from .wiki_scaling import (
+    HUB_PREFIX,
+    cached_class_wiki_scaling,
+    format_wiki_scaling,
+    retrieve_armor_brief,
+    retrieve_umi_bis,
+)
 
 REALMSHARK_API = "https://tracker.realmshark.cc/api/v1"
 REALMSHARK_PAGE = "https://tracker.realmshark.cc/dps-leaderboards"
@@ -415,6 +422,7 @@ async def _sister_weapon_loadouts(
     stat: Optional[str],
     *,
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> str:
     """Top-5 weapons from a class that shares this weapon type."""
     for sister in _sister_classes(class_name):
@@ -433,7 +441,11 @@ async def _sister_weapon_loadouts(
         if not edges:
             continue
         loadouts = await load_top_loadouts(
-            redis, edges[0], season=graph.season, ttl_seconds=ttl_seconds
+            redis,
+            edges[0],
+            season=graph.season,
+            ttl_seconds=ttl_seconds,
+            cache_only=cache_only,
         )
         formatted = format_loadouts(
             f"{edges[0].label} (same weapon type as {class_name})",
@@ -451,10 +463,19 @@ async def _sister_weapon_loadouts(
     return ""
 
 
-async def load_graph(redis: aioredis.Redis, ttl_seconds: int) -> StatScalingGraph:
-    cached = await redis.get(GRAPH_CACHE_KEY)
-    if cached:
-        return StatScalingGraph.model_validate_json(cached)
+async def load_graph(
+    redis: aioredis.Redis,
+    ttl_seconds: int,
+    *,
+    cache_only: bool = False,
+    force: bool = False,
+) -> StatScalingGraph:
+    if not force:
+        cached = await redis.get(GRAPH_CACHE_KEY)
+        if cached:
+            return StatScalingGraph.model_validate_json(cached)
+        if cache_only:
+            return StatScalingGraph(season="", edges=[])
 
     payload = await fetch_builds(seasonal=True)
     graph = graph_from_builds(payload, seasonal=True)
@@ -471,12 +492,17 @@ async def load_top_loadouts(
     *,
     season: Optional[str],
     ttl_seconds: int,
+    cache_only: bool = False,
+    force: bool = False,
 ) -> list[Loadout]:
     cache_key = f"dps:top:{edge.build_id}"
-    cached = await redis.get(cache_key)
-    if cached:
-        graph_slice = StatScalingGraph.model_validate_json(cached)
-        return graph_slice.top_loadouts.get(edge.build_id, [])
+    if not force:
+        cached = await redis.get(cache_key)
+        if cached:
+            graph_slice = StatScalingGraph.model_validate_json(cached)
+            return graph_slice.top_loadouts.get(edge.build_id, [])
+        if cache_only:
+            return []
 
     try:
         payload = await fetch_leaderboard(
@@ -499,6 +525,7 @@ async def retrieve_build_knowledge(
     message: str,
     *,
     ttl_seconds: int,
+    player_ttl_seconds: int = 120,
     history: Optional[list[str]] = None,
 ) -> str:
     """
@@ -519,6 +546,7 @@ async def retrieve_build_knowledge(
                 redis,
                 message,
                 ttl_seconds=ttl_seconds,
+                player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
                 class_name=class_name,
                 stat=stat,
@@ -535,6 +563,7 @@ async def retrieve_build_knowledge(
                 redis,
                 message,
                 ttl_seconds=ttl_seconds,
+                player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
                 class_name=class_name,
                 stat=stat,
@@ -545,16 +574,40 @@ async def retrieve_build_knowledge(
             logger.bind(error=str(e)).warning("Skin visualizer specialist unavailable")
             return ""
 
-    if (player_ign or dungeon_name) and not buildish:
+    this_class, _this_stat, _this_build = parse_query(message)
+    player_lookup_turn = bool(extract_player_ign(message)) or (
+        bool(player_ign) and not this_class
+    )
+    if player_lookup_turn:
         try:
             return await run_slot_agents(
                 redis,
                 message,
                 ttl_seconds=ttl_seconds,
+                player_ttl_seconds=player_ttl_seconds,
+                user_history=history,
+                class_name=None,
+                stat=None,
+                player_ign=player_ign or extract_player_ign(message),
+                dungeon_name=dungeon_name if not extract_player_ign(message) else None,
+            )
+        except Exception as e:
+            logger.bind(error=str(e), player=player_ign).warning(
+                "Player lookup specialist unavailable"
+            )
+            return ""
+
+    if dungeon_name and not buildish:
+        try:
+            return await run_slot_agents(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
                 class_name=class_name,
                 stat=stat,
-                player_ign=player_ign,
+                player_ign=None,
                 dungeon_name=dungeon_name,
             )
         except Exception as e:
@@ -563,25 +616,10 @@ async def retrieve_build_knowledge(
             ).warning("Lookup specialist unavailable")
             return ""
 
-    wiki_task = None
-    if class_name or stat or player_ign or dungeon_name:
-        wiki_task = asyncio.create_task(
-            run_slot_agents(
-                redis,
-                message,
-                ttl_seconds=ttl_seconds,
-                user_history=history,
-                class_name=class_name,
-                stat=stat,
-                player_ign=player_ign,
-                dungeon_name=dungeon_name,
-            )
-        )
-
     parts: list[str] = []
     has_board = False
     try:
-        graph = await load_graph(redis, ttl_seconds)
+        graph = await load_graph(redis, ttl_seconds, cache_only=True)
         parts.append(format_graph(graph, class_name=class_name, stat=stat))
         matched = graph.edges
         if class_name:
@@ -599,43 +637,63 @@ async def retrieve_build_knowledge(
                 )
             for edge in matched[:4]:
                 loadouts = await load_top_loadouts(
-                    redis, edge, season=graph.season, ttl_seconds=ttl_seconds
+                    redis,
+                    edge,
+                    season=graph.season,
+                    ttl_seconds=ttl_seconds,
+                    cache_only=True,
                 )
                 formatted = format_loadouts(edge.label, loadouts)
                 if formatted:
                     parts.append(formatted)
             if not matched:
                 sister = await _sister_weapon_loadouts(
-                    redis, graph, class_name, stat, ttl_seconds=ttl_seconds
+                    redis,
+                    graph,
+                    class_name,
+                    stat,
+                    ttl_seconds=ttl_seconds,
+                    cache_only=True,
                 )
                 if sister:
                     parts.append(sister)
     except Exception as e:
         logger.bind(error=str(e)).warning("RealmShark builds catalog unavailable")
 
-    if wiki_task:
-        wait_s = 40 if class_name and not has_board else 12
-        done, _ = await asyncio.wait({wiki_task}, timeout=wait_s)
-        if wiki_task in done:
-            try:
-                wiki = wiki_task.result()
-                if wiki:
-                    parts.append(wiki)
-                if class_name:
-                    umi = await retrieve_umi_bis(
-                        redis, class_name, ttl_seconds=ttl_seconds
-                    )
-                    if umi:
-                        parts.append(umi)
-            except Exception as e:
-                logger.bind(error=str(e)).warning("RealmEye wiki scaling unavailable")
-        else:
-            logger.info("RealmEye wiki scrape still running; answering with DPS boards")
-            parts.append(
-                "RealmEye T7/ST/UT ability infoboxes are still being read. "
-                "Do not say a stat build does not exist. Prefer armor and "
-                "universal rings that stack the requested stat, and weapons "
-                "from a class that shares this weapon."
+    # Specialists read the stored wiki corpus. Chat must not launch a
+    # RealmEye crawl — that is refresh_wiki.py (once a week).
+    cached_wiki = (
+        await cached_class_wiki_scaling(redis, class_name) if class_name else None
+    )
+    if cached_wiki:
+        text = format_wiki_scaling(cached_wiki, stat=stat)
+        if text:
+            parts.append("ABILITY AGENT — stored wiki scaling.\n" + text)
+        armor_slug = CLASS_ARMOR_HUB.get(class_name or "")
+        if class_name and stat and armor_slug and await redis.get(
+            f"{HUB_PREFIX}:{armor_slug}"
+        ):
+            armor = await retrieve_armor_brief(
+                redis,
+                class_name,
+                stat,
+                ttl_seconds=ttl_seconds,
+                limit=5,
+                brief=False,
+                cache_only=True,
             )
+            if armor:
+                parts.append(armor)
+        umi_key = f"umi:bis:v1:{(class_name or '').lower()}"
+        if class_name and await redis.get(umi_key):
+            umi = await retrieve_umi_bis(
+                redis, class_name, ttl_seconds=ttl_seconds, cache_only=True
+            )
+            if umi:
+                parts.append(umi)
+    elif class_name:
+        logger.bind(class_name=class_name).info(
+            "No stored wiki scaling yet; answering from DPS boards"
+        )
 
     return "\n\n".join(parts)

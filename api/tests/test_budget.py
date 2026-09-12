@@ -17,9 +17,12 @@ from api.services.budget import (
     KILL_SWITCH_KEY,
     BudgetState,
     budget_state,
+    cost_ccu,
     cost_micros,
     disabled_reason,
+    record_llm_failure,
     record_usage,
+    today_error_key,
     today_key,
 )
 
@@ -31,7 +34,7 @@ def _settings(**overrides) -> Settings:
         "pii_hash_secret": "test-pii-secret",
     }
     base.update(overrides)
-    return Settings(**base)
+    return Settings(_env_file=None, **base)
 
 
 # --- cost arithmetic ------------------------------------------------------
@@ -49,7 +52,22 @@ def test_cost_is_computed_from_per_million_token_prices():
 def test_a_typical_message_costs_what_we_expect():
     """8k input plus 600 output at Sonnet pricing is a few cents."""
     settings = _settings()
-    assert cost_micros(settings, 8_000, 600) == 33_000  # $0.033
+    micros = cost_micros(settings, 8_000, 600)
+    assert micros == 33_000  # $0.033
+    # Foundry invoices that as CCU at $0.01 each (100 CCU = $1).
+    assert cost_ccu(settings, micros) == 3.3
+
+
+def test_zero_spend_is_zero_ccu():
+    assert cost_ccu(_settings(), 0) == 0.0
+    assert cost_ccu(_settings(foundry_ccu_usd=0.0), 33_000) == 0.0
+
+
+def test_error_counter_key_is_scoped_to_provider_and_day():
+    moment = datetime(2026, 9, 11, 23, 59, tzinfo=timezone.utc)
+    assert today_error_key("foundry", moment) == "llm:errors:2026-09-11:foundry"
+    # Don't let a caller-supplied label punch out of the key.
+    assert today_error_key("foundry:../other", moment) == "llm:errors:2026-09-11:foundryother"
 
 
 def test_cost_is_never_negative():
@@ -205,6 +223,24 @@ async def test_recording_survives_a_redis_failure(monkeypatch, redis_client):
     assert await record_usage(
         redis_client, settings, input_tokens=1_000, output_tokens=100
     ) == cost_micros(settings, 1_000, 100)
+
+
+async def test_stream_failures_are_counted_per_provider(redis_client):
+    settings = _settings()
+    await record_llm_failure(redis_client, settings, provider="foundry")
+    await record_llm_failure(redis_client, settings, provider="foundry")
+    assert int(await redis_client.get(today_error_key("foundry"))) == 2
+    assert await redis_client.get(today_error_key("anthropic")) is None
+
+
+async def test_recording_a_failure_survives_a_redis_blip(monkeypatch, redis_client):
+    settings = _settings()
+
+    async def boom(*args, **kwargs):
+        raise ConnectionError("redis is unreachable")
+
+    monkeypatch.setattr(redis_client, "incr", boom)
+    await record_llm_failure(redis_client, settings, provider="foundry")
 
 
 # --- request size caps ----------------------------------------------------

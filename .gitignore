@@ -87,6 +87,9 @@ mobile/**/key.properties
 *.sqlite
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
+/api/data/
 dump.rdb
 *.rdb
 playwright-report/

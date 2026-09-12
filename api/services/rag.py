@@ -12,12 +12,12 @@ Design principles (learned from Certio):
 import re
 from typing import Optional
 
-from anthropic import AsyncAnthropic
 from loguru import logger
 from qdrant_client import AsyncQdrantClient
 
 from .embeddings import embed_texts
 from ..config import get_settings
+from ..models.build import CLASS_ABILITY_HUB, CLASS_ARMOR_HUB, STAT_RING_HUB
 
 settings = get_settings()
 
@@ -25,6 +25,34 @@ _INJECTION_PATTERNS = re.compile(
     r"(ignore (all |previous )?instructions|system prompt|</?(system|human|assistant)>|act as|jailbreak)",
     re.IGNORECASE,
 )
+
+
+def rag_exclude_slugs(
+    class_name: Optional[str] = None,
+    stat: Optional[str] = None,
+) -> list[str]:
+    """Hubs that belong to a different class or 8/8 stat.
+
+    A Dex Samurai question must not retrieve Huntress traps or robe lists —
+    those chunks are how Lotus Berserk leaked onto Ryu's Blade.
+    """
+    skip: list[str] = []
+    if stat:
+        skip.extend(
+            slug for other, slug in STAT_RING_HUB.items() if other != stat
+        )
+    if class_name:
+        skip.extend(
+            slug
+            for other, slug in CLASS_ABILITY_HUB.items()
+            if other != class_name
+        )
+        armor = CLASS_ARMOR_HUB.get(class_name)
+        if armor:
+            skip.extend(
+                slug for slug in set(CLASS_ARMOR_HUB.values()) if slug != armor
+            )
+    return skip
 
 
 def _sanitize_context(text: str) -> str:
@@ -155,12 +183,13 @@ def build_system_prompt(context: str, ign: Optional[str] = None) -> str:
         "Ability "
         "formulas live on each item's infobox (check T7 first, then ST and "
         "UT), not on the hub table. When several abilities scale with the "
-        "same stat, pick the one whose Effect(s) help more — Berserk, "
-        "Healing, Damaging, Speedy, party auras beat raw scaling alone "
-        "(Lifebringing Lotus over Honeytomb Snare for Dex Huntress because "
-        "Lotus also grants Berserk and Healing). Call out awakened item "
-        "variants when they add effects (awakened Snake Eye Ring: Speedy "
-        "plus Damaging on ability use). "
+        "same stat, pick the one whose Effect(s) on THAT item's wiki chunk "
+        "help more. Never invent Berserk, Healing, Damaging, Speedy, or "
+        "any other status, and never copy an effect from a previous turn "
+        "or a different item onto this one. RealmShark top-5 rows only "
+        "show what was worn — popularity is not an effect. Call out "
+        "awakened item variants only when this item's wiki Effect(s) "
+        "mention them. "
         "When the user asks for a best/stat build (e.g. Best attack build "
         "for Archer), answer with a balanced loadout: Weapon, Ability, Armor, "
         "and Ring at similar depth — 2-3 alternatives each. If you show "
@@ -238,6 +267,9 @@ def build_system_prompt(context: str, ign: Optional[str] = None) -> str:
         "list Bridge Sentinel, Twilight Archmage, or The Forgotten King as the "
         "Hard Mode bosses. Before Valen, kill the Stone Idol via the Void "
         "Phantasm and do not break all 8 monuments until the Idol is dead. "
+        "After the purple dome (the Source) on the clear to Nox, drag all 4 "
+        "branches/flames to the center. Do not mention wings | that is regular "
+        "The Shatters, not Hardmode. "
         "On King Azamoth, say patience is almost twice as long as regular "
         "Shatters and the fight needs heavy damage to defeat The Shattered Queen. "
         "If the dungeon page lists an NPC quiz (Village Girl Umi shrine "
@@ -254,7 +286,9 @@ def build_system_prompt(context: str, ign: Optional[str] = None) -> str:
     if context:
         base += (
             "Use the following retrieved information to answer the user's question. "
-            "Only use information from the context that is directly relevant. Each "
+            "Only use information from the context that is directly relevant. "
+            "Earlier chat turns may be about a different class — do not reuse "
+            "those items or effects. Each "
             "chunk starts with 'Source: <url>' | that is the page it was "
             "pulled from (RealmEye wiki or RealmShark DPS boards).\n\n"
             f"<context>\n{context}\n</context>\n\n"

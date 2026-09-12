@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from .config import get_settings
-from .routers import chat, players, payments, sprite, items, dungeons, skins
+from .routers import auth, chat, players, payments, sprite, items, dungeons, skins, uploads
 
 # loguru's logger.info(msg, key=value) does NOT attach key/value as structured
 # fields | those kwargs are only used for str.format() substitution in the
@@ -87,17 +87,157 @@ async def _ensure_qdrant_collection(settings) -> None:
         ).warning("Could not prepare Qdrant collection; retrieval may be degraded")
 
 
+def _warn_on_default_secrets(settings) -> None:
+    """
+    Loud rather than silent about secrets that were never rotated.
+
+    JWT_SECRET signs magic-link sessions and, via PII_HASH_SECRET's fallback,
+    keys every rate-limit hash. Shipping the placeholder means both are
+    guessable from this repo's public history, not just weak.
+    """
+    if settings.debug:
+        return
+    if settings.uses_default_jwt_secret:
+        logger.warning(
+            "JWT_SECRET is still the shipped placeholder. Sessions, magic links, "
+            "and (via its fallback) hashed rate-limit keys are only as strong as "
+            "this secret — rotate it before this deployment is publicly reachable."
+        )
+    if not settings.pii_hash_secret:
+        logger.warning(
+            "PII_HASH_SECRET is unset; quota hashing falls back to JWT_SECRET. Set "
+            "it explicitly so rotating one secret doesn't silently change the other."
+        )
+    if settings.magic_link_secret_is_shared:
+        logger.warning(
+            "MAGIC_LINK_SECRET is unset; magic links are signed with JWT_SECRET, the "
+            "same secret that signs every session token. A link leaked from one "
+            "channel (email logs, a referrer header) then forges a session too. "
+            "Set MAGIC_LINK_SECRET explicitly."
+        )
+
+
+def _warn_on_llm_config(settings) -> None:
+    """
+    Production should not call Anthropic with a key sitting in .env, and
+    Foundry should use Entra rather than a Foundry API key. Local fallback
+    is intentional; this only shouts when DEBUG is off.
+    """
+    if settings.debug:
+        return
+    if settings.llm_provider == "anthropic":
+        logger.warning(
+            "Chat is calling Anthropic directly. Production should use Foundry "
+            "with FOUNDRY_USE_ENTRA so no Anthropic or Foundry key lives in the environment."
+        )
+        return
+    if settings.foundry_auth == "api_key":
+        logger.warning(
+            "Foundry is authenticating with an API key. Prefer FOUNDRY_USE_ENTRA "
+            "so managed identity holds the credential instead."
+        )
+
+
+async def _ensure_entitlements_db(settings) -> None:
+    """Create the durable entitlement DB/schema if missing. Non-fatal: chat
+    still falls back to trusting the JWT's `paid` claim if this can't open."""
+    from .services import entitlements
+
+    try:
+        await entitlements.init_db(settings)
+    except Exception as exc:
+        logger.bind(path=settings.entitlements_db_path, error=str(exc)).warning(
+            "Could not open the entitlements DB; paid-status revocation is degraded"
+        )
+
+
+async def _ensure_accounts_db(settings) -> None:
+    """Create the local email+password account store if missing. Non-fatal:
+    /auth/signin and /auth/register will 500 on first use if this can't open,
+    but the rest of the API stays up."""
+    from .services import accounts
+
+    try:
+        await accounts.init_db(settings)
+    except Exception as exc:
+        logger.bind(path=settings.accounts_db_path, error=str(exc)).warning(
+            "Could not open the accounts DB; email+password sign-in is unavailable"
+        )
+
+
+async def _ensure_specialist_stores(settings) -> None:
+    """Fill empty wiki/DPS specialist stores in the background.
+
+    Chat never scrapes. A new Redis (first deploy, new namespace) starts
+    empty — warm those stores once. Already-filled keys are left alone
+    until the weekly refresh job. Player profiles are never warmed.
+    """
+    from .dependencies import _get_redis
+    from .redis_namespace import namespaced
+    from .services.specialist_warm import (
+        has_missing_work,
+        missing_specialist_work,
+        specialist_snapshot,
+        warm_all_specialists,
+    )
+
+    redis = namespaced(_get_redis(settings.redis_url), settings.redis_key_prefix)
+    try:
+        work = missing_specialist_work(await specialist_snapshot(redis))
+    except Exception as exc:
+        logger.bind(error=str(exc)).warning("Could not check specialist wiki stores")
+        return
+    if not has_missing_work(work):
+        logger.info("Specialist wiki stores ready")
+        return
+
+    async def _warm() -> None:
+        try:
+            counts = await warm_all_specialists(
+                redis,
+                ttl_seconds=settings.wiki_ttl_seconds,
+                force=False,
+            )
+            logger.bind(counts=counts).info("Warmed empty specialist wiki stores")
+        except Exception as exc:
+            logger.bind(error=str(exc)).warning("Background specialist warm failed")
+
+    logger.bind(missing=work).info(
+        "Specialist wiki stores missing; warming in the background"
+    )
+    asyncio.create_task(_warm())
+
+
+async def _ensure_uploads_db(settings) -> None:
+    from .services import uploads
+
+    try:
+        await uploads.init_db(settings)
+    except Exception as exc:
+        logger.bind(path=settings.uploads_db_path, error=str(exc)).warning(
+            "Could not open the uploads DB; image attachments will not be stored"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.bind(
         debug=settings.debug,
         model=settings.claude_model,
+        llm_provider=settings.llm_provider,
+        foundry_auth=settings.foundry_auth or "n/a",
         auth=settings.auth_provider or "anonymous",
         namespace=settings.namespace_slug or "none",
     ).info("Realm Pal API starting")
     _warn_on_unsafe_proxy_config(settings)
+    _warn_on_llm_config(settings)
+    _warn_on_default_secrets(settings)
     await _ensure_qdrant_collection(settings)
+    await _ensure_entitlements_db(settings)
+    await _ensure_accounts_db(settings)
+    await _ensure_uploads_db(settings)
+    await _ensure_specialist_stores(settings)
     yield
     logger.info("Realm Pal API shutting down")
 
@@ -107,7 +247,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Realm Pal API",
-        description="RotMG AI companion | RAG pipeline powered by Claude",
+        description="RotMG AI companion | RAG pipeline powered by Claude via Microsoft Foundry",
         version="0.1.0",
         lifespan=lifespan,
         docs_url="/docs" if settings.debug else None,
@@ -116,12 +256,13 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.app_url, "http://localhost:3000"],
+        allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["*"],
     )
 
+    app.include_router(auth.router)
     app.include_router(chat.router)
     app.include_router(players.router)
     app.include_router(payments.router)
@@ -129,10 +270,15 @@ def create_app() -> FastAPI:
     app.include_router(items.router)
     app.include_router(dungeons.router)
     app.include_router(skins.router)
+    app.include_router(uploads.router)
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "model": settings.claude_model}
+        return {
+            "status": "ok",
+            "model": settings.claude_model,
+            "provider": settings.llm_provider,
+        }
 
     return app
 

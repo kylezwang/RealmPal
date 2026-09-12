@@ -110,6 +110,8 @@ COMMUNITY_ALIASES: dict[str, str] = {
     "cornea": "Command Cornea",
     "void quiv": "Quiver of Shadows",
     "void quiver": "Quiver of Shadows",
+    "qot": "Quiver of Thunder",
+    "leaf bow": "Leaf Bow",
 }
 
 _STOP = frozenset({"of", "the", "a", "an", "and", "to", "for", "s"})
@@ -635,6 +637,7 @@ async def retrieve_set_visualizer(
     *,
     ttl_seconds: int,
     class_name: Optional[str] = None,
+    allow_scrape: bool = True,
 ) -> str:
     """Slot-agent report: nickname → [item:Wiki Title] for a named set."""
     names = extract_set_item_names(message)
@@ -646,7 +649,7 @@ async def retrieve_set_visualizer(
         redis,
         ttl_seconds=ttl_seconds,
         class_name=class_name,
-        allow_scrape=True,
+        allow_scrape=allow_scrape,
     )
     resolved: list[tuple[str, str, Optional[str]]] = []
     for index, raw in enumerate(names):

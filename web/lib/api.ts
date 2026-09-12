@@ -113,6 +113,8 @@ export interface ItemProfile {
   wiki_url?: string;
   /** Nickname the user typed; used to match loadout slots after resolve. */
   requestedAs?: string;
+  /** False when class_name was sent and this class cannot equip the item. */
+  wearable?: boolean | null;
 }
 
 export interface DyeChip {
@@ -173,13 +175,194 @@ export function getSessionId(): string {
   return id;
 }
 
-/** Get stored JWT (paid user token) */
-export function getAuthToken(): string | null {
-  return localStorage.getItem("realm_pal_token");
+const AUTH_TOKEN_KEY = "realm_pal_token";
+
+/** Chat and account UI listen for this after a token is stored or cleared. */
+export const AUTH_CHANGED_EVENT = "realm-pal-auth-changed";
+
+function notifyAuthChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
 }
 
-export function setAuthToken(token: string) {
-  localStorage.setItem("realm_pal_token", token);
+/** Get stored JWT (paid user token) */
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY) ?? sessionStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string, persist = true) {
+  if (persist) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+  notifyAuthChanged();
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  notifyAuthChanged();
+}
+
+const TRAIN_ON_DATA_KEY = "realm_pal_train_on_data";
+
+/** Guest default is on; a stored "0"/"false" is the only opt-out. */
+export function getLocalTrainOnData(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = localStorage.getItem(TRAIN_ON_DATA_KEY);
+  if (raw === null) return true;
+  return raw !== "0" && raw !== "false";
+}
+
+export function setLocalTrainOnData(value: boolean) {
+  localStorage.setItem(TRAIN_ON_DATA_KEY, value ? "1" : "0");
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function fetchPreferences(): Promise<{ train_on_data: boolean }> {
+  const token = getAuthToken();
+  if (!token) return { train_on_data: getLocalTrainOnData() };
+  const res = await fetch(`${API_URL}/auth/preferences`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!res.ok) return { train_on_data: getLocalTrainOnData() };
+  return res.json();
+}
+
+export async function savePreferences(
+  train_on_data: boolean,
+): Promise<{ train_on_data: boolean }> {
+  setLocalTrainOnData(train_on_data);
+  if (!getAuthToken()) return { train_on_data };
+  const res = await fetch(`${API_URL}/auth/preferences`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ train_on_data }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not save setting");
+  }
+  return data as { train_on_data: boolean };
+}
+
+export async function uploadChatImage(file: File): Promise<{
+  id: string;
+  filename: string;
+  expires_at: number;
+  train_on_data: boolean;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("session_id", getSessionId());
+  form.append("train_on_data", getLocalTrainOnData() ? "true" : "false");
+  const res = await fetch(`${API_URL}/uploads`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not upload image");
+  }
+  return data;
+}
+
+/**
+ * Best-effort read of the `email` claim off the stored JWT, for display
+ * only (e.g. showing who's signed in in the account menu). The signature
+ * is never checked here | the API independently verifies it on every
+ * request that actually uses it, so nothing security-relevant depends on
+ * this decode succeeding or being accurate.
+ */
+export function decodeAuthEmail(): string | null {
+  const token = getAuthToken();
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claims = JSON.parse(json) as { email?: string };
+    return typeof claims.email === "string" ? claims.email : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface AuthSession {
+  token: string;
+  email: string;
+  paid: boolean;
+  ign?: string | null;
+}
+
+async function postAuth(
+  path: string,
+  body: Record<string, string>,
+  persist = true,
+): Promise<AuthSession> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not sign in");
+  }
+  setAuthToken(data.token, persist);
+  return data as AuthSession;
+}
+
+export async function signInWithPassword(
+  email: string,
+  password: string,
+  opts?: { persist?: boolean },
+): Promise<AuthSession> {
+  return postAuth("/auth/signin", { email, password }, opts?.persist !== false);
+}
+
+export async function registerAccount(
+  email: string,
+  password: string,
+  opts: { ign: string; confirmPassword: string },
+): Promise<AuthSession> {
+  return postAuth("/auth/register", {
+    email,
+    password,
+    ign: opts.ign,
+    confirm_password: opts.confirmPassword,
+  });
+}
+
+export async function startOAuth(provider: "google" | "microsoft"): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/oauth/${provider}`, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  throw new Error(
+    typeof data.detail === "string" ? data.detail : "That sign-in option isn't available yet",
+  );
+}
+
+/** Optional fallback. Always resolves for a well-formed address | the
+ * backend never reports whether that email "exists". */
+export async function requestSignInLink(email: string): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/request-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "Could not send sign-in link");
+  }
 }
 
 export async function fetchPlayer(username: string): Promise<PlayerProfile> {
@@ -189,6 +372,7 @@ export async function fetchPlayer(username: string): Promise<PlayerProfile> {
   // (missing fields from a since-updated API, or a since-changed profile).
   const res = await fetch(`${API_URL}/players/${encodeURIComponent(username)}`, {
     cache: "no-store",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -225,6 +409,7 @@ export interface DungeonGuide {
 export async function fetchDungeon(name: string): Promise<DungeonGuide> {
   const res = await fetch(`${API_URL}/dungeons/${encodeURIComponent(name)}`, {
     cache: "no-store",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -237,6 +422,7 @@ export async function fetchItem(name: string, className?: string): Promise<ItemP
   const params = className ? `?class_name=${encodeURIComponent(className)}` : "";
   const res = await fetch(`${API_URL}/items/${encodeURIComponent(name)}${params}`, {
     cache: "no-store",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -258,6 +444,7 @@ export async function fetchSkinPortrait(spec: {
   if (spec.accessory) params.set("accessory", spec.accessory);
   const res = await fetch(`${API_URL}/skins/render?${params.toString()}`, {
     cache: "no-store",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -355,20 +542,41 @@ export async function fetchChatUsage(): Promise<ChatUsage> {
   const sessionId = getSessionId();
   const res = await fetch(
     `${API_URL}/chat/usage?session_id=${encodeURIComponent(sessionId)}`,
-    { cache: "no-store" },
+    { cache: "no-store", headers: authHeaders() },
   );
   if (!res.ok) throw new Error("Failed to load usage");
   return res.json();
 }
 
-export async function createCheckout(email: string): Promise<string> {
+export async function createCheckout(email?: string): Promise<string> {
   const sessionId = getSessionId();
   const res = await fetch(`${API_URL}/payments/checkout`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, email }),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      session_id: sessionId,
+      email: email ?? decodeAuthEmail() ?? "",
+    }),
   });
-  if (!res.ok) throw new Error("Failed to create checkout");
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Failed to create checkout");
+  }
   return data.checkout_url;
+}
+
+export async function confirmCheckout(sessionId: string): Promise<AuthSession> {
+  const res = await fetch(`${API_URL}/payments/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not confirm upgrade");
+  }
+  if (typeof data.token === "string") {
+    setAuthToken(data.token, Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
+  }
+  return data as AuthSession;
 }

@@ -29,7 +29,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FOUNDRY_RESOURCE=${FOUNDRY_RESOURCE:-}
+      - FOUNDRY_BASE_URL=${FOUNDRY_BASE_URL:-}
+      - FOUNDRY_API_KEY=${FOUNDRY_API_KEY:-}
+      - FOUNDRY_USE_ENTRA=${FOUNDRY_USE_ENTRA:-false}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379
       - EMBEDDING_BACKEND=${EMBEDDING_BACKEND:-ollama}
@@ -37,7 +42,14 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - STRIPE_PRICE_ID=${STRIPE_PRICE_ID:-}
+      - ENTITLEMENTS_DB_PATH=${ENTITLEMENTS_DB_PATH:-data/entitlements.db}
+      - ACCOUNTS_DB_PATH=${ACCOUNTS_DB_PATH:-data/accounts.db}
+      - UPLOADS_DB_PATH=${UPLOADS_DB_PATH:-data/uploads.db}
+      - UPLOAD_TTL_DAYS=${UPLOAD_TTL_DAYS:-7}
+      - WIKI_SCRAPE_TTL_HOURS=${WIKI_SCRAPE_TTL_HOURS:-168}
+      - PLAYER_SCRAPE_TTL_SECONDS=${PLAYER_SCRAPE_TTL_SECONDS:-120}
       - JWT_SECRET=${JWT_SECRET}
+      - MAGIC_LINK_SECRET=${MAGIC_LINK_SECRET:-}
       - APP_URL=${APP_URL:-http://localhost:3000}
       - DEBUG=${DEBUG:-false}
     depends_on:

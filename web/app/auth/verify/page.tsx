@@ -16,6 +16,7 @@ export default function VerifyPage() {
   const params = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [paid, setPaid] = useState(false);
 
   useEffect(() => {
     const token = params.get("token");
@@ -29,6 +30,7 @@ export default function VerifyPage() {
       .then((data) => {
         if (data.token) {
           setAuthToken(data.token);
+          setPaid(Boolean(data.paid));
           setStatus("success");
           setTimeout(() => router.push("/"), 1500);
         } else {
@@ -58,7 +60,9 @@ export default function VerifyPage() {
               className="mx-auto mb-3"
               unoptimized
             />
-            <p className="text-[#ececec] font-semibold text-lg">Welcome to RealmPal Pro!</p>
+            <p className="text-[#ececec] font-semibold text-lg">
+              {paid ? "Welcome to RealmPal Pro!" : "You're signed in!"}
+            </p>
             <p className="text-[#737373] text-sm mt-1">Redirecting you back...</p>
           </>
         )}

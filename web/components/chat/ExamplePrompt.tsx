@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import type { ExamplePromptConfig } from "@/lib/examplePrompts";
+import type { ExamplePromptConfig, ExamplePromptField } from "@/lib/examplePrompts";
 
 const HOLD_MS = 1250;
 /** Delay before this prompt starts deleting. Letter speed stays the same. */
@@ -9,22 +9,10 @@ const ERASE_MS = 70;
 
 type Variant = "card" | "sidebar";
 
-export function ExamplePrompt({
-  config,
-  variant,
-  disabled,
-  onSubmit,
-}: {
-  config: ExamplePromptConfig;
-  variant: Variant;
-  disabled?: boolean;
-  onSubmit: (message: string) => void;
-}) {
-  const animate = variant === "card";
-  const [value, setValue] = useState(animate ? config.initial : "");
-  const sent = useRef(false);
+function useErasingValue(initial: string, animate: boolean, stagger: number) {
+  const [value, setValue] = useState(animate ? initial : "");
   const animating = useRef(animate);
-  const remaining = useRef(animate ? config.initial : "");
+  const remaining = useRef(animate ? initial : "");
 
   useEffect(() => {
     if (!animate) return;
@@ -43,19 +31,89 @@ export function ExamplePrompt({
           animating.current = false;
         }
       }, ERASE_MS);
-    }, HOLD_MS + config.stagger * STAGGER_MS);
+    }, HOLD_MS + stagger * STAGGER_MS);
     return () => {
       window.clearTimeout(start);
       if (interval) window.clearInterval(interval);
     };
-  }, [animate, config.stagger]);
+  }, [animate, stagger]);
 
   function stopAnimation() {
     animating.current = false;
   }
 
-  function submit(raw: string) {
-    const message = config.toMessage(raw);
+  function write(next: string) {
+    remaining.current = next;
+    setValue(next);
+  }
+
+  return { value, setValue: write, stopAnimation };
+}
+
+function PromptInput({
+  field,
+  name,
+  value,
+  disabled,
+  inputClass,
+  onWrite,
+  onStop,
+}: {
+  field: ExamplePromptField;
+  name: string;
+  value: string;
+  disabled?: boolean;
+  inputClass: string;
+  onWrite: (next: string) => void;
+  onStop: () => void;
+}) {
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(event) => {
+        onStop();
+        onWrite(field.sanitize(event.target.value));
+      }}
+      onPaste={(event) => {
+        event.preventDefault();
+        onStop();
+        onWrite(field.sanitize(event.clipboardData.getData("text")));
+      }}
+      onFocus={onStop}
+      onClick={(event) => event.stopPropagation()}
+      maxLength={field.maxLength}
+      autoComplete="off"
+      autoCorrect="off"
+      spellCheck={false}
+      inputMode="text"
+      name={name}
+      aria-label={field.placeholder}
+      placeholder={field.placeholder}
+      disabled={disabled}
+      className={inputClass}
+    />
+  );
+}
+
+export function ExamplePrompt({
+  config,
+  variant,
+  disabled,
+  onSubmit,
+}: {
+  config: ExamplePromptConfig;
+  variant: Variant;
+  disabled?: boolean;
+  onSubmit: (message: string) => void;
+}) {
+  const animate = variant === "card";
+  const sent = useRef(false);
+  const first = useErasingValue(config.initial, animate, config.stagger);
+  const second = useErasingValue(config.second?.initial ?? "", animate, config.stagger);
+
+  function submit() {
+    const message = config.toMessage(first.value, config.second ? second.value : undefined);
     if (!message || disabled || sent.current) return;
     sent.current = true;
     onSubmit(message);
@@ -64,17 +122,19 @@ export function ExamplePrompt({
   const isCard = variant === "card";
   const stacked = config.layout === "stacked";
 
-  const inputClass = isCard
-    ? `min-w-0 ${stacked ? "w-full" : "w-[7.5rem]"} h-8 rounded-md bg-[#333333] border border-[#454545] px-2 text-sm text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text`
-    : `min-w-0 ${stacked ? "w-full" : "w-[6.5rem]"} h-6 rounded-md bg-[#2a2a2a] border border-[#3a3a3a] px-1.5 text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text`;
+  const fieldClass = isCard
+    ? "h-8 rounded-md bg-[#333333] border border-[#454545] px-2 text-sm text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text"
+    : "h-6 rounded-md bg-[#2a2a2a] border border-[#3a3a3a] px-1.5 text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text";
+  const inputClass = `min-w-0 ${stacked ? "w-full" : isCard ? "w-[7.5rem]" : "w-[6.5rem]"} ${fieldClass}`;
+  const compactInputClass = `min-w-0 ${isCard ? "w-[6.75rem]" : "w-[5.5rem]"} ${fieldClass}`;
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        submit(value);
+        submit();
       }}
-      onClick={() => submit(value)}
+      onClick={() => submit()}
       className={
         isCard
           ? `rounded-xl bg-[#262626] border border-[#404040] hover:border-white px-3 py-2.5 text-sm text-[#a3a3a3] cursor-pointer ${
@@ -86,36 +146,36 @@ export function ExamplePrompt({
       }
     >
       <span className={stacked ? "leading-snug" : "whitespace-nowrap"}>{config.prefix}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={(event) => {
-          stopAnimation();
-          const next = config.sanitize(event.target.value);
-          remaining.current = next;
-          setValue(next);
-        }}
-        onPaste={(event) => {
-          event.preventDefault();
-          stopAnimation();
-          const next = config.sanitize(event.clipboardData.getData("text"));
-          remaining.current = next;
-          setValue(next);
-        }}
-        onFocus={stopAnimation}
-        onClick={(event) => event.stopPropagation()}
-        onBlur={() => submit(value)}
-        maxLength={config.maxLength}
-        autoComplete="off"
-        autoCorrect="off"
-        spellCheck={false}
-        inputMode="text"
+      <PromptInput
+        field={config}
         name={config.id}
-        aria-label={config.placeholder}
-        placeholder={config.placeholder}
+        value={first.value}
         disabled={disabled}
-        className={inputClass}
+        inputClass={inputClass}
+        onWrite={first.setValue}
+        onStop={() => {
+          first.stopAnimation();
+          second.stopAnimation();
+        }}
       />
+      {config.second && (
+        <div className="flex min-w-0 items-center gap-1.5">
+          {config.infix && <span className="whitespace-nowrap">{config.infix}</span>}
+          <PromptInput
+            field={config.second}
+            name={`${config.id}-extra`}
+            value={second.value}
+            disabled={disabled}
+            inputClass={compactInputClass}
+            onWrite={second.setValue}
+            onStop={() => {
+              first.stopAnimation();
+              second.stopAnimation();
+            }}
+          />
+          {config.suffix && <span className="flex-shrink-0">{config.suffix}</span>}
+        </div>
+      )}
     </form>
   );
 }

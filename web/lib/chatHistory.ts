@@ -3,6 +3,8 @@
  * chat-storage model yet, so conversations live entirely in the browser.
  */
 
+import { decodeAuthEmail } from "./api";
+
 export type StoredFeedback = "up" | "down";
 
 export interface StoredMessage {
@@ -21,10 +23,15 @@ export interface ChatSession {
 
 const SESSIONS_KEY = "realm_pal_sessions";
 
+function sessionsKey(): string {
+  const email = decodeAuthEmail();
+  return email ? `${SESSIONS_KEY}:${email.trim().toLowerCase()}` : SESSIONS_KEY;
+}
+
 export function loadSessions(): ChatSession[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
+    const raw = localStorage.getItem(sessionsKey());
     return raw ? (JSON.parse(raw) as ChatSession[]) : [];
   } catch {
     return [];
@@ -34,7 +41,7 @@ export function loadSessions(): ChatSession[] {
 export function saveSessions(sessions: ChatSession[]) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+    localStorage.setItem(sessionsKey(), JSON.stringify(sessions));
   } catch {
     // storage disabled/full | history just won't persist, not fatal
   }

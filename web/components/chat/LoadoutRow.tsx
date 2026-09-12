@@ -29,9 +29,10 @@ function LoadoutSlot({
   if (!item) {
     return (
       <div
-        className="rounded-md border border-dashed border-[#333333]"
+        className="glimmer rounded-md"
         style={{ width: ICON_SIZE, height: ICON_SIZE }}
-        aria-hidden="true"
+        aria-busy="true"
+        aria-label="Loading item"
       />
     );
   }
@@ -83,7 +84,7 @@ function LoadedLoadoutSlot({
           />
         ) : (
           <div
-            className="absolute inset-0 rounded-md border border-dashed border-[#333333]"
+            className="absolute inset-0 glimmer rounded-md"
             aria-hidden
           />
         )}

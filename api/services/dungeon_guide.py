@@ -62,8 +62,10 @@ _PUNCT_TAIL = re.compile(r"[?.!]+$")
 _SOURCE_SLUG = "the-source"
 _SOURCE_SPRITE_FALLBACK = "https://www.realmeye.com/s/a/img/wiki/i/bdfzUM2.png"
 _HM_SHATTERS_TIP = (
-    "To keep hardmode, make sure to kill the source (Purple dome above) during the clear to the second boss,"
-    " Nox the Wild Shadow. Remember to balance the flames."
+    "To keep hardmode, kill the Source (the purple dome) during the clear to "
+    "the second boss, Nox the Wild Shadow. After the dome, drag all 4 "
+    "branches/flames to the center. Do not mention wings — that mechanic is "
+    "regular The Shatters, not Hardmode."
 )
 _HM_CHRYSALIS_NOTE = (
     "Chrysalis of Eternity is a very low chance from King Azamoth. "
@@ -301,10 +303,15 @@ async def get_or_scrape_index(
     redis: aioredis.Redis,
     *,
     ttl_seconds: int,
+    force: bool = False,
+    cache_only: bool = False,
 ) -> list[dict]:
-    cached = await redis.get(INDEX_CACHE_KEY)
-    if cached:
-        return json.loads(cached)
+    if not force:
+        cached = await redis.get(INDEX_CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+        if cache_only:
+            return []
     entries = await scrape_dungeon_indexes()
     await redis.setex(INDEX_CACHE_KEY, ttl_seconds, json.dumps(entries))
     return entries
@@ -315,11 +322,16 @@ async def get_or_scrape_wiki(
     slug: str,
     *,
     ttl_seconds: int,
+    force: bool = False,
+    cache_only: bool = False,
 ) -> Optional[dict[str, str]]:
     cache_key = f"{PAGE_CACHE_PREFIX}{slug}"
-    cached = await redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
+    if not force:
+        cached = await redis.get(cache_key)
+        if cached:
+            return json.loads(cached)
+        if cache_only:
+            return None
 
     try:
         payload = await scrape_wiki_article(slug)
@@ -341,10 +353,13 @@ async def retrieve_dungeon_guide(
     dungeon_name: str,
     *,
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> str:
     """Match a dungeon on the RealmEye indexes, then scrape those linked pages."""
     try:
-        entries = await get_or_scrape_index(redis, ttl_seconds=ttl_seconds)
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl_seconds, cache_only=cache_only
+        )
     except Exception as e:
         logger.bind(error=str(e)).warning("Dungeon index unavailable")
         return (
@@ -364,7 +379,10 @@ async def retrieve_dungeon_guide(
     pages: list[dict[str, str]] = []
     for entry in matches:
         page = await get_or_scrape_wiki(
-            redis, entry["slug"], ttl_seconds=ttl_seconds
+            redis,
+            entry["slug"],
+            ttl_seconds=ttl_seconds,
+            cache_only=cache_only,
         )
         if page:
             pages.append(page)
@@ -377,7 +395,12 @@ async def retrieve_dungeon_guide(
         )
 
     media = await _finalize_media(
-        redis, dungeon_name, pages, matches, ttl_seconds=ttl_seconds
+        redis,
+        dungeon_name,
+        pages,
+        matches,
+        ttl_seconds=ttl_seconds,
+        cache_only=cache_only,
     )
     index_cite = "\n".join(f"Source: {url}" for url in INDEX_URLS)
     blocks: list[str] = [_media_instructions(media)]
@@ -463,12 +486,13 @@ async def _finalize_media(
     matches: list[dict],
     *,
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> dict:
     media = _merge_media(pages, matches)
     if not _is_hardmode_shatters(query):
         return media
     source = await get_or_scrape_wiki(
-        redis, _SOURCE_SLUG, ttl_seconds=ttl_seconds
+        redis, _SOURCE_SLUG, ttl_seconds=ttl_seconds, cache_only=cache_only
     )
     media["portal_url"] = (source or {}).get("portal_url") or _SOURCE_SPRITE_FALLBACK
     media["tips"] = [_HM_SHATTERS_TIP]
@@ -544,10 +568,13 @@ async def load_dungeon_guide(
     dungeon_name: str,
     *,
     ttl_seconds: int,
+    cache_only: bool = True,
 ) -> Optional[dict]:
     """Structured portal/graves/layouts/drops for the chat UI."""
     try:
-        entries = await get_or_scrape_index(redis, ttl_seconds=ttl_seconds)
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl_seconds, cache_only=cache_only
+        )
     except Exception:
         return None
     matches = match_index_pages(dungeon_name, entries)
@@ -556,12 +583,20 @@ async def load_dungeon_guide(
     pages: list[dict] = []
     for entry in matches:
         page = await get_or_scrape_wiki(
-            redis, entry["slug"], ttl_seconds=ttl_seconds
+            redis,
+            entry["slug"],
+            ttl_seconds=ttl_seconds,
+            cache_only=cache_only,
         )
         if page:
             pages.append(page)
     if not pages:
         return None
     return await _finalize_media(
-        redis, dungeon_name, pages, matches, ttl_seconds=ttl_seconds
+        redis,
+        dungeon_name,
+        pages,
+        matches,
+        ttl_seconds=ttl_seconds,
+        cache_only=cache_only,
     )

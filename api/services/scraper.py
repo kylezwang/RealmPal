@@ -661,7 +661,11 @@ async def scrape_player_profile(username: str) -> PlayerProfile:
 def _item_wiki_slug(item_name: str) -> str:
     """RealmEye slug: spaces and apostrophes become hyphens, e.g.
     "Angel's Fanfare" -> "angel-s-fanfare"."""
-    slug = item_name.strip().lower().replace("'", "-").replace(" ", "-")
+    slug = (item_name or "").strip().lower()
+    slug = slug.replace("'", "-").replace("\u2019", "-").replace("\u2018", "-")
+    slug = slug.replace(".", "").replace(":", "-").replace(";", "-")
+    slug = slug.replace("(", "-").replace(")", "-")
+    slug = slug.replace(" ", "-")
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
     return slug
 
@@ -743,6 +747,31 @@ _ITEM_PAGE_JS = """
       if (!key || /^reskin/i.test(key)) continue;
       const val = cellText(cells[1]);
       if (val) stats[key] = val;
+    }
+  }
+
+  // Summon / projectile combat tables sit after the item infobox.
+  // Grandmaster Mace: "Damage: 275-305 (+5.2 for every WIS above 55)".
+  const addStat = (key, val) => {
+    if (!key || !val || /^reskin/i.test(key)) return;
+    const dest = /^effect/i.test(key) && stats[key] ? ('Summon ' + key) : key;
+    if (!stats[dest]) stats[dest] = val;
+    else if (stats[dest] !== val) stats[dest] += '; ' + val;
+  };
+  for (const t of tables) {
+    if (t === infobox || t === header) continue;
+    const firstKeys = Array.from(t.querySelectorAll('tr')).map((row) => {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      return cells.length ? cellText(cells[0]).replace(/:$/, '') : '';
+    });
+    const isCombat = firstKeys.some((k) =>
+      /^(damage|shots|summon lifetime|summon cost|projectile speed|range)$/i.test(k)
+    );
+    if (!isCombat) continue;
+    for (const row of t.querySelectorAll('tr')) {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      if (cells.length < 2) continue;
+      addStat(cellText(cells[0]).replace(/:$/, ''), cellText(cells[1]));
     }
   }
 
@@ -943,7 +972,7 @@ async def scrape_items_batch(names: list[str]) -> list[ItemProfile]:
             logger.bind(item_name=item_name, url=url).info("Scraping item")
             try:
                 await _goto_with_retry(
-                    page, url, ready_selector=".wiki-page", timeout=8_000, retries=1
+                    page, url, ready_selector=".wiki-page", timeout=8_000, retries=2
                 )
                 title = _clean_item_name((await page.title()).split("|")[0].strip())
                 if "404" in title:
@@ -1316,6 +1345,66 @@ async def scrape_wiki_page(slug: str) -> tuple[str, str, str]:
     """Title, plain text, and URL for RAG ingestion."""
     article = await scrape_wiki_article(slug)
     return article["title"], article["text"], article["url"]
+
+
+_ENCHANT_PAGE_JS = """() => {
+  const root = document.querySelector('.wiki-page, #mw-content-text, main') || document.body;
+  const tables = [];
+  let heading = '';
+  let subheading = '';
+  for (const el of root.querySelectorAll('h2, h3, h4, table')) {
+    const tag = (el.tagName || '').toUpperCase();
+    if (tag === 'H2' || tag === 'H3' || tag === 'H4') {
+      const title = (el.innerText || '').replace(/\\[edit.*?\\]/gi, '').replace(/back to top/gi, '').trim();
+      if (tag === 'H2') { heading = title; subheading = ''; }
+      else subheading = title;
+      continue;
+    }
+    const rows = [...el.querySelectorAll('tr')].map((tr) =>
+      [...tr.querySelectorAll('th, td')].map((c) =>
+        (c.innerText || '').replace(/\\s+/g, ' ').trim()
+      ).filter((c) => c)
+    ).filter((r) => r.length);
+    if (rows.length) {
+      tables.push({
+        heading: [heading, subheading].filter(Boolean).join(' / '),
+        rows,
+      });
+    }
+  }
+  const paras = [...root.querySelectorAll('p')].map((p) => (p.innerText || '').trim()).filter(Boolean);
+  return { tables, overview: paras.slice(0, 6).join('\\n\\n') };
+}
+"""
+
+
+async def scrape_enchanting_page() -> dict:
+    """RealmEye /wiki/enchanting tables: name, eligible slot, tiered effects."""
+    url = f"{REALMEYE_BASE}/wiki/enchanting"
+    logger.bind(url=url).info("Scraping RealmEye enchanting tables")
+    async with _playwright_browser() as browser:
+        try:
+            page = await _new_page(browser)
+            await _goto_with_retry(
+                page, url, ready_selector=".wiki-page, #mw-content-text, main"
+            )
+            title = (await page.title()).split("|")[0].strip()
+            if "404" in title:
+                raise ScraperError("Wiki page 'enchanting' not found")
+            payload = await page.locator(
+                ".wiki-page, #mw-content-text, main"
+            ).first.evaluate(_ENCHANT_PAGE_JS)
+            return {
+                "title": title or "Enchanting",
+                "url": url,
+                "overview": (payload or {}).get("overview") or "",
+                "tables": list((payload or {}).get("tables") or []),
+            }
+        except ScraperError:
+            raise
+        except Exception as e:
+            logger.exception("Error scraping enchanting wiki")
+            raise ScraperError(f"Failed to scrape wiki page 'enchanting': {e}") from e
 
 
 async def scrape_umi_bis(class_name: str) -> tuple[str, str]:

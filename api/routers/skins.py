@@ -5,15 +5,20 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis
+from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..models.skin import SkinPortrait
 from ..services.scraper import ScraperError
 from ..services.skin_visualizer import render_skin_portrait
+from ..services.validation import sanitize_lookup_name
 
 router = APIRouter(prefix="/skins", tags=["skins"])
 
 
-@router.get("/render", response_model=SkinPortrait)
+@router.get(
+    "/render",
+    response_model=SkinPortrait,
+    dependencies=[Depends(enforce_lookup_rate_limit)],
+)
 async def render_skin(
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
@@ -25,6 +30,10 @@ async def render_skin(
     """Composite a RealmEye skin portrait (base sprite + clothing + accessory dyes)."""
     if not (class_name or skin):
         raise HTTPException(status_code=400, detail="class_name or skin is required")
+    class_name = sanitize_lookup_name(class_name, field="class_name") if class_name else None
+    skin = sanitize_lookup_name(skin, field="skin") if skin else None
+    clothing = sanitize_lookup_name(clothing, field="clothing") if clothing else None
+    accessory = sanitize_lookup_name(accessory, field="accessory") if accessory else None
     try:
         return await render_skin_portrait(
             redis,
@@ -32,7 +41,7 @@ async def render_skin(
             skin_name=skin,
             clothing=clothing,
             accessory=accessory,
-            ttl_seconds=settings.scrape_ttl_hours * 3600,
+            ttl_seconds=settings.wiki_ttl_seconds,
         )
     except ScraperError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

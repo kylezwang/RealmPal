@@ -2,17 +2,24 @@ import { DEMO_PLAYER_IGN, IGN_MAX_LENGTH, playerLookupMessage, sanitizeIgn } fro
 
 export type ExamplePromptLayout = "inline" | "stacked";
 
-export interface ExamplePromptConfig {
-  id: string;
-  prefix: string;
+export interface ExamplePromptField {
   initial: string;
   placeholder: string;
+  maxLength: number;
+  sanitize: (raw: string) => string;
+}
+
+export interface ExamplePromptConfig extends ExamplePromptField {
+  id: string;
+  prefix: string;
+  /** Text between the first and second inputs, e.g. "look like with". */
+  infix?: string;
+  suffix?: string;
   layout: ExamplePromptLayout;
   /** 0, 1, 2… — each step delays the delete animation by 0.5s. */
   stagger: number;
-  maxLength: number;
-  sanitize: (raw: string) => string;
-  toMessage: (raw: string) => string | null;
+  second?: ExamplePromptField;
+  toMessage: (raw: string, extra?: string) => string | null;
 }
 
 function sanitizeWords(raw: string, maxWords: number, maxLen: number): string {
@@ -32,6 +39,22 @@ function templatedMessage(prefix: string, raw: string, sanitize: (value: string)
   return `${prefix}${value}`;
 }
 
+/** RealmEye cloths are Large or Small; keep that out of the visible field. */
+function withHiddenClothSize(cloth: string): string {
+  const value = cloth.trim();
+  if (!value) return value;
+  if (/^(large|small)\b/i.test(value)) return value;
+  if (/\b(?:cloth|dye)\b/i.test(value)) return `Large ${value}`;
+  return value;
+}
+
+function skinLookMessage(skinRaw: string, clothRaw?: string): string | null {
+  const skin = sanitizeWords(skinRaw, 6, 40).trim();
+  const cloth = withHiddenClothSize(sanitizeWords(clothRaw ?? "", 6, 40));
+  if (!skin || !cloth) return null;
+  return `What does ${skin} look like with ${cloth}?`;
+}
+
 export const ANIMATED_EXAMPLE_PROMPTS: ExamplePromptConfig[] = [
   {
     id: "player",
@@ -45,15 +68,23 @@ export const ANIMATED_EXAMPLE_PROMPTS: ExamplePromptConfig[] = [
     toMessage: playerLookupMessage,
   },
   {
-    id: "attack-class",
-    prefix: "Best attack build for",
-    initial: "Bard",
-    placeholder: "Class",
-    layout: "inline",
+    id: "skin-look",
+    prefix: "What does",
+    infix: "look like with",
+    suffix: "?",
+    initial: "Vampire Slayer Archer",
+    placeholder: "Skin",
+    layout: "stacked",
     stagger: 1,
-    maxLength: 20,
-    sanitize: (raw) => sanitizeWords(raw, 1, 20),
-    toMessage: (raw) => templatedMessage("Best attack build for ", raw, (value) => sanitizeWords(value, 1, 20)),
+    maxLength: 40,
+    sanitize: (raw) => sanitizeWords(raw, 6, 40),
+    second: {
+      initial: "Crown cloth",
+      placeholder: "Cloth / dye",
+      maxLength: 40,
+      sanitize: (raw) => sanitizeWords(raw, 6, 40),
+    },
+    toMessage: skinLookMessage,
   },
   {
     id: "dungeon",
@@ -86,7 +117,7 @@ export const SIDEBAR_EXAMPLE_PROMPTS: ExamplePromptConfig[] = ANIMATED_EXAMPLE_P
 );
 
 /** Landing grid only: swap the two right-column cards. Sidebar keeps source order. */
-const LANDING_ORDER = ["player", "stat-class", "dungeon", "attack-class"] as const;
+const LANDING_ORDER = ["player", "stat-class", "dungeon", "skin-look"] as const;
 
 export const LANDING_EXAMPLE_PROMPTS: ExamplePromptConfig[] = LANDING_ORDER.map((id, stagger) => {
   const config = ANIMATED_EXAMPLE_PROMPTS.find((prompt) => prompt.id === id);

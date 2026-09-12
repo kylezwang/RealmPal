@@ -1,23 +1,21 @@
 "use client";
 import type { PlayerProfile } from "@/lib/api";
-import { GuestAvatar } from "./GuestAvatar";
+import { AccountMenu } from "./AccountMenu";
 
-export function SidebarAccount({
-  pet,
-  onClick,
-}: {
-  pet?: PlayerProfile["top_pet"];
-  onClick?: () => void;
-}) {
+/**
+ * Bottom-left sidebar account row. Opens upward (there's no room below it)
+ * and shares the AccountMenu component with the top-right header cluster
+ * so both mirror each other's avatar and dropdown by construction.
+ */
+export function SidebarAccount({ pet }: { pet?: PlayerProfile["top_pet"] }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 text-left cursor-pointer hover:bg-[#333333] transition-colors"
-      aria-label="Guest account"
-    >
-      <GuestAvatar pet={pet} size={32} />
-      <span className="text-sm font-medium text-[#ececec] truncate">Guest</span>
-    </button>
+    <AccountMenu
+      pet={pet}
+      size={32}
+      showLabel
+      openDirection="up"
+      align="left"
+      triggerClassName="w-full px-2 py-1.5 -mx-2 hover:bg-[#333333] transition-colors"
+    />
   );
 }

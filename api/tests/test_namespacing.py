@@ -19,6 +19,7 @@ from .conftest import build_request
 
 def _settings(namespace: str = "") -> Settings:
     return Settings(
+        _env_file=None,
         anthropic_api_key="test-key-not-real",
         jwt_secret="test-jwt-secret",
         pii_hash_secret="test-pii-secret",
@@ -68,6 +69,7 @@ def test_namespace_is_normalized_for_use_in_identifiers(raw, expected):
 def test_custom_collection_name_is_honoured():
     """The setting used to be dead config; make sure it's read now."""
     settings = Settings(
+        _env_file=None,
         anthropic_api_key="x", qdrant_collection="other_index", deployment_namespace="dev"
     )
     assert settings.qdrant_collection_name == "other_index_dev"

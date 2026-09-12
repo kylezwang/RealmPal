@@ -41,6 +41,7 @@ export function inferSkinVisualize(prompt: string | undefined): boolean {
       prompt,
     ) ||
     /\b(?:show|preview|render)\b.{0,120}\b(?:skin|outfit|dye|cloth)\b/i.test(prompt) ||
+    /\blook like with\b.{0,80}\b(?:cloth|dye)\b/i.test(prompt) ||
     /\b(?:large|small)\s+\S.+\s+cloth\b/i.test(prompt) ||
     /\b(?:clothing|accessory)\s+dye\b/i.test(prompt) ||
     /\b(?:swap|switch|flip)\b.{0,80}\b(?:cloth|dye|clothing|accessory)\b/i.test(prompt)

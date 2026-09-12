@@ -44,6 +44,9 @@ const config: Config = {
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
         mono: ["var(--font-geist-mono)", "monospace"],
       },
+      fontWeight: {
+        semibold: "800",
+      },
       animation: {
         "cursor-blink": "cursor-blink 1s step-end infinite",
         "fade-in": "fade-in 0.2s ease-out",

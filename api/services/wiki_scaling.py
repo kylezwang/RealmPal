@@ -37,9 +37,10 @@ from .scraper import (
     ScraperError,
 )
 
-CACHE_PREFIX = "wiki:ability-scaling:v5"
+CACHE_PREFIX = "wiki:ability-scaling:v6"
 HUB_PREFIX = "wiki:hub-index:v8"
 ITEM_CACHE_PREFIX = "item:profile:v3"
+LEGACY_ITEM_CACHE_PREFIX = "item:profile:v2"
 MAX_UT = 8
 
 _SKIP_NAME = re.compile(
@@ -69,7 +70,7 @@ _STAT_TOKEN: dict[str, re.Pattern[str]] = {
 }
 
 _SCALING_HIT = re.compile(
-    r"(?:per|/)\s*(?:\d+\s+)?"
+    r"(?:per|/|for every)\s*(?:\d+\s+)?"
     r"(?:DEX|ATT|ATK|WIS|VIT|SPD|DEF|HP|MP|"
     r"Dexterity|Attack|Wisdom|Vitality|Speed|Defense|Mana|Life)"
     r"|scales?\s+with\s+(?:DEX|ATT|ATK|WIS|VIT|SPD|DEF|HP|MP|"
@@ -325,34 +326,110 @@ def _top_stat_items(
     return top
 
 
-async def _cached_item(redis: aioredis.Redis, name: str) -> Optional[ItemProfile]:
-    raw = await redis.get(f"{ITEM_CACHE_PREFIX}:{name.lower()}")
+def item_name_keys(name: str) -> list[str]:
+    """Lookup keys for a typed name, including curly/straight apostrophes."""
+    raw = (name or "").strip().lower()
     if not raw:
-        return None
-    try:
-        return ItemProfile.model_validate_json(raw)
-    except Exception:
-        return None
+        return []
+    variants = {raw, raw.replace("'", "’"), raw.replace("’", "'")}
+    return list(variants)
+
+
+async def read_cached_item(
+    redis: aioredis.Redis, name: str
+) -> Optional[ItemProfile]:
+    """Read a warmed or live-scraped item profile. Prefers v3, then v2."""
+    for prefix in (ITEM_CACHE_PREFIX, LEGACY_ITEM_CACHE_PREFIX):
+        for key in item_name_keys(name):
+            raw = await redis.get(f"{prefix}:{key}")
+            if not raw:
+                continue
+            try:
+                return ItemProfile.model_validate_json(raw)
+            except Exception:
+                continue
+    return None
+
+
+async def write_cached_item(
+    redis: aioredis.Redis,
+    item: ItemProfile,
+    ttl: int,
+    *aliases: str,
+) -> None:
+    payload = item.model_dump_json(exclude={"wearable"})
+    names = {item.name, *[alias for alias in aliases if alias]}
+    keys = []
+    for name in names:
+        keys.extend(item_name_keys(name))
+    for key in dict.fromkeys(keys):
+        await redis.setex(f"{ITEM_CACHE_PREFIX}:{key}", ttl, payload)
+
+
+async def _cached_item(redis: aioredis.Redis, name: str) -> Optional[ItemProfile]:
+    return await read_cached_item(redis, name)
 
 
 async def _store_item(redis: aioredis.Redis, item: ItemProfile, ttl: int) -> None:
-    await redis.setex(
-        f"{ITEM_CACHE_PREFIX}:{item.name.lower()}",
-        ttl,
-        item.model_dump_json(),
-    )
+    await write_cached_item(redis, item, ttl)
 
 
-async def _hub_index(redis: aioredis.Redis, slug: str, ttl: int) -> list[dict]:
+async def _hub_index(
+    redis: aioredis.Redis,
+    slug: str,
+    ttl: int,
+    *,
+    force: bool = False,
+    cache_only: bool = False,
+) -> list[dict]:
     key = f"{HUB_PREFIX}:{slug}"
-    cached = await redis.get(key)
-    if cached:
-        try:
-            return json.loads(cached)
-        except json.JSONDecodeError:
-            pass
+    if not force:
+        cached = await redis.get(key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except json.JSONDecodeError:
+                pass
+        if cache_only:
+            return []
     rows = await scrape_ability_hub(slug)
     await redis.setex(key, ttl, json.dumps(rows))
+    return rows
+
+
+async def cached_class_wiki_scaling(
+    redis: aioredis.Redis, class_name: str
+) -> Optional[dict]:
+    """Return the stored wiki-scaling payload without scraping."""
+    cached = await redis.get(f"{CACHE_PREFIX}:{class_name.lower()}")
+    if not cached:
+        return None
+    try:
+        return json.loads(cached)
+    except json.JSONDecodeError:
+        return None
+
+
+async def specialist_store_status(redis: aioredis.Redis) -> list[dict]:
+    """Read-only snapshot of every class store. Does not scrape."""
+    rows: list[dict] = []
+    for class_name in CLASS_ABILITY_HUB:
+        key = f"{CACHE_PREFIX}:{class_name.lower()}"
+        raw = await redis.get(key)
+        ttl = await redis.ttl(key)
+        abilities = 0
+        if raw:
+            try:
+                abilities = len(json.loads(raw).get("abilities") or [])
+            except json.JSONDecodeError:
+                abilities = 0
+        rows.append(
+            {
+                "class_name": class_name,
+                "abilities": abilities,
+                "ttl_seconds": max(0, int(ttl or 0)),
+            }
+        )
     return rows
 
 
@@ -362,16 +439,23 @@ async def load_class_wiki_scaling(
     *,
     ttl_seconds: int,
     stat: Optional[str] = None,
+    force: bool = False,
 ) -> dict:
-    """All wiki-derived scaling edges for one class. Cached after first build."""
+    """Every wiki-derived scaling edge for one class.
+
+    Chat only reads the stored payload. `force=True` is the weekly
+    refresh path: re-read the hub and every T7/ST/UT ability so later
+    traps (Huntress DEX sit past the first page) stay in the store.
+    """
     cache_key = f"{CACHE_PREFIX}:{class_name.lower()}"
-    cached = await redis.get(cache_key)
-    if cached:
-        return json.loads(cached)
+    if not force:
+        cached = await redis.get(cache_key)
+        if cached:
+            return json.loads(cached)
 
     lock_key = f"{cache_key}:lock"
-    got_lock = await redis.set(lock_key, "1", nx=True, ex=120)
-    if not got_lock:
+    got_lock = await redis.set(lock_key, "1", nx=True, ex=600)
+    if not got_lock and not force:
         for _ in range(30):
             await asyncio.sleep(1)
             cached = await redis.get(cache_key)
@@ -389,7 +473,7 @@ async def load_class_wiki_scaling(
         return empty
 
     try:
-        hub_rows = await _hub_index(redis, slug, ttl_seconds)
+        hub_rows = await _hub_index(redis, slug, ttl_seconds, force=force)
     except ScraperError as e:
         logger.bind(class_name=class_name, error=str(e)).warning(
             "RealmEye ability hub unavailable"
@@ -398,51 +482,25 @@ async def load_class_wiki_scaling(
 
     first, ut_all = _pick_ability_pages(hub_rows)
     profiles = await _profiles_for_names(
-        redis, [row["name"] for row in first], ttl_seconds
+        redis, [row["name"] for row in first], ttl_seconds, force=force
     )
-
-    def _stat_found(items: list[ItemProfile]) -> bool:
-        return bool(stat) and any(stat in scaling_from_item(item) for item in items)
-
-    if ut_all and not _stat_found(profiles):
-        if not stat:
-            # No stat requested — this is a browse/preview call, so just
-            # show a first page of untiered abilities instead of scraping
-            # the whole hub.
-            batch = ut_all[:MAX_UT]
-            profiles.extend(
-                await _profiles_for_names(
-                    redis, [row["name"] for row in batch], ttl_seconds
-                )
+    # Page the whole UT list. Stopping at the first matching stat used to
+    # hide the second Huntress DEX trap; a first-8 cap hid Trap of the
+    # Vile Spirit (UT #11) entirely.
+    for i in range(0, len(ut_all), MAX_UT):
+        batch = ut_all[i : i + MAX_UT]
+        profiles.extend(
+            await _profiles_for_names(
+                redis, [row["name"] for row in batch], ttl_seconds, force=force
             )
-        else:
-            # A specific stat was requested and the T7/ST baseline didn't
-            # scale with it. Page through every remaining UT ability,
-            # MAX_UT at a time, until that stat's formula turns up or the
-            # hub is exhausted — a flat one-shot cap here previously
-            # dropped abilities that sit later in the hub's listing order
-            # (e.g. Trap of the Vile Spirit is UT #11 on the Huntress
-            # traps hub; capping at the first 8 UTs made the ability
-            # agent wrongly claim no Attack trap exists). Already-cached
-            # items make repeat batches free.
-            for i in range(0, len(ut_all), MAX_UT):
-                batch = ut_all[i : i + MAX_UT]
-                batch_profiles = await _profiles_for_names(
-                    redis, [row["name"] for row in batch], ttl_seconds
-                )
-                profiles.extend(batch_profiles)
-                if _stat_found(batch_profiles):
-                    logger.bind(
-                        class_name=class_name, stat=stat, ut_scanned=i + len(batch)
-                    ).info("Found stat scaling after paging deeper into UT hub")
-                    break
-            else:
-                logger.bind(
-                    class_name=class_name, stat=stat, ut_scanned=len(ut_all)
-                ).info("No stat scaling found after scanning entire UT hub")
+        )
 
     abilities = []
     for item in profiles:
+        if item.limited_edition or re.search(
+            r"limited|\(le\)", item.tier or "", re.I
+        ):
+            continue
         scales = scaling_from_item(item)
         effects = notable_effects(item)
         if not scales and not effects:
@@ -471,17 +529,22 @@ async def load_class_wiki_scaling(
 
 
 async def _profiles_for_names(
-    redis: aioredis.Redis, names: list[str], ttl: int
+    redis: aioredis.Redis,
+    names: list[str],
+    ttl: int,
+    *,
+    force: bool = False,
+    cache_only: bool = False,
 ) -> list[ItemProfile]:
     profiles: list[ItemProfile] = []
     missing: list[str] = []
     for name in names:
-        item = await _cached_item(redis, name)
+        item = None if force else await _cached_item(redis, name)
         if item:
             profiles.append(item)
         else:
             missing.append(name)
-    if not missing:
+    if not missing or cache_only:
         return profiles
     try:
         scraped = await scrape_items_batch(missing)
@@ -512,11 +575,14 @@ def format_wiki_scaling(
         "Equip bonus is not scaling. When RealmShark has no board for a "
         "class+stat, use this section — do not say the build does not exist "
         "if an ability is listed here. When several abilities scale, prefer "
-        "the one whose Effect(s) help more (Berserk, Healing, Damaging, "
-        "Speedy, party auras) — e.g. Lifebringing Lotus over a trap that "
-        "only scales damage, because Lotus also gives Berserk and Healing. "
-        "Mention awakened variants when Effect(s) change (Snake Eye Ring "
-        "awakened: Speedy plus Damaging on ability use).",
+        "the one whose Effect(s) on that same item help more. Do not invent "
+        "or copy status effects from another item."
+        + (
+            " Lifebringing Lotus over Honeytomb Snare because Lotus also "
+            "gives Berserk and Healing."
+            if class_name == "Huntress"
+            else ""
+        ),
         f"Source: {hub_url}" if hub_url else "",
         "",
     ]
@@ -581,11 +647,18 @@ def _is_limited_ring(name: str, row: dict | None = None, item: ItemProfile | Non
 
 
 async def _verify_ring_infoboxes(
-    redis: aioredis.Redis, rows: list[dict], ttl: int, *, stat: str
+    redis: aioredis.Redis,
+    rows: list[dict],
+    ttl: int,
+    *,
+    stat: str,
+    cache_only: bool = False,
 ) -> list[dict]:
     """Keep only infobox-confirmed, non-LE rings that actually grant this stat."""
     names = [r["name"] for r in rows if r.get("name")]
-    profiles = await _profiles_for_names(redis, names, ttl)
+    profiles = await _profiles_for_names(
+        redis, names, ttl, cache_only=cache_only
+    )
     by_name = {p.name.lower(): p for p in profiles}
     verified = []
     for row in rows:
@@ -714,18 +787,23 @@ async def retrieve_universal_rings(
     ttl_seconds: int,
     limit: int = 5,
     brief: bool = False,
+    cache_only: bool = False,
 ) -> str:
     """Best matching rings from RealmEye list pages, confirmed on infoboxes."""
     slug = STAT_RING_HUB.get(stat, RINGS_HUB)
     rows: list[dict] = []
     try:
-        rows = await _hub_index(redis, slug, ttl_seconds)
+        rows = await _hub_index(
+            redis, slug, ttl_seconds, cache_only=cache_only
+        )
     except ScraperError as e:
         logger.bind(error=str(e), slug=slug).warning(
             "RealmEye per-stat rings page unavailable"
         )
     try:
-        extra = await _hub_index(redis, RINGS_HUB, ttl_seconds)
+        extra = await _hub_index(
+            redis, RINGS_HUB, ttl_seconds, cache_only=cache_only
+        )
         seen = {((r.get("name") or "").lower()) for r in rows}
         for row in extra:
             key = (row.get("name") or "").lower()
@@ -752,7 +830,7 @@ async def retrieve_universal_rings(
             have.add(key)
     try:
         candidates = await _verify_ring_infoboxes(
-            redis, candidates, ttl_seconds, stat=stat
+            redis, candidates, ttl_seconds, stat=stat, cache_only=cache_only
         )
     except Exception as e:
         logger.bind(error=str(e)).warning("Ring infobox verification failed")
@@ -782,12 +860,15 @@ async def retrieve_armor_brief(
     ttl_seconds: int,
     limit: int = 3,
     brief: bool = True,
+    cache_only: bool = False,
 ) -> str:
     armor_slug = CLASS_ARMOR_HUB.get(class_name)
     if not armor_slug:
         return ""
     try:
-        armor_rows = await _hub_index(redis, armor_slug, ttl_seconds)
+        armor_rows = await _hub_index(
+            redis, armor_slug, ttl_seconds, cache_only=cache_only
+        )
     except ScraperError as e:
         logger.bind(class_name=class_name, error=str(e)).warning(
             "RealmEye armor hub unavailable"
@@ -811,6 +892,7 @@ async def retrieve_weapon_brief(
     ttl_seconds: int,
     limit: int = 3,
     brief: bool = True,
+    cache_only: bool = False,
 ) -> str:
     hubs, label = weapon_family(class_name)
     if not hubs:
@@ -818,7 +900,11 @@ async def retrieve_weapon_brief(
     rows: list[dict] = []
     for slug in hubs:
         try:
-            rows.extend(await _hub_index(redis, slug, ttl_seconds))
+            rows.extend(
+                await _hub_index(
+                    redis, slug, ttl_seconds, cache_only=cache_only
+                )
+            )
         except ScraperError as e:
             logger.bind(slug=slug, error=str(e)).warning(
                 "RealmEye weapon hub unavailable"
@@ -858,11 +944,17 @@ async def retrieve_ability_brief(
     stat: Optional[str] = None,
     ttl_seconds: int,
     brief: bool = True,
+    cache_only: bool = False,
 ) -> str:
     try:
-        payload = await load_class_wiki_scaling(
-            redis, class_name, ttl_seconds=ttl_seconds, stat=stat
-        )
+        if cache_only:
+            payload = await cached_class_wiki_scaling(redis, class_name)
+            if not payload:
+                return ""
+        else:
+            payload = await load_class_wiki_scaling(
+                redis, class_name, ttl_seconds=ttl_seconds, stat=stat
+            )
     except Exception as e:
         logger.bind(class_name=class_name, error=str(e)).warning(
             "RealmEye wiki scaling unavailable"
@@ -886,16 +978,28 @@ async def retrieve_stat_gear(
     stat: str,
     *,
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> str:
     """Class armor hub plus the shared rings list."""
     parts: list[str] = []
     armor = await retrieve_armor_brief(
-        redis, class_name, stat, ttl_seconds=ttl_seconds, limit=5, brief=False
+        redis,
+        class_name,
+        stat,
+        ttl_seconds=ttl_seconds,
+        limit=5,
+        brief=False,
+        cache_only=cache_only,
     )
     if armor:
         parts.append(armor)
     rings = await retrieve_universal_rings(
-        redis, stat, ttl_seconds=ttl_seconds, limit=5, brief=False
+        redis,
+        stat,
+        ttl_seconds=ttl_seconds,
+        limit=5,
+        brief=False,
+        cache_only=cache_only,
     )
     if rings:
         parts.append(rings)
@@ -932,17 +1036,63 @@ async def retrieve_wiki_scaling(
     return "\n\n".join(parts)
 
 
+async def warm_all_class_scaling(
+    redis: aioredis.Redis,
+    *,
+    ttl_seconds: int,
+    classes: tuple[str, ...] | None = None,
+) -> dict[str, int]:
+    """Scrape every class ability hub into Redis. Chat only reads this."""
+    selected = [
+        name
+        for name in (classes or tuple(CLASS_ABILITY_HUB))
+        if name in CLASS_ABILITY_HUB
+    ]
+    slugs = {CLASS_ABILITY_HUB[name] for name in selected}
+    slugs |= {
+        CLASS_ARMOR_HUB[name] for name in selected if name in CLASS_ARMOR_HUB
+    }
+    if classes is None:
+        slugs |= set(STAT_RING_HUB.values()) | {RINGS_HUB}
+    for slug in slugs:
+        try:
+            await _hub_index(redis, slug, ttl_seconds, force=True)
+        except Exception as e:
+            logger.bind(slug=slug, error=str(e)).warning(
+                "Could not warm wiki hub index"
+            )
+    counts: dict[str, int] = {}
+    for class_name in selected:
+        try:
+            payload = await load_class_wiki_scaling(
+                redis, class_name, ttl_seconds=ttl_seconds, force=True
+            )
+            counts[class_name] = len(payload.get("abilities") or [])
+            logger.bind(
+                class_name=class_name, abilities=counts[class_name]
+            ).info("Warmed class wiki scaling")
+        except Exception as e:
+            logger.bind(class_name=class_name, error=str(e)).warning(
+                "Could not warm class wiki scaling"
+            )
+            counts[class_name] = 0
+    return counts
+
+
 async def retrieve_umi_bis(
     redis: aioredis.Redis,
     class_name: str,
     *,
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> str:
     """UmiEnjoyers general BIS — weapon/slot ideas, not stat truth."""
     cache_key = f"umi:bis:v1:{class_name.lower()}"
     cached = await redis.get(cache_key)
     if cached:
         text, url = json.loads(cached)
+    elif cache_only:
+        return ""
     else:
         try:
             text, url = await scrape_umi_bis(class_name)

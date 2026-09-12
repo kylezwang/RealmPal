@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@theme {
+  /* Semibold in this UI is extra-bold — 800, not Tailwind's default 600. */
+  --font-weight-semibold: 800;
+  --font-weight-extrabold: 800;
+}
+
+.font-semibold,
+.font-extrabold {
+  font-weight: 800;
+}
+
 :root {
   color-scheme: dark;
 }
@@ -52,7 +63,7 @@ body {
   overflow-x: auto;
 }
 .prose-realm pre code { background: transparent; padding: 0; }
-.prose-realm strong { color: #ececec; font-weight: 600; }
+.prose-realm strong { color: #ececec; font-weight: 800; }
 .prose-realm ul, .prose-realm ol { padding-left: 1.5rem; }
 .prose-realm li { margin: 0.25rem 0; }
 

@@ -68,6 +68,14 @@ async def test_usage_starts_empty(client, anon_settings):
     }
 
 
+async def test_health_reports_the_chat_provider(client):
+    async with client as http:
+        body = (await http.get("/health")).json()
+    assert body["status"] == "ok"
+    assert body["provider"] in {"anthropic", "foundry"}
+    assert "model" in body
+
+
 async def test_rotating_session_id_does_not_reset_usage(client, spend):
     """
     The original bug: session_id came from the browser, so clearing

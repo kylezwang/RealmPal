@@ -32,8 +32,15 @@ def public_jwk(signing_key: ec.EllipticCurvePrivateKey) -> dict[str, Any]:
 
 
 @pytest.fixture
-def auth_settings() -> Settings:
+def auth_settings(tmp_path) -> Settings:
+    # _env_file=None: hermetic against whatever the developer's real .env
+    # happens to contain (Foundry resource, rotated JWT secret, ...). Tests
+    # must not pass or fail based on ambient local config.
+    # entitlements_db_path=tmp_path: without this every test that exercises
+    # a magic-link verify would read/write the real dev DB at the default
+    # relative path, and collide with every other test doing the same.
     return Settings(
+        _env_file=None,
         anthropic_api_key="test-key-not-real",
         auth_jwks_url=JWKS_URL,
         auth_issuer=ISSUER,
@@ -41,16 +48,23 @@ def auth_settings() -> Settings:
         auth_algorithms="RS256,ES256",
         jwt_secret="test-jwt-secret",
         pii_hash_secret="test-pii-secret",
+        entitlements_db_path=str(tmp_path / "entitlements.db"),
+        accounts_db_path=str(tmp_path / "accounts.db"),
+        uploads_db_path=str(tmp_path / "uploads.db"),
     )
 
 
 @pytest.fixture
-def anon_settings() -> Settings:
+def anon_settings(tmp_path) -> Settings:
     """Settings with no identity provider configured, as in local dev."""
     return Settings(
+        _env_file=None,
         anthropic_api_key="test-key-not-real",
         jwt_secret="test-jwt-secret",
         pii_hash_secret="test-pii-secret",
+        entitlements_db_path=str(tmp_path / "entitlements.db"),
+        accounts_db_path=str(tmp_path / "accounts.db"),
+        uploads_db_path=str(tmp_path / "uploads.db"),
     )
 
 

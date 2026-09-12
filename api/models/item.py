@@ -18,3 +18,5 @@ class ItemProfile(BaseModel):
     drop_locations: list[str] = []
     wiki_url: Optional[str] = None
     limited_edition: bool = False
+    # Set on GET /items when class_name is passed. Not stored in Redis.
+    wearable: Optional[bool] = None

@@ -115,6 +115,7 @@ async def test_partial_configuration_is_not_treated_as_configured():
     from api.config import Settings
 
     partial = Settings(
+        _env_file=None,
         anthropic_api_key="x",
         auth_jwks_url="https://example/jwks.json",
         auth_issuer="https://example",
@@ -127,7 +128,7 @@ async def test_symmetric_algorithms_cannot_be_configured():
     """Even if someone sets HS256 in env, it must not become allowed."""
     from api.config import Settings
 
-    settings = Settings(anthropic_api_key="x", auth_algorithms="HS256,none")
+    settings = Settings(_env_file=None, anthropic_api_key="x", auth_algorithms="HS256,none")
     assert settings.auth_algorithm_list == ()
 
 

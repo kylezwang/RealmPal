@@ -101,6 +101,10 @@ export function cleanItemName(name: string): string {
 export const ITEM_CARD_ROW_SIZE = 2;
 
 /** HP/MP/stat potions and generic Tier 6/12 gear rows are not item cards. */
+export function isGridWearableItem(item: { wearable?: boolean | null }): boolean {
+  return item.wearable !== false;
+}
+
 export function skipDungeonItemCard(name: string): boolean {
   const text = cleanItemName(name);
   if (!text || /\bmark\b/i.test(text)) return false;

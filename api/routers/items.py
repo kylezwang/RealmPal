@@ -13,16 +13,34 @@ from loguru import logger
 from qdrant_client import AsyncQdrantClient
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis, get_qdrant
+from ..dependencies import enforce_lookup_rate_limit, get_redis, get_qdrant
 from ..models.item import ItemProfile
 from ..services.item_aliases import resolve_item_query
 from ..services.scraper import scrape_item, ScraperError
 from ..services.ingestion import ingest_item
+from ..services.validation import sanitize_lookup_name
+from ..services.class_gear import class_can_wear_item
+from ..services.wiki_scaling import read_cached_item, write_cached_item
 
 router = APIRouter(prefix="/items", tags=["items"])
 
 
-@router.get("/{name}", response_model=ItemProfile)
+async def _with_wearable(
+    redis: aioredis.Redis,
+    item: ItemProfile,
+    class_name: Optional[str],
+) -> ItemProfile:
+    if not class_name:
+        return item
+    ok = await class_can_wear_item(redis, class_name, item.name)
+    return item.model_copy(update={"wearable": ok})
+
+
+@router.get(
+    "/{name}",
+    response_model=ItemProfile,
+    dependencies=[Depends(enforce_lookup_rate_limit)],
+)
 async def get_item(
     name: str,
     settings: Annotated[Settings, Depends(get_settings)],
@@ -31,13 +49,15 @@ async def get_item(
     class_name: Optional[str] = Query(None),
 ) -> ItemProfile:
     """Look up an item by wiki name or nickname. Scrapes on demand with TTL caching."""
-    if "/" in name or "realmeye.com" in name.lower() or name.lower().startswith("http"):
+    name = sanitize_lookup_name(name, field="name")
+    if not isinstance(class_name, str):
+        class_name = None
+    if "realmeye.com" in name.lower() or name.lower().startswith("http"):
         raise HTTPException(status_code=404, detail="Not an item name")
-    ttl = settings.scrape_ttl_hours * 3600
-    cache_key = f"item:profile:v2:{name.lower()}"
-    cached_json = await redis.get(cache_key)
-    if cached_json:
-        return ItemProfile.model_validate_json(cached_json)
+    ttl = settings.wiki_ttl_seconds
+    cached = await read_cached_item(redis, name)
+    if cached:
+        return await _with_wearable(redis, cached, class_name)
 
     lookup = name
     try:
@@ -46,16 +66,14 @@ async def get_item(
             name,
             ttl_seconds=ttl,
             class_name=class_name,
-            allow_scrape=True,
+            allow_scrape=False,
         )
         if resolved:
             lookup = resolved
-            resolved_key = f"item:profile:v2:{resolved.lower()}"
-            cached_resolved = await redis.get(resolved_key)
+            cached_resolved = await read_cached_item(redis, resolved)
             if cached_resolved:
-                item = ItemProfile.model_validate_json(cached_resolved)
-                await redis.setex(cache_key, ttl, cached_resolved)
-                return item
+                await write_cached_item(redis, cached_resolved, ttl, name)
+                return await _with_wearable(redis, cached_resolved, class_name)
     except Exception as e:
         logger.bind(item_name=name, error=str(e)).warning(
             "Item nickname resolve failed; trying the typed name"
@@ -79,9 +97,6 @@ async def get_item(
             "Could not ingest item profile into RAG store"
         )
 
-    payload = item.model_dump_json()
-    await redis.setex(cache_key, ttl, payload)
-    if item.name.lower() != name.lower():
-        await redis.setex(f"item:profile:v2:{item.name.lower()}", ttl, payload)
+    await write_cached_item(redis, item, ttl, name, lookup)
     logger.bind(item_name=item.name, query=name).info("Item profile fetched and cached")
-    return item
+    return await _with_wearable(redis, item, class_name)

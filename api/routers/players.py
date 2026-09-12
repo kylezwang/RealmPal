@@ -15,16 +15,21 @@ from loguru import logger
 from qdrant_client import AsyncQdrantClient
 
 from ..config import Settings, get_settings
-from ..dependencies import get_redis, get_qdrant
+from ..dependencies import enforce_lookup_rate_limit, get_redis, get_qdrant
 from ..models.player import PlayerProfile
 from ..services.scraper import ScraperError
 from ..services.ingestion import ingest_player
 from ..services.player_lookup import get_or_scrape_player
+from ..services.validation import sanitize_lookup_name
 
 router = APIRouter(prefix="/players", tags=["players"])
 
 
-@router.get("/{username}", response_model=PlayerProfile)
+@router.get(
+    "/{username}",
+    response_model=PlayerProfile,
+    dependencies=[Depends(enforce_lookup_rate_limit)],
+)
 async def get_player(
     username: str,
     settings: Annotated[Settings, Depends(get_settings)],
@@ -32,9 +37,10 @@ async def get_player(
     qdrant: Annotated[AsyncQdrantClient, Depends(get_qdrant)],
 ) -> PlayerProfile:
     """Look up a player by username. Scrapes on demand with TTL caching."""
+    username = sanitize_lookup_name(username, field="username")
     try:
         profile = await get_or_scrape_player(
-            redis, username, ttl_seconds=settings.scrape_ttl_hours * 3600
+            redis, username, ttl_seconds=settings.player_ttl_seconds
         )
     except ScraperError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env whether uvicorn is started from repo root or api/
@@ -19,9 +20,27 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Anthropic
-    anthropic_api_key: str
+    # Claude. Production talks to Microsoft Foundry (Anthropic Messages
+    # surface at /anthropic, not the OpenAI-shaped /openai/deployments path).
+    # Local fallback is a direct Anthropic key until the Foundry resource exists.
+    anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
+
+    # Foundry resource name *or* full base URL, never both. Resource becomes
+    # https://<resource>.services.ai.azure.com/anthropic/
+    foundry_resource: str = ""
+    foundry_base_url: str = ""
+    # Prefer Entra in any deployment so there is no Foundry key in .env.
+    # Locally a Foundry API key is fine; the two must not be set together.
+    foundry_api_key: str = ""
+    foundry_use_entra: bool = False
+    # Azure Marketplace bills Claude in CCUs. $0.01 per CCU (100 CCU = $1)
+    # at Anthropic list rates; token prices below still drive the daily cap.
+    foundry_ccu_usd: float = 0.01
+    # This `dev` branch prefers the local Anthropic key so a leftover
+    # Foundry resource (billing-blocked, 400s) cannot steal chat.
+    # Master keeps False: Foundry wins whenever it is configured.
+    prefer_anthropic: bool = True
 
     # Embeddings
     embedding_backend: str = "ollama"  # "ollama" | "voyage"
@@ -41,13 +60,29 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
 
-    # Scraping
-    scrape_ttl_hours: int = 24
+    # Scraping. Wiki pages (items, dungeons, skins, equipment hubs) almost
+    # never change — serve Redis/Qdrant and refresh on a weekly job
+    # (`api/scripts/refresh_wiki.py`), not on every chat turn. Player
+    # profiles change constantly, so those scrape on lookup; the short TTL
+    # only collapses duplicate hits in one session (sidebar + chat).
+    wiki_scrape_ttl_hours: int = 168
+    player_scrape_ttl_seconds: int = 120
+    scrape_ttl_hours: int = 168
     pet_sprite_ttl_days: int = 7
+
+    @property
+    def wiki_ttl_seconds(self) -> int:
+        return max(1, self.wiki_scrape_ttl_hours) * 3600
+
+    @property
+    def player_ttl_seconds(self) -> int:
+        return max(0, self.player_scrape_ttl_seconds)
 
     # Rate limiting. Anonymous callers are keyed on IP and get less than
     # signed-in ones, so signing in beats trying to game the quota.
-    free_message_limit: int = 10
+    # Signed-in free accounts get two more than guests on the same
+    # rolling 24h window. The paywall signup slide sells that delta.
+    free_message_limit: int = 5
     anonymous_message_limit: int = 3
 
     # Only enable behind a proxy you control (Container Apps ingress, nginx).
@@ -65,11 +100,20 @@ class Settings(BaseSettings):
     # bound.
     paid_message_limit: int = 200
 
+    # Burst limit for scrape-triggering lookups (players/items/dungeons/
+    # skins/sprite). A cache miss launches a real headless browser behind a
+    # single-Chromium semaphore, so an unthrottled caller queues everyone
+    # else's lookups behind their own flood. Short window, not a daily cap.
+    lookup_rate_limit_anonymous: int = 12
+    lookup_rate_limit_user: int = 40
+    lookup_rate_window_seconds: int = 60
+
     # --- Cost ceilings ---
     # Per-identity quotas stop one abuser; they don't stop a crowd. Once the
     # day's recorded spend reaches this, chat refuses new work until tomorrow.
     monthly_cost_budget_usd: float = 20.0
-    # Claude pricing per million tokens. Update alongside claude_model.
+    # Claude pricing per million tokens. Foundry CCU is these rates converted
+    # at foundry_ccu_usd; keep them in lockstep with claude_model.
     model_input_cost_per_mtok_usd: float = 3.0
     model_output_cost_per_mtok_usd: float = 15.0
     # Bounds the worst case for a single response.
@@ -84,11 +128,38 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_id: str = ""
 
+    # Durable entitlement store (api/services/entitlements.py). Stripe
+    # webhooks write here; the chat path reads it instead of trusting a
+    # magic-link JWT's `paid` claim for its whole lifetime with no way to
+    # revoke it early. SQLite until billing volume justifies Postgres, per
+    # the target-platform note at the top of BACKLOG.md.
+    entitlements_db_path: str = "data/entitlements.db"
+
+    # Local email+password accounts (api/services/accounts.py). Separate
+    # from entitlements so a paid Stripe row can exist for an email that
+    # has never registered here (legacy magic-link customers), and a
+    # registered free account can exist with no entitlement row at all.
+    accounts_db_path: str = "data/accounts.db"
+
+    # Uploaded chat images (api/services/uploads.py). Recycled after
+    # upload_ttl_days so the blob store cannot grow without bound.
+    uploads_db_path: str = "data/uploads.db"
+    upload_ttl_days: int = 7
+    upload_max_bytes: int = 4_000_000
+
     # Auth (magic link JWT) | legacy, being replaced by the identity provider
     # below. Kept so existing paid tokens keep working during the migration.
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiry_days: int = 30
+
+    # Magic links used to be signed with jwt_secret, the same secret that
+    # signs every session token. That meant a link leaked from one channel
+    # (email logs, a referrer header, a browser history sync) was equally
+    # useful for forging a session. Falls back to jwt_secret only so nothing
+    # breaks before this is set; set it explicitly in any real deployment.
+    magic_link_secret: str = ""
+    magic_link_ttl_minutes: int = 30
 
     # Identity provider (Entra External ID, Supabase Auth, Clerk, Cognito |
     # anything that publishes a JWKS endpoint). Leave blank to run anonymously,
@@ -106,6 +177,38 @@ class Settings(BaseSettings):
     app_url: str = "http://localhost:3000"
     api_url: str = "http://localhost:8000"
     debug: bool = False
+    # Comma-separated IGNs that skip chat + lookup quotas while DEBUG=true.
+    # Local testing only — ignored in any non-debug process.
+    debug_unlimited_igns: str = "Turbine"
+
+    @property
+    def debug_unlimited_ign_set(self) -> frozenset[str]:
+        if not self.debug:
+            return frozenset()
+        return frozenset(
+            name.strip().lower()
+            for name in self.debug_unlimited_igns.split(",")
+            if name.strip()
+        )
+
+    @property
+    def foundry_configured(self) -> bool:
+        """True when chat should use the Foundry Anthropic surface."""
+        return bool(self.foundry_resource.strip() or self.foundry_base_url.strip())
+
+    @property
+    def llm_provider(self) -> str:
+        """Which backend `_stream_response` will call: foundry or anthropic."""
+        if self.prefer_anthropic and self.anthropic_api_key.strip():
+            return "anthropic"
+        return "foundry" if self.foundry_configured else "anthropic"
+
+    @property
+    def foundry_auth(self) -> str:
+        """How Foundry is authenticated, or empty when it isn't in use."""
+        if not self.foundry_configured:
+            return ""
+        return "entra" if self.foundry_use_entra else "api_key"
 
     @property
     def daily_cost_budget_micros(self) -> int:
@@ -150,6 +253,15 @@ class Settings(BaseSettings):
         return tuple(a for a in requested if a in SUPPORTED_ALGORITHMS)
 
     @property
+    def stripe_configured(self) -> bool:
+        """True only when Checkout can actually create a session."""
+        key = self.stripe_secret_key.strip()
+        price = self.stripe_price_id.strip()
+        if not key or not price or "..." in key or "..." in price:
+            return False
+        return price.startswith("price_")
+
+    @property
     def auth_configured(self) -> bool:
         """True only when every field verification needs is present."""
         return bool(
@@ -158,6 +270,73 @@ class Settings(BaseSettings):
             and self.auth_audience
             and self.auth_algorithm_list
         )
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """
+        Origins the API answers CORS preflights for.
+
+        `app_url` is the only origin in production. `localhost:3000` is
+        added only in debug — it used to be hardcoded unconditionally, which
+        meant a deployed API would accept credentialed requests from anyone
+        running the frontend locally against it.
+        """
+        origins = [self.app_url]
+        if self.debug and "http://localhost:3000" not in origins:
+            origins.append("http://localhost:3000")
+        return origins
+
+    @property
+    def uses_default_jwt_secret(self) -> bool:
+        """True if JWT_SECRET was never rotated off the shipped placeholder."""
+        return self.jwt_secret.strip() == "change-me-in-production"
+
+    @property
+    def effective_magic_link_secret(self) -> str:
+        """MAGIC_LINK_SECRET if set, else the session secret as a fallback."""
+        return self.magic_link_secret.strip() or self.jwt_secret
+
+    @property
+    def magic_link_secret_is_shared(self) -> bool:
+        """True while magic links still ride on the session-signing secret."""
+        return not self.magic_link_secret.strip()
+
+    @model_validator(mode="after")
+    def _require_llm_credentials(self) -> "Settings":
+        """
+        Fail closed if chat has nowhere to send tokens.
+
+        Foundry is preferred when a resource or base URL is set. Direct
+        Anthropic is the local fallback. Mixing Foundry target fields, or
+        mixing Entra with a Foundry key, is a misconfiguration rather than a
+        silent preference.
+        """
+        resource = self.foundry_resource.strip()
+        base_url = self.foundry_base_url.strip()
+        if resource and base_url:
+            raise ValueError(
+                "FOUNDRY_RESOURCE and FOUNDRY_BASE_URL are mutually exclusive"
+            )
+        if self.foundry_use_entra and self.foundry_api_key.strip():
+            raise ValueError(
+                "FOUNDRY_USE_ENTRA and FOUNDRY_API_KEY are mutually exclusive; "
+                "prefer Entra in production so no Foundry key lives in the environment"
+            )
+        if resource or base_url:
+            from .services.llm import validate_foundry_target
+
+            validate_foundry_target(resource=resource, base_url=base_url)
+            if not self.foundry_use_entra and not self.foundry_api_key.strip():
+                raise ValueError(
+                    "Foundry needs FOUNDRY_USE_ENTRA=true or FOUNDRY_API_KEY"
+                )
+            return self
+        if not self.anthropic_api_key.strip():
+            raise ValueError(
+                "Set ANTHROPIC_API_KEY for local fallback, or configure Foundry "
+                "(FOUNDRY_RESOURCE or FOUNDRY_BASE_URL plus Entra or a Foundry key)"
+            )
+        return self
 
 
 @lru_cache

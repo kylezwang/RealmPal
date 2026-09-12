@@ -1,7 +1,8 @@
 "use client";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
-import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, getAuthToken, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type FeedbackRating } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, AUTH_CHANGED_EVENT, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS, SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -14,6 +15,7 @@ import { PetCompanion, PetSprite } from "./PetCompanion";
 import { PaywallModal } from "./PaywallModal";
 import { ChatOptionsModal } from "./ChatOptionsModal";
 import { SidebarAccount } from "./SidebarAccount";
+import { AccountMenu } from "./AccountMenu";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
 import { type ChatSession, loadSessions, saveSessions, deriveTitle } from "@/lib/chatHistory";
 
@@ -65,6 +67,8 @@ function findRecentPlayerName(messages: Message[]): string | null {
 }
 
 export function ChatInterface() {
+  const router = useRouter();
+  const [isSignedIn, setIsSignedIn] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [ign, setIgn] = useState("");
@@ -72,6 +76,12 @@ export function ChatInterface() {
   const [isLoadingPlayer, setIsLoadingPlayer] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
+  const [usage, setUsage] = useState<ChatUsage>({
+    used: 0,
+    limit: 3,
+    remaining: 3,
+    scope: "ip",
+  });
   const [ignError, setIgnError] = useState<string | null>(null);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -93,10 +103,51 @@ export function ChatInterface() {
     setSpeechSupported(!!SpeechRecognitionCtor);
   }, []);
 
-  // Load saved chat history once on mount.
-  useEffect(() => {
-    setSessions(loadSessions());
+  const refreshUsage = useCallback(async () => {
+    try {
+      setUsage(await fetchChatUsage());
+    } catch {
+      // Keep the last known count (or the guest default) so the
+      // counter does not vanish when the API is briefly unreachable.
+    }
   }, []);
+
+  const applyAuthState = useCallback(() => {
+    // Drop in-memory messages first so the persist effect cannot write
+    // the previous account's chat into the newly selected storage key.
+    setMessages([]);
+    setActiveSessionId(null);
+    const signedIn = Boolean(decodeAuthEmail());
+    setIsSignedIn(signedIn);
+    if (!signedIn) {
+      setUsage({ used: 0, limit: 3, remaining: 3, scope: "ip" });
+    }
+    setSessions(loadSessions());
+    void refreshUsage();
+  }, [refreshUsage]);
+
+  useEffect(() => {
+    applyAuthState();
+    window.addEventListener(AUTH_CHANGED_EVENT, applyAuthState);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, applyAuthState);
+  }, [applyAuthState]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") !== "true") return;
+    const checkoutSession = params.get("session_id");
+    window.history.replaceState({}, "", window.location.pathname);
+    void (async () => {
+      if (checkoutSession && decodeAuthEmail()) {
+        try {
+          await confirmCheckout(checkoutSession);
+        } catch {
+          // Webhook may already have opened the row; usage refresh still runs.
+        }
+      }
+      await refreshUsage();
+    })();
+  }, [refreshUsage]);
 
   // Persist the active conversation whenever a message is added/removed, or
   // once streaming finishes (so the final assistant text gets saved | not
@@ -175,8 +226,6 @@ export function ChatInterface() {
       return;
     }
 
-    // Note: there's no backend endpoint to actually upload the file yet |
-    // this just mentions the filename in the message text sent to Claude.
     const outgoingText = attachedFile ? `${trimmed}\n\n[Attached file: ${attachedFile.name}]` : trimmed;
     const userMsg: Message = { role: "user", content: outgoingText };
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -240,7 +289,7 @@ export function ChatInterface() {
         const name = fetchWait.shift()!;
         const key = name.toLowerCase();
         fetchInFlight += 1;
-        fetchItem(name, className)
+        fetchItem(name, dungeonName ? undefined : className)
           .then((item) => {
             setMessages((prev) => {
               if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
@@ -399,6 +448,7 @@ export function ChatInterface() {
       setIsStreaming(false);
       abortRef.current = null;
       inputRef.current?.focus();
+      void refreshUsage();
     }
   }
 
@@ -414,7 +464,25 @@ export function ChatInterface() {
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setAttachedFile(e.target.files?.[0] ?? null);
+    const file = e.target.files?.[0] ?? null;
+    setAttachedFile(file);
+    if (file && file.type.startsWith("image/")) {
+      void uploadChatImage(file).catch(() => {
+        // Keep the local chip so the message can still mention the file.
+      });
+    }
+  }
+
+  function openPaywall() {
+    if (!usage) return;
+    setPaywall({
+      upgrade: true,
+      message: "Upgrade to keep chatting",
+      used: usage.used,
+      limit: usage.limit,
+      remaining: usage.remaining,
+      scope: usage.scope,
+    });
   }
 
   function removeAttachment() {
@@ -509,29 +577,13 @@ export function ChatInterface() {
     setIsRecording(true);
   }
 
-  const openGuestPaywall = useCallback(async () => {
-    if (getAuthToken()) return;
-    try {
-      const usage = await fetchChatUsage();
-      setPaywall({
-        upgrade: true,
-        message: "",
-        used: usage.used,
-        limit: usage.limit,
-        remaining: usage.remaining,
-      });
-    } catch {
-      setPaywall({ upgrade: true, message: "", remaining: null });
-    }
-  }, []);
-
   const isEmpty = messages.length === 0;
   const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
 
   return (
     <div className="flex h-screen bg-[#1a1a1a] text-[#ececec]">
       {/* Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 xl:w-72 flex-shrink-0 border-r border-[#303030] p-4">
+      <aside className="hidden md:flex flex-col w-64 xl:w-72 flex-shrink-0 min-h-0 overflow-hidden border-r border-[#303030] p-4">
         <button
           onClick={goHome}
           disabled={isEmpty}
@@ -621,7 +673,7 @@ export function ChatInterface() {
           </div>
         )}
 
-        <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} space-y-2`}>
+        <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} space-y-2 min-h-0 overflow-y-auto`}>
           {SIDEBAR_EXAMPLE_PROMPTS.map((config) => (
             <ExamplePrompt
               key={config.id}
@@ -633,13 +685,60 @@ export function ChatInterface() {
           ))}
         </div>
 
-        <div className="pt-3 mt-3 border-t border-[#303030]">
-          <SidebarAccount pet={playerProfile?.top_pet} onClick={() => void openGuestPaywall()} />
+        <div className="flex-shrink-0 pt-3 mt-3 border-t border-[#303030] space-y-2">
+          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+            <button
+              type="button"
+              onClick={openPaywall}
+              className="group w-full text-left px-2 py-1 -mx-2 rounded-lg hover:bg-[#333333] transition-colors cursor-pointer"
+            >
+              <span className="block text-sm text-[#a3a3a3] group-hover:text-[#ececec]">
+                {usage.remaining === 1
+                  ? "1 free message left"
+                  : `${usage.remaining} free messages left`}
+              </span>
+              {!isSignedIn && (
+                <span className="block text-xs leading-tight text-[#737373] group-hover:text-[#a3a3a3]">
+                  Sign in for 2 more today
+                </span>
+              )}
+            </button>
+          )}
+          <SidebarAccount pet={playerProfile?.top_pet} />
         </div>
       </aside>
 
       {/* Main chat area */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="relative flex-1 flex flex-col min-w-0">
+        {/* Account cluster | signed out shows "Sign in" next to the avatar,
+            signed in just shows the avatar. Mirrors the sidebar's account
+            row (same AccountMenu component, kept in sync by construction). */}
+        <div className="absolute top-3 right-3 z-40 flex items-center gap-3">
+          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+            <button
+              type="button"
+              onClick={openPaywall}
+              className="text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer whitespace-nowrap"
+            >
+              {usage.remaining === 1
+                ? "1 free message left"
+                : `${usage.remaining} free messages left`}
+            </button>
+          )}
+          {!isSignedIn && (
+            <div className="rounded-lg bg-[#262626] p-1">
+              <button
+                type="button"
+                onClick={() => router.push("/auth/signin")}
+                className="px-3 py-1.5 rounded-md text-sm font-medium bg-white text-[#1a1a1a] hover:bg-[#e5e5e5] transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Sign in
+              </button>
+            </div>
+          )}
+          <AccountMenu pet={playerProfile?.top_pet} size={32} openDirection="down" align="right" />
+        </div>
+
         {/* Top bar (mobile) */}
         <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-[#303030]">
           <button
@@ -658,6 +757,17 @@ export function ChatInterface() {
             />
             <span className="text-xl font-semibold">RealmPal</span>
           </button>
+          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+            <button
+              type="button"
+              onClick={openPaywall}
+              className="ml-auto text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer"
+            >
+              {usage.remaining === 1
+                ? "1 free message left"
+                : `${usage.remaining} free messages left`}
+            </button>
+          )}
         </header>
 
         {/* Messages */}
@@ -681,7 +791,7 @@ export function ChatInterface() {
                 </div>
                 <h1 className="text-2xl font-semibold text-[#ececec] mb-2">RealmPal</h1>
                 <p className="text-[#737373] max-w-xs">
-                  Your AI companion for Realm of the Mad God. Look up players, items, and dungeon guides. Build DPS sets and more!
+                  Look up players, items, and dungeon guides. Build/Visualize DPS sets, <br /> enchants, and more!
                 </p>
               </div>
               {/* Example prompt cards */}
@@ -758,6 +868,7 @@ export function ChatInterface() {
                 <input
                   ref={fileInputRef}
                   type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
                   onChange={handleFileChange}
                   className="hidden"
                   aria-hidden="true"
@@ -826,6 +937,7 @@ export function ChatInterface() {
           remaining={paywall.remaining}
           limit={paywall.limit}
           pet={playerProfile?.top_pet}
+          signedIn={isSignedIn}
           onClose={() => setPaywall(null)}
         />
       )}

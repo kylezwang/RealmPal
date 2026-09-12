@@ -347,13 +347,17 @@ def _pick_name(query: Optional[str], names: list[str], *, extra_bonus: Optional[
     return ranked[0][1]
 
 
-async def load_outfit_catalog(redis: aioredis.Redis, *, ttl_seconds: int) -> dict:
+async def load_outfit_catalog(
+    redis: aioredis.Redis, *, ttl_seconds: int, cache_only: bool = False
+) -> dict:
     cached = await redis.get(CATALOG_KEY)
     if cached:
         try:
             return json.loads(cached)
         except json.JSONDecodeError:
             pass
+    if cache_only:
+        return {"classes": [], "clothing": [], "accessory": []}
     async with _CATALOG_LOCK:
         cached = await redis.get(CATALOG_KEY)
         if cached:
@@ -504,8 +508,11 @@ async def render_skin_portrait(
     clothing: Optional[str],
     accessory: Optional[str],
     ttl_seconds: int,
+    cache_only: bool = False,
 ) -> SkinPortrait:
-    catalog = await load_outfit_catalog(redis, ttl_seconds=ttl_seconds)
+    catalog = await load_outfit_catalog(
+        redis, ttl_seconds=ttl_seconds, cache_only=cache_only
+    )
     class_row, skin_row = _resolve_class_skin(catalog, class_name, skin_name)
     clothing_row = _resolve_dye(clothing, catalog.get("clothing") or [], "clothing")
     accessory_row = _resolve_dye(accessory, catalog.get("accessory") or [], "accessory")
@@ -570,6 +577,7 @@ async def retrieve_skin_visualizer(
             clothing=query.clothing,
             accessory=query.accessory,
             ttl_seconds=ttl_seconds,
+            cache_only=True,
         )
     except Exception as e:
         logger.bind(error=str(e), skin=query.skin_name).warning(

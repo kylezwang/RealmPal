@@ -15,6 +15,9 @@ from ..models.player import PlayerProfile
 from .scraper import scrape_player_profile
 
 PLAYER_CACHE_PREFIX = "player:profile:v3:"
+# Wiki specialist stores last a week. A player row must never inherit that
+# TTL — fame/gear change constantly and are scraped on lookup.
+MAX_PLAYER_CACHE_SECONDS = 15 * 60
 
 PLAYER_LOOKUP_RE = re.compile(
     r"(?:/player|look\s*up\s*player|player)\s+([A-Za-z0-9_]{1,20})\b",
@@ -69,11 +72,14 @@ async def get_or_scrape_player(
 ) -> PlayerProfile:
     """Redis-cached RealmEye profile; same key the /players route uses."""
     cache_key = f"{PLAYER_CACHE_PREFIX}{username.lower()}"
-    cached = await redis.get(cache_key)
-    if cached:
-        return PlayerProfile.model_validate_json(cached)
+    if ttl_seconds > 0:
+        ttl_seconds = min(int(ttl_seconds), MAX_PLAYER_CACHE_SECONDS)
+        cached = await redis.get(cache_key)
+        if cached:
+            return PlayerProfile.model_validate_json(cached)
     profile = await scrape_player_profile(username)
-    await redis.setex(cache_key, ttl_seconds, profile.model_dump_json())
+    if ttl_seconds > 0:
+        await redis.setex(cache_key, ttl_seconds, profile.model_dump_json())
     return profile
 
 
