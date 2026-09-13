@@ -22,6 +22,8 @@ Resume order when context is fresh:
 
 **Stripe checkout → webhook → entitlement audit is done** (Sep 13): found and fixed a real bug (guest checkout emails only in `customer_details.email` were silently dropped) and shipped a self-service Stripe Customer Portal link. See `CHANGELOG.md` [2026.09.13] for detail.
 
+**Production branch is set up** (Sep 13): `master` is production (protected: PR required, no force-push/delete, enforced for admins too), `dev` is the normal working branch with no protection. `master` was fast-forwarded to `dev`'s tip so it's not stale anymore. Promote a deploy by opening a PR `dev` → `master` and merging it, there's no more direct-push path.
+
 ## History
 ### Until Sep 13, 2026 (later same day)
 Resume order was:
