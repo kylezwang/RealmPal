@@ -1,14 +1,18 @@
 ---
-description: Update the user-facing changelog on every deploy-worthy change
+description: Update the user-facing changelog on every deploy-worthy change (separate from developer changelog)
 alwaysApply: true
 ---
 
-# Changelog updates
+# Changelog updates (user-facing)
+
+**This rule is for user-visible changes only.** This feeds `web/lib/changelog.ts` (the "What's new" modal in the app).
+
+For developer-facing technical notes (breaking changes, migrations, internal refactors), see `CHANGELOG.md` (the developer changelog) — that's updated separately.
 
 Every change a user would notice (new feature, pricing/limit change, UI
 change, a bug fix they'd feel) needs one entry in `web/lib/changelog.ts`
 before the work is considered done. Purely internal changes (refactors,
-tests, infra, docs) do not need an entry.
+tests, infra, docs) do not need an entry here.
 
 ## How to add an entry
 
@@ -34,7 +38,7 @@ tests, infra, docs) do not need an entry.
   page, not the changelog.
 
 Good: "Pro now includes more chat each month at no extra charge."
-Bad: "Pro now includes 90 Claude replies/mo; overage is $0.08/reply up to
+Bad: "Pro now includes 68 Claude replies/mo; overage is $0.08/reply up to
 your spend cap, tracked in Redis."
 
 The "What's new" modal, header badge, and first-login popup all key off

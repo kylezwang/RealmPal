@@ -1,0 +1,255 @@
+---
+description: Keep BACKLOG focused on future work; move completed items to CHANGELOG
+alwaysApply: true
+---
+
+# Development & Changelog Workflow
+
+**Goal:** Separate completed work from planned work. BACKLOG looks forward; CHANGELOG looks back. No staleness.
+
+## The Three-Changelog System
+
+RealmPal maintains three separate changelogs for three audiences:
+
+### 1. BACKLOG.md (product roadmap — this is forward-looking)
+
+**What goes here:**
+- Current priorities and in-progress work
+- Blocked items with root causes and unblock conditions
+- Technical decisions already made
+- Next items to start
+- Research notes and findings
+
+**What goes here after completion:**
+- ❌ Nothing. Remove completed work and archive it to CHANGELOG.md
+
+**Structure:**
+- "Resume order when context is fresh" at top (next priorities)
+- Blocked section (explain why, not just "waiting")
+- Each active feature as a section with "**done**" marker when complete
+- Do not edit BACKLOG the week after a feature ships (let CHANGELOG capture it)
+
+### 2. CHANGELOG.md (developer changelog — technical & migrations)
+
+**What goes here:**
+- Every completed version (not every commit)
+- Breaking changes, migrations, technical details
+- Linked commits
+- Internal refactors, tests, infrastructure
+- Known issues and blockers at time of release
+
+**What goes here when:**
+- After a feature is **ready to deploy** (all tests pass, reviewed)
+- When moving from BACKLOG to CHANGELOG, expand brief notes into full technical detail
+- Add migration guides if the change affects operations
+
+**Workflow:**
+1. While building: keep notes in BACKLOG under "In Progress"
+2. When done: create [YYYY.MM.DD] section in CHANGELOG.md with full technical writeup
+3. Remove from BACKLOG (don't keep stale copies)
+4. Add related user-visible items to web/lib/changelog.ts (see rule 3 below)
+
+### 3. web/lib/changelog.ts (user-facing changelog — UI modal only)
+
+**What goes here:**
+- User-visible improvements only
+- Short, benefit-focused, no jargon
+- One sentence per bullet; 1-4 bullets per entry
+
+**What goes here when:**
+- Same release day as CHANGELOG.md (if there are user-visible changes in that release)
+- See `.cursor/rules/changelog.mdc` for the full guide
+
+**Note:** Internal refactors, performance work with no visible effect, added tests, etc. do NOT go here.
+
+---
+
+## Example: Ship a Feature
+
+### Day 1-2: Building (in BACKLOG)
+
+```markdown
+## Enchantment specialist (in progress)
+
+LangGraph slot next to weapon / ability / armor / ring. Reads RealmEye `/wiki/enchanting` tables.
+
+**Already done:**
+- `api/services/enchanting.py`
+- `api/services/scraper.py` — `scrape_enchanting_page()`
+
+**In progress (Sep 13-14):**
+1. Wire `warm_enchanting_store` into specialist warming
+2. Inject brief into `retrieve_build_knowledge`
+3. Skip extra wiki RAG on enchant-only questions
+4. Tests: "what enchants on QOT" → stored brief, no Claude
+```
+
+### Day 3: Ready to Ship (MOVE to CHANGELOG.md, REMOVE from BACKLOG)
+
+**In BACKLOG:** Delete the whole section
+
+**In CHANGELOG.md:**
+
+```markdown
+## [2026.09.15] - Sep 15, 2026
+
+### Added
+- **Enchantment specialist** (`api/services/enchanting.py`):
+  - Isolate enchant-only questions via LangGraph
+  - Read RealmEye `/wiki/enchanting` tables (eligible slot, I–IV, unique/awakened)
+  - Inject brief into build context via `retrieve_enchanting_brief`
+  - Store in `wiki:enchanting:v1` with 7-day TTL
+  - Skip extra RAG on enchant-only turns (brief is sufficient)
+
+### Tests
+- `test_enchant_question_retrieves_brief`: Assert stored brief, no Claude call
+- `test_dex_roll_enchant_does_not_fire_on_wis_item`: Assert slot-specific filtering
+- `test_enchant_follow_up_still_calls_claude`: Assert constrained follow-ups stream
+
+### Commits
+- `abc1234`: Enchantment specialist wiring and tests
+```
+
+**In web/lib/changelog.ts (if user-visible):**
+
+```typescript
+{
+  version: "2026.09.15",
+  date: "Sep 15, 2026",
+  items: [
+    "Enchanting advice is now instant for popular questions, no wait.",
+  ],
+}
+```
+
+### Day 4: Older Features Stay in History
+
+BACKLOG no longer mentions Enchantment. If you want to know what it was before Sep 15, read CHANGELOG.md or the git history.
+
+---
+
+## Rules
+
+### Do NOT
+
+- Leave completed features in BACKLOG. Archive to CHANGELOG.md and remove.
+- Let BACKLOG grow stale (weeks of "in progress" with no movement).
+- Put internal changes (refactors, tests, infra) in `web/lib/changelog.ts` (that's for users).
+- Put user benefits in CHANGELOG.md without technical detail (we need both).
+- Summarize away old BACKLOG text. If it changes, see `.cursor/rules/doc-history.mdc`.
+
+### DO
+
+- Move completed work from BACKLOG → CHANGELOG.md → git history (progressive archiving)
+- Update BACKLOG weekly: remove stale, update blockers with new info, reorder priorities
+- Add technical detail to CHANGELOG.md; add user benefit to web/lib/changelog.ts (same feature, two angles)
+- Keep BACKLOG forward-focused: "Resume order when context is fresh" shows what's next
+- Use CHANGELOG.md to explain migrations and breaking changes (operations reads this)
+
+---
+
+## Audience
+
+| Reader | Looks at | Purpose |
+|---|---|---|
+| Product manager / team | BACKLOG.md | What are we building? What's blocked? What's next? |
+| End user | web/lib/changelog.ts (app UI) | What's new in RealmPal? Any features I should know about? |
+| Developer (you) | CHANGELOG.md + BACKLOG.md | What changed technically? Is there a migration? What was the decision? |
+| Operations / DevOps | CHANGELOG.md | Breaking changes? New secrets to rotate? New infrastructure to set up? |
+
+---
+
+## Anti-Patterns (Don't Do This)
+
+### ❌ Stale BACKLOG
+
+```markdown
+## Enchantment specialist (started, not finished)
+
+**Still open (do these before calling it done):**
+1. Wire `warm_enchanting_store` into...
+2. `retrieve_build_knowledge`: enchant-only...
+```
+
+**Problem:** Reader doesn't know if this is from Sep 10 or Sep 20. No context.
+
+**Fix:** Either it's in-progress with a date, or it's done (move to CHANGELOG.md and remove).
+
+### ❌ User-Visible Details in CHANGELOG.md
+
+```markdown
+### Added
+- **Enchantment specialist**: read RealmEye /wiki/enchanting (eligible slot, I–IV, unique/awakened),
+  inject via retrieve_build_knowledge, store wiki:enchanting:v1, 7-day TTL
+```
+
+**Problem:** Users don't care about Redis keys or TTLs.
+
+**Fix:** CHANGELOG.md: technical details (for devs/ops). web/lib/changelog.ts: user benefit ("Enchanting advice is now instant").
+
+### ❌ Duplicate BACKLOG History
+
+```markdown
+# BACKLOG
+
+## Enchantment specialist
+
+### History
+
+#### Until Sep 15, 2026
+Wire `warm_enchanting_store` into...
+```
+
+**Problem:** This info is in CHANGELOG.md already. Don't keep it here too.
+
+**Fix:** Remove the history from BACKLOG. Link to CHANGELOG.md if you need to reference it later.
+
+---
+
+## Template: Moving Work from BACKLOG to CHANGELOG
+
+**Step 1:** In BACKLOG.md, find the completed section
+
+```markdown
+### Enchantment specialist (started, not finished)
+...details...
+```
+
+**Step 2:** Remove it entirely from BACKLOG
+
+**Step 3:** In CHANGELOG.md, create a new [YYYY.MM.DD] entry (or append to today's if it exists)
+
+```markdown
+### Added
+- **Enchantment specialist**: [technical detail]
+
+### Commits
+- abc1234: Enchantment specialist wiring and tests
+```
+
+**Step 4:** If user-visible, add to web/lib/changelog.ts
+
+```typescript
+{
+  version: "2026.09.15",
+  date: "Sep 15, 2026",
+  items: ["Enchanting advice is now instant for popular questions."],
+}
+```
+
+**Step 5:** Commit with message like:
+
+```
+feat: enchantment specialist wiring and tests
+
+Moves enchanting slot into specialist system. Queries resolve instantly
+from wiki store or stream Claude for constrained follow-ups.
+
+- Wire warm_enchanting_store into specialist warming
+- Inject brief into retrieve_build_knowledge
+- Skip extra RAG on enchant-only turns
+- Tests: stored brief, slot filtering, constrained follow-ups
+
+Fixes: Enchantment in BACKLOG (remove from planned, add to history).
+```
+

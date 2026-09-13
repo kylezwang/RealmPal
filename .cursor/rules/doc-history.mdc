@@ -1,0 +1,50 @@
+---
+description: Keep dated history when updating BACKLOG, CHANGELOG, or docs. Never drop old facts.
+alwaysApply: true
+---
+
+# Doc history (preserve prior text with dates)
+
+When you change `BACKLOG.md`, `CHANGELOG.md`, `README.md`, or anything under `docs/`, do not
+delete the previous fact. Keep it in the same file (or the file you moved
+it to) with the date it was current. This is the **internal counterpart** of
+`web/lib/changelog.ts` (user-facing UI). Do not put this history there.
+
+## When to Keep History
+
+- **Changing a number or estimate** (e.g., pricing from 90 → 68): Keep old value with date
+- **Moving a section** (e.g., from BACKLOG to CHANGELOG): Copy in full; add History line noting origin
+- **Evolving a design** (e.g., auth from magic-link → password): Keep old approach with date
+- **Marking something done** (e.g., "Enchantment specialist (started)" → move to CHANGELOG): Remove from BACKLOG, keep in CHANGELOG History
+
+## How to record a change
+
+1. Leave the new current text at the top of the section.
+2. Add or extend a `## History` section below (newest first).
+3. Each block starts with the date the old text was true, then the old text.
+
+Date format: `Sep 13, 2026` (same as the UI changelog). If you only know
+when it was replaced, write `Until Sep 13, 2026`. Do not invent a start
+date.
+
+## Moving content between files
+
+Copy the old section in full into the destination. Note where it lived and
+until when. Replace the original with a one-line pointer plus a History
+line that names the new path.
+
+## Do not
+
+- Overwrite a number, quota, estimate, or decision in place
+- Summarize away an old table or sketch; keep the prior text
+- Drop a section because it moved; the destination must include it
+
+Good:
+
+    ## History
+    ### Until Sep 13, 2026
+    Paid Claude pool was 90. Daily fuse was 200.
+
+Bad:
+
+    (delete the 90/200 paragraph and leave only 68/50)
