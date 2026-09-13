@@ -148,44 +148,50 @@ If guests + free + paid exist **at the same time**, guests/free are still the le
 
 **Do not read ~$650 as hosting.** That old row was Claude (~$500) + the $110 Azure bill with no 90-pool split. Hosting alone is still ~$110.
 
-### Shipped unit math: 90 included + PAYG (70/30)
+### Shipped unit math: base `$7` after 90 Claude, then PAYG on top (70/30)
 
-Per paid user, Claude cost ≈ count × `$0.0365` (or × `$0.041` if the 30% is always builds). Overage bills `$0.08`, so each PAYG reply nets about **`$0.0435`** (or **`$0.039`** on builds) after tokens. Default spend cap is `$0`: users who never raise it stop at 90 Claude (~300 mixed msgs at 70/30). The 450 row assumes they set a cap and keep going.
+Claude cost ≈ count × `$0.0365` (or × `$0.041` if the 30% is always builds). Split profit into two layers: (1) what the **`$7` subscription** leaves after the **90 included** Claude replies, and (2) what **PAYG** adds on overage. Do not fold uncapped Claude into the sticker.
 
-| Per paid user (70/30) | 300 msgs/mo (~10/day) | 450 msgs/mo (~15/day) |
+**Layer 1: base `$7` profit after the 90 Claude limit** (same whether the user stops at the pool or keeps going). At 70/30, 90 Claude ≈ **300 mixed msgs/mo** (~10/day). Stored hits are free and do not touch this layer.
+
+| Base `$7` after 90 included | Per paid user | 100 paid |
 |---|---|---|
-| Stored / Claude | 210 / **90** | 315 / **135** |
-| Included used | 90 | 90 |
-| PAYG Claude | 0 | **45** × `$0.08` = **`$3.60`** |
-| User pays | **`$7`** | **`$7 + $3.60 = $10.60`** |
-| Our Claude cost | `$3.29`–`$3.69` | `$4.93`–`$5.54` |
-| Stripe + host share | ~`$0.50` + ~`$1.10` | ~`$0.50` + ~`$1.10` |
-| **Left per user** | **~$1.70 to ~$2.10** | **~$3.50 to ~$4.10** (includes ~`$2` PAYG token margin on the 45) |
+| Sub revenue | **`$7`** | **`$700`** |
+| Claude cost (90 × `$0.0365`–`$0.041`) | −`$3.29` to −`$3.69` | −`$329` to −`$369` |
+| Stripe (~`$0.50` per `$7`) | −`$0.50` | −`$50` |
+| Host share (~`$110` / 100) | −`$1.10` | −`$110` |
+| **Base profit** | **~`$1.70` to ~`$2.10`** | **~`$170` to ~`$210`** |
 
-Same habits for **100 paid**, no guests/free stacked (sub Stripe ~`$50`, host ~`$110`):
+That is the floor: Pro is already in the black once the included pool is fully used. Users who never raise the spend cap (default `$0`) stop here. Annual `$4.99` (~`$499` on 100 people) is still weak next to `$329`–`$369` of included Claude alone.
 
-| 100 paid @ 70/30 | 300 msgs/mo | 450 msgs/mo (PAYG on) |
+**Layer 2: PAYG profit on top** (only if they raise the spend cap). Overage is `$0.08`/Claude; token cost stays ~`$0.0365`–`$0.041`, so each overage reply nets about **`$0.0435`** (or **`$0.039`** on builds).
+
+| Habit @ 70/30 | Claude total | Of which PAYG | PAYG revenue | PAYG Claude cost | **PAYG profit** |
+|---|---|---|---|---|---|
+| **300 msgs/mo** (~10/day) | 90 | 0 | `$0` | `$0` | **`$0`** |
+| **450 msgs/mo** (~15/day) | 135 | **45** | `$3.60` / user (`$360` / 100) | `$1.64`–`$1.85` / user | **~`$1.75` to ~`$2.00` / user** (**~`$175` to ~`$200` / 100**) |
+
+**Stack the two layers** (base is unchanged; PAYG adds):
+
+| | 300 msgs/mo | 450 msgs/mo |
 |---|---|---|
-| Sub revenue | **`$700`** | **`$700`** |
-| PAYG revenue | `$0` | **`$360`** (100 × 45 × `$0.08`) |
-| **Total revenue** | **`$700`** | **`$1,060`** |
-| Claude cost | −`$329` to −`$369` | −`$493` to −`$554` |
-| Hosting | −`$110` | −`$110` |
-| Stripe (subs) | −`$50` | −`$50` |
-| **Left** | **about +`$170` to +`$210`** | **about +`$350` to +`$410`** |
+| Layer 1: base `$7` after 90 Claude | **~`$1.70`–`$2.10`** / user (**~`$170`–`$210`** / 100) | same |
+| Layer 2: PAYG profit | `$0` | **~`$1.75`–`$2.00`** / user (**~`$175`–`$200`** / 100) |
+| **Total left** | **~`$1.70`–`$2.10`** / user (**~`$170`–`$210`** / 100) | **~`$3.45`–`$4.10`** / user (**~`$345`–`$410`** / 100) |
+| User pays | `$7` | `$7 + $3.60 = $10.60` |
 
-So the old “15/day is break-even on `$7` alone” story is wrong once the **90 pool** is in the model: at 300 msgs the subscription already has ~`$200` left on 100 people; at 450 the **PAYG tail** is where most of the extra margin comes from (~`$2`/user on 45 overage replies), not from raising the sticker. Annual `$4.99` (~`$499`) still looks weak next to a full 90-Claude month (`$329`–`$369` tokens alone before host/Stripe).
+So the old “15/day is break-even on `$7` alone” story is wrong: the **`$7` already profits after 90 Claude** (~`$200` on 100 people at full pool use). The 450 habit does not make the sticker eat 135 Claude calls; it keeps that base margin and **adds** ~`$2`/user from PAYG.
 
-**Pricing implication (shipped as `$7` + 90 Claude + PAYG, not a `$10` sticker).** Per paying user the `$7` is meant to cover ~90 Sonnet calls (~`$3.30`–`$3.70`) + Stripe + a hosting share, with stored hits free. Power use past 90 is metered. Hosting gets cheaper per head as you grow; Claude does not. “Just get more users” helps the host line, not an uncapped token bill.
+**Pricing implication (shipped as `$7` + 90 Claude + PAYG, not a `$10` sticker).** Size the sticker on layer 1 (90 Sonnet calls + Stripe + hosting share). Meter power use on layer 2. Hosting gets cheaper per head as you grow; Claude does not. “Just get more users” helps the host line, not an uncapped token bill.
 
-| Plan read | 100 paid, 70/30, after Stripe + `$110` host | Notes |
+| Plan read | 100 paid, 70/30 | Notes |
 |---|---|---|
-| `$7` + 90 pool, **300 msgs** (no PAYG) | **+`$170` to +`$210`** | Comfortable if habit is ~10/day. |
-| `$7` + 90 pool + PAYG, **450 msgs** | **+`$350` to +`$410`** | 15/day works **because** of the `$3.60` overage, not because `$7` ate 135 Claude calls. |
+| Base `$7` after 90 Claude (**300 msgs**, no PAYG) | **+`$170` to +`$210`** | Floor margin from the subscription alone. |
+| Same base + PAYG (**450 msgs**) | **+`$345` to +`$410`** | Base ~`$170`–`$210` **plus** PAYG ~`$175`–`$200`. |
 | `$7` with **no** pool (old sketch) | −`$15` to +`$45` | Break-even trap; do not size on this. |
 | `$4.99`/mo annual at full 90 Claude | **red** | Do not ship at this unit cost. |
 
-If real use lands closer to **300 msgs/mo**, `$7` already has margin. Raise later, not now. If **450** sticks, keep the sticker and lean on PAYG + spend caps; do not raise quotas to “make `$10` feel fair.” The token strategy is still skipping the model. Keep guest 3 / free 5.
+If real use lands closer to **300 msgs/mo**, the base `$7` already has margin. Raise later, not now. If **450** sticks, keep the sticker and lean on PAYG + spend caps; do not raise quotas to “make `$10` feel fair.” The token strategy is still skipping the model. Keep guest 3 / free 5.
 
 **Pay-as-you-go (Cursor-style) - shipped.** Flat `$7` cannot be unlimited; the 200/day cap is a fuse, not a product. PAYG lets Pro keep going after the included Claude pool. Metered overage is live (`GET`/`POST /payments/on-demand`), not just copy.
 
@@ -201,9 +207,9 @@ Shipped `$7` + on-demand (not a sketch):
 | Spend cap | User-set monthly extra, default **`$0`** (stop) or **`$5`**. Cursor-style. No surprise `$80` bill. |
 | Fuse | Keep **200 msgs/day** even with PAYG so a loop can’t print money in an hour. |
 
-A **450 msgs/mo** habit user (135 Claude at 70/30) pays `$7` + **45** extra × `$0.08` ≈ **`$7 + $3.60`**. We take ~`$2` token margin on that tail; they never hit a wall if the cap allows. A 25/day power user (225 Claude) pays `$7` + 135 × `$0.08` ≈ **`$7 + $10.80`** and we don’t eat it. Copy: “`$7` includes a lot. Keep going on usage. Stored answers are free.” Not “unlimited for `$7`.”
+A **450 msgs/mo** habit user (135 Claude at 70/30) pays `$7` + **45** extra × `$0.08` ≈ **`$7 + $3.60`**. The `$7` still leaves ~`$1.70`–`$2.10` after the 90 included; the 45 overage adds ~`$1.75`–`$2.00` more. A 25/day power user (225 Claude) pays `$7` + 135 × `$0.08` ≈ **`$7 + $10.80`** and we don’t eat the tail. Copy: “`$7` includes a lot. Keep going on usage. Stored answers are free.” Not “unlimited for `$7`.”
 
-This is how `$7` can stay the sticker and still not be a `$1`-profit trap: the subscription is the floor (sized to **90 Claude / ~300 mixed**), power use is metered. Stored answers and PAYG both shipped, so the included pool is not eaten by drops and wiki dumps.
+This is how `$7` can stay the sticker and still not be a `$1`-profit trap: the subscription is already profitable after **90 Claude / ~300 mixed**, and power use is metered on top. Stored answers and PAYG both shipped, so the included pool is not eaten by drops and wiki dumps.
 
 ---
 
@@ -350,6 +356,6 @@ This Cursor chat (**Stored-answer chat**): classify-then-Redis replies; Sonnet-f
 
 Run `pip install -r api/requirements-dev.txt` then `pytest` from repo root.
 
-Decisions already made: per-user accounts in one deployment; managed auth; $7 + 90 Claude/mo + PAYG at $0.08 (not a $10 sticker); anonymous free tier keyed on IP (3) vs signed-in (5); Azure-native deploy; SQLite until Azure Postgres; session in httpOnly cookies; global daily spend cap (~$20/month); 70/30 stored/Claude as the success metric; size margin on 300 msgs (fills the 90 pool) and 450 msgs (90 + PAYG), not on uncapped Claude inside $7.
+Decisions already made: per-user accounts in one deployment; managed auth; $7 + 90 Claude/mo + PAYG at $0.08 (not a $10 sticker); anonymous free tier keyed on IP (3) vs signed-in (5); Azure-native deploy; SQLite until Azure Postgres; session in httpOnly cookies; global daily spend cap (~$20/month); 70/30 stored/Claude as the success metric; size margin as base $7 profit after the 90 pool (~300 msgs) plus PAYG profit on top (~450 msgs), not uncapped Claude inside $7.
 
 Do not continue Entra in a depleted session. Start the next one by reading this file, then Enchantment wiring + tests.
