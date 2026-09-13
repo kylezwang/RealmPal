@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # Local fallback is a direct Anthropic key until the Foundry resource exists.
     anthropic_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
+    # Cheaper pass when the wiki/RAG store already has the facts.
+    claude_light_model: str = "claude-haiku-4-5"
 
     # Foundry resource name *or* full base URL, never both. Resource becomes
     # https://<resource>.services.ai.azure.com/anthropic/
@@ -95,10 +97,12 @@ class Settings(BaseSettings):
     # Falls back to jwt_secret when unset; set it explicitly in production.
     pii_hash_secret: str = ""
 
-    # Daily ceiling for legacy magic-link subscribers. They used to bypass
-    # limits entirely, which left one compromised token able to spend without
-    # bound.
+    # Daily ceiling for paid accounts. Abuse fuse, not expected use.
     paid_message_limit: int = 200
+    # Claude replies included in the $7 plan. Stored answers do not count.
+    paid_claude_included: int = 90
+    # Price of one Claude reply after the included pool.
+    claude_overage_usd: float = 0.08
 
     # Burst limit for scrape-triggering lookups (players/items/dungeons/
     # skins/sprite). A cache miss launches a real headless browser behind a
@@ -116,6 +120,8 @@ class Settings(BaseSettings):
     # at foundry_ccu_usd; keep them in lockstep with claude_model.
     model_input_cost_per_mtok_usd: float = 3.0
     model_output_cost_per_mtok_usd: float = 15.0
+    light_model_input_cost_per_mtok_usd: float = 1.0
+    light_model_output_cost_per_mtok_usd: float = 5.0
     # Bounds the worst case for a single response.
     max_response_tokens: int = 4096
     anthropic_timeout_seconds: float = 120.0
@@ -179,7 +185,7 @@ class Settings(BaseSettings):
     debug: bool = False
     # Comma-separated IGNs that skip chat + lookup quotas while DEBUG=true.
     # Local testing only — ignored in any non-debug process.
-    debug_unlimited_igns: str = "Turbine"
+    debug_unlimited_igns: str = ""
 
     @property
     def debug_unlimited_ign_set(self) -> frozenset[str]:

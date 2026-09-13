@@ -1,0 +1,100 @@
+export interface ChangelogEntry {
+  /** Sortable id, also shown nowhere. Just needs to be unique and newest-first. */
+  version: string;
+  /** Human date shown in the UI, e.g. "Sep 13, 2026". */
+  date: string;
+  /** Short, plain-language, user-facing bullets. See .cursor/rules/changelog.mdc. */
+  items: string[];
+}
+
+/**
+ * User-facing changelog, newest entry first. Every deploy that changes what
+ * a user can see or do should add (or extend) an entry here. See
+ * .cursor/rules/changelog.mdc for the house style.
+ */
+export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "2026.09.13",
+    date: "Sep 13, 2026",
+    items: [
+      "Pro gets more chat included every month, plus an optional pay-as-you-go option so you're never stuck waiting.",
+      "Drops, best gear, and build guides now answer instantly.",
+      "You can now see exactly when your free daily messages reset.",
+      "Billing and usage now live in the account menu.",
+      "Daily quests now live in chat. Finish today's set for an extra message.",
+      "Each daily quest now shows today's dungeon portal, an eyeball for player lookup, or a shiny item, all the same size.",
+      "Quest icons stay visible when a dungeon name is long.",
+      "Dungeon portals show up again after you refresh daily quests.",
+      "The Shatters quest now shows the real dungeon portal, not the ice portal inside it.",
+      "Hardmode Shatters again uses the purple Source dome as its portal.",
+      "The shiny star only shows when that item actually has a shiny version.",
+      "The top bar is now messages left, What’s new, Quests, Sign in, then your profile.",
+      "The Quests button in the top bar shows your daily progress again.",
+      "The top-right buttons now sit on their own tab so they don't cover your chat.",
+      "The Quests progress bar sits under the Quests label.",
+      "Hovering a shiny quest item now shows its name instead of clipping it.",
+      "Dungeon guides no longer stall or drop item cards after a long drop list.",
+      "The quests refresh button now picks a new dungeon and a new shiny item.",
+      "Refreshing quests now swaps the shiny item art instead of leaving the last one stuck.",
+      "The shiny quest now uses the same divine glow and diamonds as a visualized set.",
+      "Dungeon quest names no longer include leftover wiki text.",
+      "Dungeon guides now show the real dungeon portal, not the ice portal inside The Shatters.",
+      "The daily quests window opens again.",
+      "Finished daily quests stay clickable, with a pointer cursor on hover.",
+      "Click any item sprite to zoom it full size. Tap the backdrop to close.",
+      "The message reset countdown is now easier to spot in mustard yellow.",
+      "Item zoom now keeps divine glow, shiny stars, and stats, with a link back to RealmEye.",
+      "Dungeon guides now show the right difficulty graves and less repeated wiki text.",
+      "Layout maps in dungeon guides are sized down so they do not blow up the chat.",
+      "Drop icons in dungeon guides are a bit larger.",
+      "The top bar buttons have a little more breathing room.",
+      "Billing now shows a usage progress bar with a percentage, above your plan.",
+      "Pro users can set a pay-as-you-go spending limit ($20, $50, $100, or custom) from Billing.",
+      "When your included replies run out, the paywall and Billing both let you manage your spending limit.",
+      "Skin preview questions like 'what does X look like with Y cloth' now resolve the skin name correctly.",
+      "Skin previews render instantly without calling Claude, and show a clear message if RealmEye cannot composite the outfit.",
+      "Clickable buttons and links now show the pointer cursor consistently.",
+      "The sidebar account row now shows your IGN with your email underneath.",
+      "Your sidebar pet now saves with your account and shows up everywhere you sign in.",
+      "Skin preview follow-ups like 'what does it look like with small black dye' keep the same skin from earlier in the chat.",
+      "The skin preview card applies one cloth or dye to both clothing and accessory.",
+      "Saying switch in a skin preview now swaps the clothing and accessory instantly.",
+      "Swapping a cloth preview turns Large cloth into Small cloth on the other slot.",
+      "Signed-in accounts no longer use a chat message on instant answers like drops and skin previews.",
+      "Dungeon guides still use the RealmEye writeup, without leftover wiki banners and duplicate pages.",
+      "Dungeon cards, item sprites, and skin previews stay when you reopen a chat.",
+      "The Quests tab now shows your daily progress as a small percentage beside the bar.",
+      "Build guides use the stronger model on the first ask, then replay instantly from your saved answer.",
+      "Build prompts now understand common class nicknames like pally, trix, sorc, hunt, and wiz.",
+      "Your chats and daily quest progress stay with your account when you sign out and back in.",
+      "Clicking today's shiny quest now shows that item right away.",
+      "Your top pet is now the one with the highest RealmEye ability levels, not the first pet in the yard.",
+      "Click a character, item, or skin card to see a larger copy of the whole card in the center of the screen. Gear icons and links on the card still work as their own clicks.",
+    ],
+  },
+];
+
+/** Newest version, derived automatically. Don't hand-edit this. */
+export const LATEST_VERSION = CHANGELOG[0]?.version ?? "";
+
+const STORAGE_KEY = "realm_pal_changelog_seen";
+
+/** True if the visitor hasn't seen the latest changelog entry yet. */
+export function hasUnseenChangelog(): boolean {
+  if (typeof window === "undefined" || !LATEST_VERSION) return false;
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) !== LATEST_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+/** Marks the latest changelog entry as seen, so the popup won't nag again. */
+export function markChangelogSeen(): void {
+  if (typeof window === "undefined" || !LATEST_VERSION) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, LATEST_VERSION);
+  } catch {
+    // Private mode / storage disabled. Not worth failing over.
+  }
+}

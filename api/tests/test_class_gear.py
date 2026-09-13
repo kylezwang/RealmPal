@@ -2,6 +2,7 @@ import json
 
 from api.models.item import ItemProfile
 from api.routers import items as items_router
+from .conftest import build_request
 from api.services.class_gear import class_can_wear_item, class_equipment_hubs
 from api.services.wiki_scaling import HUB_PREFIX, write_cached_item
 
@@ -70,6 +71,7 @@ async def test_item_endpoint_marks_leather_unwearable_for_kensei(
         anon_settings,
         redis_client,
         object(),
+        build_request(),
         class_name="Kensei",
     )
     assert found.sprite_url == item.sprite_url
@@ -80,5 +82,6 @@ async def test_item_endpoint_marks_leather_unwearable_for_kensei(
         anon_settings,
         redis_client,
         object(),
+        build_request(),
     )
     assert open_lookup.wearable is None

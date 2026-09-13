@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, AUTH_CHANGED_EVENT, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
+import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS, SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -13,11 +13,35 @@ import { inferSkinVisualize } from "@/lib/skinShowcase";
 import { MessageBubble } from "./MessageBubble";
 import { PetCompanion, PetSprite } from "./PetCompanion";
 import { PaywallModal } from "./PaywallModal";
+import { ChangelogModal } from "./ChangelogModal";
+import { hasUnseenChangelog } from "@/lib/changelog";
+import { QuestProgressMeter } from "./QuestProgressMeter";
+import { QuestsModal } from "./QuestsModal";
+import {
+  allDailyQuestsDone,
+  dailyQuestPercent,
+  getDailyQuestState,
+  hasClaimedDailyBonus,
+  markDailyBonusClaimed,
+  fallbackQuestArt,
+  incrementQuestShift,
+  markQuestsFromMessage,
+  mergeQuestArt,
+  questShift,
+  stripWikiTitle,
+  type DailyQuestState,
+  type QuestArt,
+} from "@/lib/quests";
 import { ChatOptionsModal } from "./ChatOptionsModal";
 import { SidebarAccount } from "./SidebarAccount";
 import { AccountMenu } from "./AccountMenu";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
-import { type ChatSession, loadSessions, saveSessions, deriveTitle } from "@/lib/chatHistory";
+import { type ChatSession, loadSessions, saveSessions, deriveTitle, currentHistoryEmail } from "@/lib/chatHistory";
+import {
+  cachedPlayerProfile,
+  loadSavedAccountProfile,
+  saveSavedAccountProfile,
+} from "@/lib/accountProfile";
 
 // Minimal shape for the Web Speech API | not in the default TS DOM lib.
 interface SpeechRecognitionLike {
@@ -31,6 +55,8 @@ interface SpeechRecognitionLike {
   onend: (() => void) | null;
   onerror: (() => void) | null;
 }
+
+const SUGGESTIONS_HIDDEN_KEY = "realm_pal_suggestions_hidden";
 
 interface Message {
   role: "user" | "assistant";
@@ -76,6 +102,33 @@ export function ChatInterface() {
   const [isLoadingPlayer, setIsLoadingPlayer] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
+  const [showChangelog, setShowChangelog] = useState(false);
+  const [unseenChangelog, setUnseenChangelog] = useState(false);
+  const [showQuests, setShowQuests] = useState(false);
+  const [dailyQuests, setDailyQuests] = useState<DailyQuestState[]>([]);
+  const [questArt, setQuestArt] = useState<QuestArt | undefined>(() => mergeQuestArt());
+  const [questBonusClaimed, setQuestBonusClaimed] = useState(false);
+  const [questRefreshing, setQuestRefreshing] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(true);
+
+  // Remember whether the sidebar quick-suggestion prompts were hidden.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(SUGGESTIONS_HIDDEN_KEY) === "1") {
+        setShowSuggestions(false);
+      }
+    } catch {
+      // Private mode / storage disabled — default to shown.
+    }
+  }, []);
+
+  // Pop the "what's new" modal once per new release, on first load.
+  useEffect(() => {
+    if (hasUnseenChangelog()) {
+      setUnseenChangelog(true);
+      setShowChangelog(true);
+    }
+  }, []);
   const [usage, setUsage] = useState<ChatUsage>({
     used: 0,
     limit: 3,
@@ -94,6 +147,8 @@ export function ChatInterface() {
   const pinToSentMessageRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const historyOwnerRef = useRef<string | null>(null);
+  const persistPausedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
@@ -112,19 +167,113 @@ export function ChatInterface() {
     }
   }, []);
 
+  const applyQuestArt = useCallback((art: QuestArt) => {
+    setQuestArt(art);
+    setDailyQuests(getDailyQuestState(art));
+    return art;
+  }, []);
+
+  const hydrateQuestArt = useCallback(async (shift = questShift(), base?: QuestArt) => {
+    const pick = base ?? fallbackQuestArt(shift);
+    const [artResult, itemResult] = await Promise.allSettled([
+      fetchQuestArt(shift),
+      fetchItem(pick.shiny_name),
+    ]);
+    const serverArt = artResult.status === "fulfilled" ? artResult.value : null;
+    const merged = mergeQuestArt(serverArt, shift);
+    if (itemResult.status === "fulfilled") {
+      const item = itemResult.value;
+      merged.shiny_name = stripWikiTitle(item.name || merged.shiny_name);
+      merged.shiny_sprite_url = item.shiny_sprite_url || undefined;
+      merged.item_sprite_url = item.sprite_url || undefined;
+    }
+    return applyQuestArt(merged);
+  }, [applyQuestArt]);
+
+  useEffect(() => {
+    setDailyQuests(getDailyQuestState());
+    setQuestBonusClaimed(hasClaimedDailyBonus());
+    let cancelled = false;
+    void hydrateQuestArt().catch(() => {
+      if (!cancelled) applyQuestArt(fallbackQuestArt());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [applyQuestArt, hydrateQuestArt]);
+
+  const refreshQuests = useCallback(async () => {
+    if (questRefreshing) return;
+    setQuestRefreshing(true);
+    const shift = incrementQuestShift();
+    const next = fallbackQuestArt(shift);
+    applyQuestArt(next);
+    try {
+      await hydrateQuestArt(shift, next);
+    } catch {
+      applyQuestArt(next);
+    } finally {
+      setQuestRefreshing(false);
+    }
+  }, [applyQuestArt, hydrateQuestArt, questRefreshing]);
+
+  const noteQuestProgress = useCallback(
+    (message: string) => {
+      markQuestsFromMessage(message, questArt);
+      const next = getDailyQuestState(questArt);
+      setDailyQuests(next);
+      if (!allDailyQuestsDone(next) || hasClaimedDailyBonus()) return;
+      void (async () => {
+        try {
+          await claimDailyQuestBonus();
+          markDailyBonusClaimed();
+          setQuestBonusClaimed(true);
+          await refreshUsage();
+        } catch {
+          // Chat still works; they can reopen quests and finish later.
+        }
+      })();
+    },
+    [refreshUsage, questArt],
+  );
+
   const applyAuthState = useCallback(() => {
-    // Drop in-memory messages first so the persist effect cannot write
-    // the previous account's chat into the newly selected storage key.
+    // Pause persist until this account's history is loaded. Otherwise a
+    // leftover message update can write the previous list into the new key.
+    persistPausedRef.current = true;
+    abortRef.current?.abort();
+    setIsStreaming(false);
     setMessages([]);
     setActiveSessionId(null);
-    const signedIn = Boolean(decodeAuthEmail());
+    const owner = currentHistoryEmail();
+    historyOwnerRef.current = owner;
+    const signedIn = Boolean(owner);
     setIsSignedIn(signedIn);
     if (!signedIn) {
       setUsage({ used: 0, limit: 3, remaining: 3, scope: "ip" });
+      setIgn("");
+      setPlayerProfile(null);
+      setIgnError(null);
+    } else {
+      const saved = loadSavedAccountProfile();
+      if (saved?.ign) {
+        setIgn(saved.ign);
+        setPlayerProfile(cachedPlayerProfile(saved));
+        void loadPlayer(saved.ign, { silent: true });
+      } else {
+        setIgn("");
+        setPlayerProfile(null);
+      }
     }
-    setSessions(loadSessions());
+    setSessions(loadSessions(owner));
+    setDailyQuests(getDailyQuestState());
+    setQuestBonusClaimed(hasClaimedDailyBonus());
+    persistPausedRef.current = false;
+    void hydrateQuestArt(questShift()).catch(() => {
+      applyQuestArt(fallbackQuestArt());
+    });
     void refreshUsage();
-  }, [refreshUsage]);
+  }, [applyQuestArt, hydrateQuestArt, refreshUsage]);
 
   useEffect(() => {
     applyAuthState();
@@ -149,13 +298,13 @@ export function ChatInterface() {
     })();
   }, [refreshUsage]);
 
-  // Persist the active conversation whenever a message is added/removed, or
-  // once streaming finishes (so the final assistant text gets saved | not
-  // every individual streamed token).
+  // Persist after the stream settles, and again when dungeon cards / item
+  // sprites attach, so reopening a chat keeps the same styling.
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (persistPausedRef.current || messages.length === 0 || isStreaming) return;
     const id = activeSessionId ?? crypto.randomUUID();
     if (!activeSessionId) setActiveSessionId(id);
+    const owner = historyOwnerRef.current;
 
     setSessions((prev) => {
       const existing = prev.find((s) => s.id === id);
@@ -166,11 +315,11 @@ export function ChatInterface() {
         updatedAt: Date.now(),
       };
       const next = [updated, ...prev.filter((s) => s.id !== id)];
-      saveSessions(next);
+      saveSessions(next, owner);
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, isStreaming]);
+  }, [messages, isStreaming]);
 
   // After send, pin the user's just-sent message to the top of the transcript
   // so the reply can grow below without yanking the viewport to the bottom.
@@ -194,17 +343,22 @@ export function ChatInterface() {
   }, [input, resizeComposer]);
 
   // Load player profile when IGN is set
-  async function loadPlayer(name: string) {
+  async function loadPlayer(name: string, options?: { silent?: boolean }) {
     setIgnError(null);
-    setIsLoadingPlayer(true);
+    if (!options?.silent) setIsLoadingPlayer(true);
     try {
       const profile = await fetchPlayer(name);
       setPlayerProfile(profile);
+      if (decodeAuthEmail()) {
+        saveSavedAccountProfile({ ign: name, top_pet: profile.top_pet });
+      }
     } catch (e) {
-      setIgnError(e instanceof Error ? e.message : "Player not found");
-      setPlayerProfile(null);
+      if (!options?.silent) {
+        setIgnError(e instanceof Error ? e.message : "Player not found");
+        setPlayerProfile(null);
+      }
     } finally {
-      setIsLoadingPlayer(false);
+      if (!options?.silent) setIsLoadingPlayer(false);
     }
   }
 
@@ -223,8 +377,11 @@ export function ChatInterface() {
       setIgn(username);
       void loadPlayer(username);
       setInput("");
+      noteQuestProgress(trimmed);
       return;
     }
+
+    noteQuestProgress(trimmed);
 
     const outgoingText = attachedFile ? `${trimmed}\n\n[Attached file: ${attachedFile.name}]` : trimmed;
     const userMsg: Message = { role: "user", content: outgoingText };
@@ -336,12 +493,16 @@ export function ChatInterface() {
     };
     const loadoutMode = Boolean(inferLoadoutShowcase(trimmed));
     const skinMode = inferSkinVisualize(trimmed);
+    const DUNGEON_ITEM_CARD_CAP = 8;
     const queueItemFetch = (name: string) => {
       if (skinMode) return;
       if (dungeonName && skipDungeonItemCard(name)) return;
       const key = name.toLowerCase();
       if (queuedItems.has(key)) return;
       if (loadoutMode && queuedItems.size >= SET_SLOT_COUNT) return;
+      // Dungeon cards already list drops. Cap extra item cards so a
+      // Hardmode Shatters guide cannot fire 30 lookups and 429 the grid.
+      if (dungeonName && queuedItems.size >= DUNGEON_ITEM_CARD_CAP) return;
       queuedItems.add(key);
       setMessages((prev) => {
         if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
@@ -377,9 +538,8 @@ export function ChatInterface() {
             };
             return updated;
           });
-          for (const drop of guide.drops) {
-            if (drop.name) queueItemFetch(drop.name);
-          }
+          // Drops render on the dungeon card. Do not also fetch each one
+          // as an item profile — HMS has 20+ uniques and trips the lookup cap.
         })
         .catch(() => {
           // Text guide still streams from the dungeon specialist.
@@ -482,6 +642,24 @@ export function ChatInterface() {
       limit: usage.limit,
       remaining: usage.remaining,
       scope: usage.scope,
+      resets_in_seconds: usage.resets_in_seconds,
+    });
+  }
+
+  function closeChangelog() {
+    setShowChangelog(false);
+    setUnseenChangelog(false);
+  }
+
+  function toggleSuggestions() {
+    setShowSuggestions((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SUGGESTIONS_HIDDEN_KEY, next ? "0" : "1");
+      } catch {
+        // Private mode / storage disabled — not worth failing over.
+      }
+      return next;
     });
   }
 
@@ -513,7 +691,7 @@ export function ChatInterface() {
   function renameSession(id: string, title: string) {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === id ? { ...s, title } : s));
-      saveSessions(next);
+      saveSessions(next, historyOwnerRef.current);
       return next;
     });
   }
@@ -521,7 +699,7 @@ export function ChatInterface() {
   function deleteSession(id: string) {
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== id);
-      saveSessions(next);
+      saveSessions(next, historyOwnerRef.current);
       return next;
     });
     if (activeSessionId === id) goHome();
@@ -543,7 +721,7 @@ export function ChatInterface() {
             updatedAt: Date.now(),
           };
           const next = [session, ...sessionsPrev.filter((s) => s.id !== id)];
-          saveSessions(next);
+          saveSessions(next, historyOwnerRef.current);
           return next;
         });
       }
@@ -673,20 +851,48 @@ export function ChatInterface() {
           </div>
         )}
 
-        <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} space-y-2 min-h-0 overflow-y-auto`}>
-          {SIDEBAR_EXAMPLE_PROMPTS.map((config) => (
-            <ExamplePrompt
-              key={config.id}
-              config={config}
-              variant="sidebar"
-              disabled={isStreaming}
-              onSubmit={(message) => void sendMessage(message)}
-            />
-          ))}
+        <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} flex-shrink-0`}>
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={toggleSuggestions}
+              aria-label={showSuggestions ? "Hide quick suggestions" : "Show quick suggestions"}
+              aria-expanded={showSuggestions}
+              className="flex h-5 w-6 items-center justify-center rounded text-[#525252] hover:text-[#a3a3a3] hover:bg-[#333333] transition-colors cursor-pointer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`transition-transform duration-150 ${showSuggestions ? "" : "rotate-180"}`}
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+          {showSuggestions && (
+            <div className="space-y-2 min-h-0 overflow-y-auto mt-1">
+              {SIDEBAR_EXAMPLE_PROMPTS.map((config) => (
+                <ExamplePrompt
+                  key={config.id}
+                  config={config}
+                  variant="sidebar"
+                  disabled={isStreaming}
+                  onSubmit={(message) => void sendMessage(message)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex-shrink-0 pt-3 mt-3 border-t border-[#303030] space-y-2">
-          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
             <button
               type="button"
               onClick={openPaywall}
@@ -704,6 +910,11 @@ export function ChatInterface() {
               )}
             </button>
           )}
+          <QuestProgressMeter
+            variant="sidebar"
+            percent={dailyQuestPercent(dailyQuests)}
+            onClick={() => setShowQuests(true)}
+          />
           <SidebarAccount pet={playerProfile?.top_pet} />
         </div>
       </aside>
@@ -713,8 +924,8 @@ export function ChatInterface() {
         {/* Account cluster | signed out shows "Sign in" next to the avatar,
             signed in just shows the avatar. Mirrors the sidebar's account
             row (same AccountMenu component, kept in sync by construction). */}
-        <div className="absolute top-3 right-3 z-40 flex items-center gap-3">
-          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+        <div className="absolute top-0 right-0 z-40 flex items-center gap-5 rounded-bl-xl bg-[#1a1a1a] border-b border-l border-[#303030] px-4 py-2">
+          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
             <button
               type="button"
               onClick={openPaywall}
@@ -725,6 +936,24 @@ export function ChatInterface() {
                 : `${usage.remaining} free messages left`}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setShowChangelog(true)}
+            className="relative text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            What&rsquo;s new
+            {unseenChangelog && (
+              <span
+                className="absolute -top-0.5 -right-1.5 h-1.5 w-1.5 rounded-full bg-white"
+                aria-hidden="true"
+              />
+            )}
+          </button>
+          <QuestProgressMeter
+            variant="header"
+            percent={dailyQuestPercent(dailyQuests)}
+            onClick={() => setShowQuests(true)}
+          />
           {!isSignedIn && (
             <div className="rounded-lg bg-[#262626] p-1">
               <button
@@ -757,7 +986,7 @@ export function ChatInterface() {
             />
             <span className="text-xl font-semibold">RealmPal</span>
           </button>
-          {usage && (usage.scope === "ip" || usage.limit <= 5) && (
+          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
             <button
               type="button"
               onClick={openPaywall}
@@ -773,7 +1002,7 @@ export function ChatInterface() {
         {/* Messages */}
         <div className="flex-1 min-w-0 overflow-y-auto" role="log" aria-live="polite" aria-label="Chat messages">
           {isEmpty ? (
-            <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
+            <div className="flex flex-col items-center justify-center h-full gap-6 px-4 pt-14">
               <div className="text-center">
                 <div className="mx-auto mb-3 flex h-[56px] w-[56px] items-center justify-center">
                   {playerProfile?.top_pet ? (
@@ -791,7 +1020,7 @@ export function ChatInterface() {
                 </div>
                 <h1 className="text-2xl font-semibold text-[#ececec] mb-2">RealmPal</h1>
                 <p className="text-[#737373] max-w-xs">
-                  Look up players, items, and dungeon guides. Build/Visualize DPS sets, <br /> enchants, and more!
+                  Look up players, items, and dungeon guides. Build/Visualize DPS, sets, <br /> skins, enchants, and more!
                 </p>
               </div>
               {/* Example prompt cards */}
@@ -808,7 +1037,7 @@ export function ChatInterface() {
               </div>
             </div>
           ) : (
-            <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto w-full min-w-0 pb-4">
+            <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto w-full min-w-0 pb-4 pt-16">
               {messages.map((msg, i) => (
                 <div
                   key={msg.id ?? i}
@@ -938,7 +1167,27 @@ export function ChatInterface() {
           limit={paywall.limit}
           pet={playerProfile?.top_pet}
           signedIn={isSignedIn}
+          reason={paywall.reason}
+          spendCapUsd={paywall.spend_cap_usd ?? usage?.spend_cap_usd ?? 0}
+          onDemandSpentUsd={usage?.on_demand_spent_usd ?? 0}
+          resetsInSeconds={paywall.resets_in_seconds ?? usage?.resets_in_seconds ?? 0}
+          onUsageEnabled={() => void refreshUsage()}
           onClose={() => setPaywall(null)}
+        />
+      )}
+
+      {/* What's new modal */}
+      {showChangelog && <ChangelogModal onClose={closeChangelog} />}
+
+      {showQuests && (
+        <QuestsModal
+          quests={dailyQuests}
+          art={questArt}
+          claimed={questBonusClaimed}
+          refreshing={questRefreshing}
+          onRefresh={() => void refreshQuests()}
+          onStart={(prompt) => void sendMessage(prompt)}
+          onClose={() => setShowQuests(false)}
         />
       )}
 

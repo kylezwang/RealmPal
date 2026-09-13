@@ -72,7 +72,27 @@ def today_key(now: Optional[datetime] = None) -> str:
     return f"budget:spend:{moment.strftime('%Y-%m-%d')}"
 
 
-def cost_micros(settings: Settings, input_tokens: int, output_tokens: int) -> int:
+def rates_for_model(settings: Settings, model: str = "") -> tuple[float, float]:
+    """Per-million token prices for the model that actually ran."""
+    light = (settings.claude_light_model or "").strip()
+    if light and model == light and model != settings.claude_model:
+        return (
+            settings.light_model_input_cost_per_mtok_usd,
+            settings.light_model_output_cost_per_mtok_usd,
+        )
+    return (
+        settings.model_input_cost_per_mtok_usd,
+        settings.model_output_cost_per_mtok_usd,
+    )
+
+
+def cost_micros(
+    settings: Settings,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    model: str = "",
+) -> int:
     """
     Cost of one Claude call in micro-dollars.
 
@@ -80,9 +100,9 @@ def cost_micros(settings: Settings, input_tokens: int, output_tokens: int) -> in
     of a dollar, so `tokens * price_per_million` already lands in micros.
     Foundry bills the same list rates rolled up as Claude Consumption Units.
     """
+    input_rate, output_rate = rates_for_model(settings, model)
     return round(
-        max(0, input_tokens) * settings.model_input_cost_per_mtok_usd
-        + max(0, output_tokens) * settings.model_output_cost_per_mtok_usd
+        max(0, input_tokens) * input_rate + max(0, output_tokens) * output_rate
     )
 
 
@@ -157,6 +177,7 @@ async def record_usage(
     input_tokens: int,
     output_tokens: int,
     provider: str = "",
+    model: str = "",
 ) -> int:
     """
     Add one call's cost to today's total. Returns the new total in micros.
@@ -165,7 +186,7 @@ async def record_usage(
     the budget reflects actual spend rather than an estimate. `provider` is
     log-only: Foundry and direct Anthropic share the same daily dollar cap.
     """
-    micros = cost_micros(settings, input_tokens, output_tokens)
+    micros = cost_micros(settings, input_tokens, output_tokens, model=model)
     if micros <= 0:
         return (await budget_state(redis, settings)).spent_micros
 

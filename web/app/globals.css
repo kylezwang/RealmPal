@@ -26,6 +26,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Clickable controls show the pointer cursor unless explicitly disabled. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="tab"]:not(:disabled),
+label[for],
+a[href] {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* Scrollbar styling | thin, Claude-like. Height is required or a
  * horizontal table scroller is effectively invisible on narrow views. */
 ::-webkit-scrollbar {

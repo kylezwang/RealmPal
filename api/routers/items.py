@@ -8,12 +8,13 @@ GET /items/{name}
 from typing import Annotated, Optional
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from qdrant_client import AsyncQdrantClient
 
 from ..config import Settings, get_settings
-from ..dependencies import enforce_lookup_rate_limit, get_redis, get_qdrant
+from ..dependencies import consume_lookup_quota, get_optional_user, get_redis, get_qdrant
+from ..identity import AuthenticatedUser
 from ..models.item import ItemProfile
 from ..services.item_aliases import resolve_item_query
 from ..services.scraper import scrape_item, ScraperError
@@ -36,17 +37,15 @@ async def _with_wearable(
     return item.model_copy(update={"wearable": ok})
 
 
-@router.get(
-    "/{name}",
-    response_model=ItemProfile,
-    dependencies=[Depends(enforce_lookup_rate_limit)],
-)
+@router.get("/{name}", response_model=ItemProfile)
 async def get_item(
     name: str,
     settings: Annotated[Settings, Depends(get_settings)],
     redis: Annotated[aioredis.Redis, Depends(get_redis)],
     qdrant: Annotated[AsyncQdrantClient, Depends(get_qdrant)],
+    request: Request,
     class_name: Optional[str] = Query(None),
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
 ) -> ItemProfile:
     """Look up an item by wiki name or nickname. Scrapes on demand with TTL caching."""
     name = sanitize_lookup_name(name, field="name")
@@ -78,6 +77,8 @@ async def get_item(
         logger.bind(item_name=name, error=str(e)).warning(
             "Item nickname resolve failed; trying the typed name"
         )
+
+    await consume_lookup_quota(request, settings, redis, user)
 
     try:
         item = await scrape_item(lookup)

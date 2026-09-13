@@ -60,12 +60,11 @@ def spend(redis_client, anon_settings):
 async def test_usage_starts_empty(client, anon_settings):
     async with client as http:
         body = (await http.get("/chat/usage")).json()
-    assert body == {
-        "used": 0,
-        "limit": anon_settings.anonymous_message_limit,
-        "remaining": anon_settings.anonymous_message_limit,
-        "scope": "ip",
-    }
+    assert body["used"] == 0
+    assert body["limit"] == anon_settings.anonymous_message_limit
+    assert body["remaining"] == anon_settings.anonymous_message_limit
+    assert body["scope"] == "ip"
+    assert body["tier"] == "guest"
 
 
 async def test_health_reports_the_chat_provider(client):

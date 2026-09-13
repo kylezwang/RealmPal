@@ -1,5 +1,6 @@
 from api.models.item import ItemProfile
 from api.routers import items as items_router
+from .conftest import build_request
 from api.services.scraper import _item_wiki_slug
 from api.services.wiki_scaling import (
     ITEM_CACHE_PREFIX,
@@ -66,5 +67,6 @@ async def test_item_endpoint_uses_warm_store_not_live_scrape(
         anon_settings,
         redis_client,
         object(),
+        build_request(),
     )
     assert found.sprite_url == item.sprite_url

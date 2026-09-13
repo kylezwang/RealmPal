@@ -39,18 +39,23 @@ function templatedMessage(prefix: string, raw: string, sanitize: (value: string)
   return `${prefix}${value}`;
 }
 
-/** RealmEye cloths are Large or Small; keep that out of the visible field. */
-function withHiddenClothSize(cloth: string): string {
+/** One cloth/dye field means the same color on clothing and accessory. */
+function expandClothToBothSlots(cloth: string): string {
   const value = cloth.trim();
   if (!value) return value;
-  if (/^(large|small)\b/i.test(value)) return value;
-  if (/\b(?:cloth|dye)\b/i.test(value)) return `Large ${value}`;
-  return value;
+  if (/\blarge\b/i.test(value) && /\bsmall\b/i.test(value)) return value;
+  const kind = /\bdye\b/i.test(value) ? "dye" : "cloth";
+  const color = value
+    .replace(/^(?:large|small)\s+/i, "")
+    .replace(/\s+(?:cloths?|dyes?)$/i, "")
+    .trim();
+  if (!color) return value;
+  return `Large and small ${color} ${kind}`;
 }
 
 function skinLookMessage(skinRaw: string, clothRaw?: string): string | null {
   const skin = sanitizeWords(skinRaw, 6, 40).trim();
-  const cloth = withHiddenClothSize(sanitizeWords(clothRaw ?? "", 6, 40));
+  const cloth = expandClothToBothSlots(sanitizeWords(clothRaw ?? "", 6, 40));
   if (!skin || !cloth) return null;
   return `What does ${skin} look like with ${cloth}?`;
 }

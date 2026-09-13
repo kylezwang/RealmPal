@@ -26,6 +26,57 @@ export function parseSkinToken(content: string): SkinSpec | null {
   };
 }
 
+const SKIN_CLASSES = [
+  "Rogue", "Archer", "Wizard", "Priest", "Warrior", "Knight", "Paladin",
+  "Assassin", "Necromancer", "Huntress", "Mystic", "Trickster", "Sorcerer",
+  "Ninja", "Samurai", "Bard", "Summoner", "Kensei", "Druid",
+] as const;
+
+function stripTrailingClass(skinPart: string): { className: string; skinName: string } {
+  for (const cls of SKIN_CLASSES) {
+    const re = new RegExp(`\\b${cls}\\s*$`, "i");
+    if (re.test(skinPart)) {
+      return {
+        className: cls,
+        skinName: skinPart.replace(re, "").trim(),
+      };
+    }
+  }
+  return { className: "", skinName: skinPart };
+}
+
+/** Fallback when the assistant reply omitted the [skin:...] token. */
+export function parseSkinFromPrompt(prompt: string | undefined): SkinSpec | null {
+  if (!prompt) return null;
+  const match = prompt.match(
+    /\bwhat\s+does\s+(.+?)\s+look\s+like\s+(?:with|if\s+i\s+(?:use|put|wear|add)\s+)(.+?)(?:[.!?]|$)/i,
+  );
+  if (!match) return null;
+  const { className, skinName } = stripTrailingClass(match[1].trim());
+  const withPart = match[2].trim();
+  const paired = withPart.match(
+    /\b(?:large\s+and\s+small|small\s+and\s+large)\s+(.+?)\s+(cloths?|dyes?)\b/i,
+  );
+  if (paired) {
+    const color = paired[1].trim();
+    const kind = paired[2].toLowerCase().startsWith("dye") ? "dye" : "cloth";
+    return {
+      className,
+      skinName,
+      clothing: `Large ${color} ${kind}`,
+      accessory: `Small ${color} ${kind}`,
+    };
+  }
+  const largeCloth = withPart.match(/\b(large\s+(?!and\b).+\s+cloth)\b/i);
+  const smallCloth = withPart.match(/\b(small\s+(?!and\b).+\s+cloth)\b/i);
+  return {
+    className,
+    skinName,
+    clothing: largeCloth?.[1] ?? (smallCloth ? "" : withPart),
+    accessory: smallCloth?.[1] ?? "",
+  };
+}
+
 export function stripSkinToken(content: string): string {
   return content.replace(SKIN_TOKEN, "").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -41,9 +92,11 @@ export function inferSkinVisualize(prompt: string | undefined): boolean {
       prompt,
     ) ||
     /\b(?:show|preview|render)\b.{0,120}\b(?:skin|outfit|dye|cloth)\b/i.test(prompt) ||
-    /\blook like with\b.{0,80}\b(?:cloth|dye)\b/i.test(prompt) ||
+    /\blook like\b.{0,80}\b(?:cloth|dye)\b/i.test(prompt) ||
+    /\bif i (?:use|put|wear|add)\b.{0,40}\b(?:cloth|dye)\b/i.test(prompt) ||
     /\b(?:large|small)\s+\S.+\s+cloth\b/i.test(prompt) ||
     /\b(?:clothing|accessory)\s+dye\b/i.test(prompt) ||
-    /\b(?:swap|switch|flip)\b.{0,80}\b(?:cloth|dye|clothing|accessory)\b/i.test(prompt)
+    /\b(?:let me see|show me|can i see|how about|what about)\b.{0,100}\b(?:cloth|dye)\b/i.test(prompt) ||
+    /\b(?:now\s+)?(?:swap|switch|flip)\b/i.test(prompt)
   );
 }

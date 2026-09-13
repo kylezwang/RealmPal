@@ -1,0 +1,42 @@
+---
+description: Update the user-facing changelog on every deploy-worthy change
+alwaysApply: true
+---
+
+# Changelog updates
+
+Every change a user would notice (new feature, pricing/limit change, UI
+change, a bug fix they'd feel) needs one entry in `web/lib/changelog.ts`
+before the work is considered done. Purely internal changes (refactors,
+tests, infra, docs) do not need an entry.
+
+## How to add an entry
+
+1. Open `web/lib/changelog.ts`.
+2. Add a new entry at the **top** of the `CHANGELOG` array (newest first)
+   with today's date, a new `version` (use `YYYY.MM.DD`; append `-2`, `-3`,
+   etc. if shipping more than once in a day), and 1-4 `items`.
+3. If an entry for today's date/version already exists, append to its
+   `items` instead of creating a new one.
+
+## Writing the items
+
+- Write for the end user, not for another engineer: say what changed for
+  them, not how it was implemented.
+- One short sentence per bullet. No jargon, no internal names (endpoints,
+  table/column names, PR numbers, file paths).
+- No em dashes. Ever. See `.cursor/rules/no-em-dashes.mdc`.
+- Skip anything invisible to users (refactors, perf work with no visible
+  effect, added tests, internal tooling).
+- State the outcome, not the mechanics. Don't turn a bullet into pricing/
+  quota documentation. No exact quotas, cap amounts, or "how the billing
+  system decides this" explanations. That belongs on the pricing/settings
+  page, not the changelog.
+
+Good: "Pro now includes more chat each month at no extra charge."
+Bad: "Pro now includes 90 Claude replies/mo; overage is $0.08/reply up to
+your spend cap, tracked in Redis."
+
+The "What's new" modal, header badge, and first-login popup all key off
+`LATEST_VERSION`, which is derived automatically from the first entry.
+Never hand-edit that constant.

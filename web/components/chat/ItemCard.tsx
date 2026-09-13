@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ItemProfile } from "@/lib/api";
 import { cleanItemName, isGridWearableItem, ITEM_CARD_ROW_SIZE, skipDungeonItemCard } from "@/lib/itemLookup";
 import { ShinyStar } from "./SpriteIcon";
+import { SpriteZoomTrigger } from "./SpriteZoom";
 
 const ITEM_ROW_MAX_HEIGHT = 170;
 
@@ -25,28 +26,51 @@ function Glimmer({ className }: { className: string }) {
   return <div className={`glimmer rounded ${className}`} />;
 }
 
+function formatItemCaption(item: ItemProfile): string | undefined {
+  const stats = Object.entries(item.stats || {}).filter(
+    ([key, value]) => key && value && !/^reskin/i.test(key),
+  );
+  if (stats.length === 0) return undefined;
+  return stats.map(([key, value]) => `${key}: ${formatStatValue(key, value)}`).join("\n");
+}
+
 function WikiSprite({
   src,
   alt,
   size,
   shiny,
+  item,
 }: {
   src: string;
   alt: string;
   size: number;
   shiny?: boolean;
+  item?: ItemProfile;
 }) {
+  const title = alt || item?.name || "";
   return (
-    <span className="relative inline-block flex-shrink-0" style={{ width: size, height: size }}>
-      <img
-        src={src}
-        alt={alt}
-        width={size}
-        height={size}
-        style={{ imageRendering: "pixelated", width: size, height: size }}
-      />
-      {shiny && <ShinyStar size={Math.max(8, Math.round(size * 0.28))} />}
-    </span>
+    <SpriteZoomTrigger
+      source={{ kind: "url", src, alt: title }}
+      details={{
+        title,
+        wikiUrl: item?.wiki_url,
+        caption: item ? formatItemCaption(item) : undefined,
+        shiny,
+      }}
+      className="flex-shrink-0"
+    >
+      <span className="relative inline-block" style={{ width: size, height: size }}>
+        <img
+          src={src}
+          alt=""
+          width={size}
+          height={size}
+          className="pointer-events-none"
+          style={{ imageRendering: "pixelated", width: size, height: size }}
+        />
+        {shiny && <ShinyStar size={Math.max(8, Math.round(size * 0.28))} />}
+      </span>
+    </SpriteZoomTrigger>
   );
 }
 
@@ -72,7 +96,7 @@ export function ItemChip({
   return (
     <span className="inline-flex items-center gap-1 align-middle max-w-[12rem]">
       {item?.sprite_url ? (
-        <WikiSprite src={item.sprite_url} alt="" size={24} />
+        <WikiSprite src={item.sprite_url} alt={label} size={24} item={item} />
       ) : null}
       <span className="truncate text-[12px] leading-tight">{label}</span>
     </span>
@@ -109,29 +133,53 @@ export function ItemCardSkeleton() {
  * recast when present), flavor text, and the full stat table. Reskins are
  * never shown | the scraper drops that row before we get here.
  */
-export function ItemCard({ item }: { item: ItemProfile }) {
-  const stats = Object.entries(item.stats || {}).filter(
-    ([key, value]) => key && value && !/^reskin/i.test(key)
+function CardSprite({
+  src,
+  size,
+  shiny,
+}: {
+  src: string;
+  size: number;
+  shiny?: boolean;
+}) {
+  return (
+    <span className="relative inline-block" style={{ width: size, height: size }}>
+      <img
+        src={src}
+        alt=""
+        width={size}
+        height={size}
+        className="pointer-events-none"
+        style={{ imageRendering: "pixelated", width: size, height: size }}
+      />
+      {shiny && <ShinyStar size={Math.max(8, Math.round(size * 0.28))} />}
+    </span>
   );
-  const name = displayName(item);
+}
 
+function ItemCardBody({
+  item,
+  name,
+  stats,
+  expanded = false,
+}: {
+  item: ItemProfile;
+  name: string;
+  stats: [string, string][];
+  expanded?: boolean;
+}) {
   return (
     <div
-      className="item-card-panel rounded-xl bg-[#212121] border border-[#333333] px-3 py-2.5 h-full overflow-hidden"
-      style={{ maxHeight: "var(--item-card-max-height, 170px)" }}
+      className={`item-card-panel rounded-xl bg-[#212121] border border-[#333333] px-3 py-2.5 ${
+        expanded ? "overflow-visible" : "h-full overflow-hidden"
+      }`}
+      style={expanded ? undefined : { maxHeight: "var(--item-card-max-height, 170px)" }}
     >
       <div className="flex items-start gap-2.5">
         <div className="flex items-start gap-1 flex-shrink-0">
-          {item.sprite_url && (
-            <WikiSprite src={item.sprite_url} alt={name} size={36} />
-          )}
+          {item.sprite_url && <CardSprite src={item.sprite_url} size={36} />}
           {item.shiny_sprite_url && (
-            <WikiSprite
-              src={item.shiny_sprite_url}
-              alt={`${name} (Shiny)`}
-              size={36}
-              shiny
-            />
+            <CardSprite src={item.shiny_sprite_url} size={36} shiny />
           )}
         </div>
         <div className="min-w-0">
@@ -168,12 +216,35 @@ export function ItemCard({ item }: { item: ItemProfile }) {
           href={item.wiki_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-block mt-2 text-[11px] text-blue-400 hover:underline"
+          className="relative z-10 inline-block mt-2 text-[11px] text-blue-400 hover:underline"
+          onClick={(e) => e.stopPropagation()}
         >
           {item.wiki_url.replace(/^https?:\/\//, "")}
         </a>
       )}
     </div>
+  );
+}
+
+export function ItemCard({ item }: { item: ItemProfile }) {
+  const stats = Object.entries(item.stats || {}).filter(
+    ([key, value]) => key && value && !/^reskin/i.test(key)
+  );
+  const name = displayName(item);
+
+  return (
+    <SpriteZoomTrigger
+      details={{
+        title: item.shiny_sprite_url ? `Shiny ${name}` : name,
+        shiny: Boolean(item.shiny_sprite_url),
+      }}
+      direct
+      preview="card"
+      previewContent={<ItemCardBody item={item} name={name} stats={stats} expanded />}
+      className="h-full"
+    >
+      <ItemCardBody item={item} name={name} stats={stats} />
+    </SpriteZoomTrigger>
   );
 }
 

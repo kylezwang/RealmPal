@@ -106,6 +106,35 @@ async def test_different_callers_get_independent_buckets(redis_client, anon_sett
     await enforce_lookup_rate_limit(victim, anon_settings, redis_client, None)
 
 
+async def test_warmed_item_cards_do_not_spend_the_lookup_window(
+    redis_client, anon_settings, monkeypatch
+):
+    """A dungeon guide can fan out 20+ cached cards; those must not 429."""
+    import httpx
+
+    from api.config import get_settings
+    from api.dependencies import get_qdrant, get_redis
+    from api.main import create_app
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    await write_cached_item(
+        redis_client,
+        ItemProfile(name="Valor", sprite_url="https://example.com/valor.png"),
+        60,
+    )
+    app = create_app()
+    app.dependency_overrides[get_redis] = lambda: redis_client
+    app.dependency_overrides[get_settings] = lambda: anon_settings
+    app.dependency_overrides[get_qdrant] = lambda: object()
+    transport = httpx.ASGITransport(app=app, client=("198.51.100.7", 44321))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        for _ in range(anon_settings.lookup_rate_limit_anonymous + 8):
+            response = await http.get("/items/Valor")
+            assert response.status_code == 200
+
+
 async def test_redis_failure_fails_open(monkeypatch, redis_client, anon_settings):
     """An infra blip should degrade the feature, not take it down."""
 

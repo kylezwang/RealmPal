@@ -17,6 +17,7 @@ from qdrant_client import AsyncQdrantClient
 from ..config import Settings
 from .ingestion import seed_wiki_hubs
 from .specialist_warm import warm_all_specialists
+from .stored_answers import invalidate_briefs
 
 LAST_REFRESH_KEY = "wiki:last_refresh"
 
@@ -31,6 +32,7 @@ async def refresh_wiki_corpus(
     specialists = await warm_all_specialists(
         redis, ttl_seconds=settings.wiki_ttl_seconds, force=True
     )
+    await invalidate_briefs(redis)
     now = int(time.time())
     await redis.set(LAST_REFRESH_KEY, str(now))
     return {

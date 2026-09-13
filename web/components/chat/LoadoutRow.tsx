@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ItemProfile } from "@/lib/api";
 import { cleanItemName } from "@/lib/itemLookup";
 import { SET_SLOT_COUNT, type LoadoutShowcase } from "@/lib/loadoutShowcase";
 import { DIVINE_GLOW, DIVINE_SLOT_X, DIAMOND_FRAME_OFFSET_PX, SLOT_NATIVE, SLOTS_SHEET, ShinyStar, SpriteIcon } from "./SpriteIcon";
+import { SpriteZoomTrigger } from "./SpriteZoom";
 
 const ICON_SIZE = 40;
 
@@ -36,10 +37,11 @@ function LoadoutSlot({
       />
     );
   }
-  return <LoadedLoadoutSlot item={item} showcase={showcase} />;
+  return <LoadoutItemIcon item={item} showcase={showcase} />;
 }
 
-function LoadedLoadoutSlot({
+/** One shiny/divine item icon. Quests and visualize-set share this. */
+export function LoadoutItemIcon({
   item,
   showcase,
 }: {
@@ -49,61 +51,71 @@ function LoadedLoadoutSlot({
   const shinySrc = item.shiny_sprite_url || "";
   const regularSrc = item.sprite_url || "";
   const hasShiny = Boolean(showcase.shiny && shinySrc);
-  const [src, setSrc] = useState(hasShiny ? shinySrc : regularSrc);
+  const preferred = hasShiny ? shinySrc : regularSrc;
+  const [src, setSrc] = useState(preferred);
+  useEffect(() => {
+    setSrc(preferred);
+  }, [preferred]);
   const showShiny = hasShiny && src === shinySrc;
-  const Stage = item.wiki_url ? "a" : "div";
-  const stageProps = item.wiki_url
-    ? { href: item.wiki_url, target: "_blank", rel: "noopener noreferrer" }
-    : {};
   const glow = showcase.rarity === "divine" ? DIVINE_GLOW : undefined;
   const iconSrc = src || regularSrc;
 
   return (
     <div className="group relative">
-      <Stage
-        className="relative block"
-        style={{ width: ICON_SIZE, height: ICON_SIZE }}
-        {...stageProps}
-      >
+      <div className="relative block" style={{ width: ICON_SIZE, height: ICON_SIZE }}>
         {iconSrc ? (
-          <img
-            src={iconSrc}
-            alt={item.name}
-            width={ICON_SIZE}
-            height={ICON_SIZE}
-            className={`absolute inset-0 ${item.wiki_url ? "cursor-pointer" : "cursor-default"}`}
-            style={{
-              imageRendering: "pixelated",
-              width: ICON_SIZE,
-              height: ICON_SIZE,
-              filter: glow ? `drop-shadow(${glow} 0 0 2px)` : undefined,
+          <SpriteZoomTrigger
+            source={{ kind: "url", src: iconSrc, alt: item.name }}
+            details={{
+              title: showShiny ? `Shiny ${item.name}` : item.name,
+              wikiUrl: item.wiki_url,
+              divine: showcase.rarity === "divine",
+              shiny: showShiny,
+              glow,
             }}
-            onError={() => {
-              if (regularSrc && iconSrc !== regularSrc) setSrc(regularSrc);
-            }}
-          />
+            className="absolute inset-0"
+          >
+            <span className="relative block" style={{ width: ICON_SIZE, height: ICON_SIZE }}>
+              <img
+                src={iconSrc}
+                alt=""
+                width={ICON_SIZE}
+                height={ICON_SIZE}
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  imageRendering: "pixelated",
+                  width: ICON_SIZE,
+                  height: ICON_SIZE,
+                  filter: glow ? `drop-shadow(${glow} 0 0 2px)` : undefined,
+                }}
+                onError={() => {
+                  if (regularSrc && iconSrc !== regularSrc) setSrc(regularSrc);
+                }}
+              />
+              {showcase.rarity === "divine" && (
+                <SpriteIcon
+                  sheetUrl={SLOTS_SHEET}
+                  x={DIVINE_SLOT_X}
+                  y={0}
+                  nativeSize={SLOT_NATIVE}
+                  displaySize={ICON_SIZE}
+                  alt=""
+                  className="absolute pointer-events-none"
+                  style={{ top: DIAMOND_FRAME_OFFSET_PX, left: DIAMOND_FRAME_OFFSET_PX }}
+                />
+              )}
+              {showShiny && <ShinyStar size={10} />}
+            </span>
+          </SpriteZoomTrigger>
         ) : (
           <div
             className="absolute inset-0 glimmer rounded-md"
             aria-hidden
           />
         )}
-        {showcase.rarity === "divine" && (
-          <SpriteIcon
-            sheetUrl={SLOTS_SHEET}
-            x={DIVINE_SLOT_X}
-            y={0}
-            nativeSize={SLOT_NATIVE}
-            displaySize={ICON_SIZE}
-            alt=""
-            className="absolute pointer-events-none"
-            style={{ top: DIAMOND_FRAME_OFFSET_PX, left: DIAMOND_FRAME_OFFSET_PX }}
-          />
-        )}
-        {showShiny && <ShinyStar size={10} />}
-      </Stage>
+      </div>
       <div
-        className="pointer-events-none absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-1.5
+        className="pointer-events-none absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-1.5
           hidden group-hover:block w-max max-w-[200px] rounded-lg bg-[#0d0d0d] border border-[#404040]
           px-2.5 py-1.5 text-[11px] leading-snug text-[#ececec] shadow-xl"
         role="tooltip"

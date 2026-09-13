@@ -15,7 +15,7 @@ import { PetSprite } from "./PetCompanion";
 import { MessageActions } from "./MessageActions";
 import { cleanItemName, findItem, itemTokensToLinks, stripItemTokens } from "@/lib/itemLookup";
 import { resolveLoadoutShowcase, stripLoadoutToken } from "@/lib/loadoutShowcase";
-import { inferSkinVisualize, parseSkinToken, stripSkinToken } from "@/lib/skinShowcase";
+import { parseSkinToken, parseSkinFromPrompt, stripSkinToken } from "@/lib/skinShowcase";
 
 const THINKING_LINES = ["Thinking...", "Working on it...", "Looking that up..."];
 const AVATAR_SIZE = 52;
@@ -198,6 +198,7 @@ function sectionHeading(children: React.ReactNode) {
 function markdownComponents(
   items: ItemProfile[] | undefined,
   pendingItemNames: string[] | undefined,
+  dungeonGuide?: DungeonGuide,
 ): Components {
   return {
     p: ({ children }) => {
@@ -265,15 +266,22 @@ function markdownComponents(
     td: ({ children }) => (
       <td className="px-2.5 py-1.5 border-t border-[#333333] whitespace-nowrap align-middle">{children}</td>
     ),
-    img: ({ src, alt }) =>
-      src ? (
+    img: ({ src, alt }) => {
+      if (!src) return null;
+      const isLayout = dungeonGuide?.layouts.some((layout) => layout.url === src);
+      return (
         <img
           src={src}
           alt={alt || ""}
-          className="my-2 max-w-full h-auto"
+          className={
+            isLayout
+              ? "my-2 max-w-md max-h-72 w-auto h-auto mx-auto"
+              : "my-2 max-w-full max-h-96 h-auto w-auto"
+          }
           style={{ imageRendering: "pixelated" }}
         />
-      ) : null,
+      );
+    },
   };
 }
 
@@ -281,7 +289,11 @@ function stripMatchingDungeonTitle(content: string, guide?: DungeonGuide): strin
   if (!guide || !content.trim()) return content;
   const title = guide.title.replace(/\s*[-–—]\s*the RotMG Wiki.*$/i, "").trim();
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return content.replace(new RegExp(`^#{1,3}\\s*${escaped}\\s*(?:guide)?\\s*$`, "im"), "").trimStart();
+  return content
+    .replace(new RegExp(`^#{1,3}\\s*${escaped}\\s*(?:guide)?\\s*$`, "im"), "")
+    .replace(new RegExp(`^#{1,3}\\s*${escaped}\\s*[-–—]\\s*the RotMG Wiki.*$`, "im"), "")
+    .replace(new RegExp(`^${escaped}\\s*[-–—]\\s*the RotMG Wiki.*$`, "im"), "")
+    .trimStart();
 }
 
 function stripDungeonDropsSection(content: string): string {
@@ -289,6 +301,32 @@ function stripDungeonDropsSection(content: string): string {
     .replace(/^#{1,3}\s+Drops of Interest[^\n]*\n(?:(?!#{1,3}\s).*\n?)*/gim, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function stripDungeonGuideMarkdown(content: string, guide: DungeonGuide): string {
+  let text = stripMatchingDungeonTitle(content, guide);
+  text = stripDungeonDropsSection(text);
+
+  for (const layout of guide.layouts) {
+    const url = layout.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    text = text.replace(new RegExp(`!\\[[^\\]]*\\]\\(${url}\\)`, "gi"), "");
+  }
+
+  text = text.replace(/^#{1,4}\s+Example Layout[^\n]*\n(?:(?!#{1,4}\s).*\n?)*/gim, "");
+  text = text.replace(/^#{1,4}\s+Layout[^\n]*\n(?:(?!#{1,4}\s).*\n?)*/gim, "");
+  text = text.replace(/^Last updated:.*$/gim, "");
+  text = text.replace(/^Back to top\s*$/gim, "");
+  text = text.replace(/^Contents\s*$/gim, "");
+  text = text.replace(/^Difficulty:\s*\d+(?:\.\d+)?\s*\/\s*10.*$/gim, "");
+
+  const title = guide.title.replace(/\s*[-–—]\s*the RotMG Wiki.*$/i, "").trim();
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  text = text.replace(
+    new RegExp(`^#{1,3}\\s*${escaped}\\s*[-–—]\\s*the RotMG Wiki.*$`, "gim"),
+    "",
+  );
+
+  return text.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function splitSources(content: string): { body: string; sources: string } {
@@ -304,9 +342,13 @@ function parseContent(
   content: string,
   items: ItemProfile[] | undefined,
   pendingItemNames: string[] | undefined,
+  dungeonGuide?: DungeonGuide,
 ): React.ReactNode {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents(items, pendingItemNames)}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={markdownComponents(items, pendingItemNames, dungeonGuide)}
+    >
       {itemTokensToLinks(stripLoadoutToken(content))}
     </ReactMarkdown>
   );
@@ -332,7 +374,7 @@ export function MessageBubble({
   const displayContent = !isUser && playerProfile
     ? stripRestatedPlayerSummary(content)
     : !isUser && dungeonGuide
-      ? stripDungeonDropsSection(stripMatchingDungeonTitle(content, dungeonGuide))
+      ? stripDungeonGuideMarkdown(content, dungeonGuide)
       : !isUser
         ? stripMatchingDungeonTitle(content, dungeonGuide)
         : content;
@@ -340,16 +382,14 @@ export function MessageBubble({
     !isUser && dungeonGuide && !isStreaming
       ? splitSources(displayContent)
       : { body: displayContent, sources: "" };
-  const layoutsInContent = Boolean(
-    dungeonGuide?.layouts.some((layout) => displayContent.includes(layout.url)),
-  );
   const showcaseItemCount = pendingItemNames?.length || items?.length || 0;
   const loadout = !isUser
     ? resolveLoadoutShowcase(prompt, content, showcaseItemCount)
     : null;
-  const skinSpec = !isUser && !loadout ? parseSkinToken(content) : null;
-  const showSkin =
-    Boolean(skinSpec) || Boolean(!isUser && !loadout && inferSkinVisualize(prompt));
+  const skinSpec = !isUser && !loadout
+    ? parseSkinToken(content) ?? parseSkinFromPrompt(prompt)
+    : null;
+  const showSkin = Boolean(skinSpec);
   const markdownSource = skinSpec
     ? stripSkinToken(stripLoadoutToken(guideBody || displayContent))
     : loadout
@@ -402,14 +442,13 @@ export function MessageBubble({
             loadout ? stripItemTokens(markdownSource) : markdownSource,
             items,
             pendingItemNames,
+            dungeonGuide,
           )
         ) : null}
-        {!isUser && dungeonGuide && (
-          <DungeonLayouts guide={dungeonGuide} alreadyInContent={layoutsInContent} />
-        )}
+        {!isUser && dungeonGuide && <DungeonLayouts guide={dungeonGuide} />}
         {!isUser && dungeonGuide && !isStreaming && <DungeonDrops guide={dungeonGuide} />}
         {!isUser && dungeonGuide && !isStreaming && guideSources && (
-          parseContent(guideSources, items, pendingItemNames)
+          parseContent(guideSources, items, pendingItemNames, dungeonGuide)
         )}
         {isStreaming && !showThinking && (
           <span className="inline-block w-2 h-4 bg-white ml-1 animate-cursor-blink" aria-label="typing" />

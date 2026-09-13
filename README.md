@@ -8,16 +8,18 @@ Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com
 
 ## Features
 
-- **Chat** — Claude-powered answers for RotMG questions, streamed into a dark chat UI
-- **Accounts** — email + password sign-in / register; magic link is the forgot-password path
-- **Player lookup** — `/player <ign>` or the sidebar IGN field; pet sprite follows you in chat
-- **Build specialists** — weapon, ability, armor, and ring agents read stored RealmEye hubs for a class/stat
-- **Item cards** — wiki sprites and infobox rows from the warmed item store; the grid only shows gear the asked class can wear
-- **Set visualizer** — shiny/divine (and nicknamed) sets render as a four-slot loadout
-- **Skin visualizer** — class skin plus clothing and accessory dyes/cloths, composited the same way RealmEye outfits are
-- **Dungeon guides** — stored RealmEye wiki pages (index + guides), refreshed weekly
-- **RAG** — scraped wiki context indexed in Qdrant so answers stay grounded
-- **Freemium** — 3 guest messages / 5 signed-in free messages per 24h, then $7/month via Stripe Checkout
+- **Chat** - stored RealmEye replies for drops, builds, dungeon guides, and skins; Claude only when the ask is new or constrained
+- **Accounts** - email + password sign-in / register; magic link is the forgot-password path. Chats and daily quests stay with the account
+- **Player lookup** - `/player <ign>` or the sidebar IGN field; the sidebar pet is the highest-stat pet on RealmEye
+- **Build specialists** - first `{stat} {class}` ask uses Sonnet (nicknames like pally / trix / sorc work), then the reply is replayed from Redis
+- **Item cards** - wiki sprites and infobox rows from the warmed item store; the grid only shows gear the asked class can wear. Click a card to zoom the whole tile
+- **Set visualizer** - shiny/divine (and nicknamed) sets render as a four-slot loadout
+- **Skin visualizer** - class skin plus clothing and accessory dyes/cloths, composited the same way RealmEye outfits are
+- **Dungeon guides** - RealmEye wiki dumps from the warmed store (Hard Mode focuses the HM section), not a fresh Claude essay
+- **Daily quests** - three tasks a day in chat; finish the set for an extra message
+- **What's new** - in-app changelog from `web/lib/changelog.ts`
+- **RAG** - scraped wiki context indexed in Qdrant so Claude answers stay grounded
+- **Freemium** - 3 guest messages / 5 signed-in free messages per 24h, then $7/month via Stripe Checkout. Pro includes 90 Claude replies; stored wiki/build answers do not count (signed-in stored hits also skip the daily meter). Extra Claude is $0.08 with a user-set spend cap.
 
 ---
 
@@ -43,14 +45,15 @@ Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com
 RealmPal/
 ├── api/
 │   ├── routers/       # chat, auth, players, items, dungeons, skins, payments, sprite, uploads
-│   ├── services/      # RAG, scraper, slot graph, specialist warm, accounts, entitlements
+│   ├── services/      # stored answers, RAG, scraper, slot graph, specialist warm,
+│   │                  # Claude billing, daily quests, accounts, entitlements
 │   ├── models/        # Pydantic response models
 │   ├── scripts/       # wiki refresh / specialist warm
 │   └── main.py        # FastAPI app factory
 ├── web/
 │   ├── app/           # chat, sign-in / register, account, legal
-│   ├── components/    # chat UI, loadout row, skin portrait, paywall
-│   └── lib/           # API client, token parsers
+│   ├── components/    # chat UI, item/player cards, sprite zoom, quests, billing
+│   └── lib/           # API client, changelog, quests, chat history
 ├── .github/workflows/ # weekly wiki specialist refresh
 ├── docker-compose.yml # Qdrant + Redis (+ optional API image)
 ├── start_services.ps1 # Windows local stack
@@ -122,7 +125,7 @@ Always start the API with `--no-proxy-headers`. Uvicorn otherwise rewrites the c
 
 ### 4. Tests
 
-Covers auth and quotas, specialist warm (do not re-scrape a full store), item-cache keys, and class-wearable item cards.
+Covers auth and quotas, stored-answer hits, Claude billing, daily quests, specialist warm (do not re-scrape a full store), item-cache keys, and class-wearable item cards.
 
 ```bash
 cd api
@@ -138,12 +141,13 @@ API docs (when `DEBUG=true`): [http://localhost:8001/docs](http://localhost:8001
 ## How It Works
 
 1. The user asks a question (player, item, dungeon, set, or dyed skin).
-2. The **slot graph** routes to one or more specialists (weapon / ability / armor / ring / player / dungeon / set / skin).
-3. Specialists read cached RealmEye wiki pages in Redis (not live-scraped on chat). A new/empty Redis is filled in the background on API startup. After that, GitHub Action `Refresh wiki specialists` (Monday, or "Run workflow") and `python -m api.scripts.refresh_wiki` refill the store for ~7 days. Check with `python -m api.scripts.warm_specialists --status`. Player lookups scrape RealmEye on request.
-4. Claude streams a short answer plus UI tokens (`[item:]`, `[loadout]`, `[skin:...]`).
-5. The web app fetches warmed item profiles (`GET /items/{name}`) for sprites and cards. The card grid drops items the asked class cannot equip; comparison text can still name sister-class gear.
+2. `stored_answers` classifies the turn. Drops, minted `{stat} {class}` builds, dungeon wiki dumps, shiny-divine quests, and skin templates stream from Redis with no Claude call.
+3. If the ask is new or constrained, the **slot graph** routes to specialists (weapon / ability / armor / ring / player / dungeon / set / skin). A first-time build uses Sonnet and mints `wiki:build:v1:{class}:{stat}` for the next identical ask. Dungeon how-tos do not mint a Claude essay over the wiki store.
+4. Specialists read cached RealmEye wiki pages in Redis (not live-scraped on chat). A new/empty Redis is filled in the background on API startup. After that, GitHub Action `Refresh wiki specialists` (Monday, or "Run workflow") and `python -m api.scripts.refresh_wiki` refill the store for ~7 days. Check with `python -m api.scripts.warm_specialists --status`. Player lookups scrape RealmEye on request.
+5. Claude (when used) streams a short answer plus UI tokens (`[item:]`, `[loadout]`, `[skin:...]`).
+6. The web app fetches warmed item profiles (`GET /items/{name}`) for sprites and cards. Click a character row, item card, or skin tile to zoom the whole card. The card grid drops items the asked class cannot equip; comparison text can still name sister-class gear.
 
-**Paid flow:** Redis counts messages per IP (guest, 3/24h) or signed-in email (5/24h). The next request returns `402`; guests are asked to sign in, signed-in users see Stripe Checkout. After payment, entitlements mark the account paid.
+**Paid flow:** Redis counts Claude-using messages per IP (guest, 3/24h) or signed-in email (5/24h). Signed-in stored hits skip that daily meter. The next Claude request returns `402`; guests are asked to sign in, signed-in users see Stripe Checkout. Pro is $7/month for 90 Claude replies. After the pool, `$0.08`/reply up to a user spend cap (`GET`/`POST /payments/on-demand`). Daily 200 is the fuse.
 
 ---
 
@@ -156,8 +160,10 @@ API docs (when `DEBUG=true`): [http://localhost:8001/docs](http://localhost:8001
 | `POST` | `/auth/register`      | Email + password + IGN                     |
 | `POST` | `/auth/signin`        | Email + password session                   |
 | `POST` | `/auth/request-link`  | Magic-link fallback                        |
-| `POST` | `/chat/stream`        | Streamed chat (SSE)                        |
+| `POST` | `/chat/stream`        | Streamed chat (SSE); stored hits skip Claude |
 | `GET`  | `/chat/usage`         | Free-message usage for a session           |
+| `GET`  | `/chat/quests/art`    | Daily quest dungeon / shiny sprites        |
+| `POST` | `/chat/quests/claim`  | Extra message after finishing today's set  |
 | `POST` | `/chat/feedback`      | Thumbs up/down on a reply                  |
 | `GET`  | `/players/{username}` | RealmEye player profile                    |
 | `GET`  | `/items/{name}`       | Warmed item profile + sprite (`?class_name=` marks `wearable`) |
@@ -166,8 +172,12 @@ API docs (when `DEBUG=true`): [http://localhost:8001/docs](http://localhost:8001
 | `GET`  | `/sprite`             | Sprite sheet crop                          |
 | `POST` | `/uploads`            | Chat image attachment                      |
 | `POST` | `/payments/checkout`  | Stripe Checkout session                    |
+| `POST` | `/payments/confirm`   | Confirm Checkout after redirect            |
 | `POST` | `/payments/webhook`   | Stripe webhook                             |
 | `GET`  | `/payments/verify`    | Magic-link → JWT                           |
+| `GET`  | `/payments/billing`   | Plan, Claude pool, and spend cap           |
+| `GET`  | `/payments/on-demand` | Read pay-as-you-go spend cap               |
+| `POST` | `/payments/on-demand` | Set pay-as-you-go spend cap                |
 
 
 ---
@@ -189,7 +199,7 @@ Optional until you turn on paid + production embeddings:
 
 ---
 
-See [BACKLOG.md](BACKLOG.md) for planned work (finish Enchantment wiring, Entra, Foundry billing block, and more).
+See [BACKLOG.md](BACKLOG.md) for planned work. Stored-answer chat shipped; next is Enchantment wiring, then Entra, then the Foundry billing block.
 
 ---
 

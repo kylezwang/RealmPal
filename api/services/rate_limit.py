@@ -133,6 +133,16 @@ async def peek(redis: aioredis.Redis, quota: Quota) -> int:
         return 0
 
 
+async def peek_ttl(redis: aioredis.Redis, quota: Quota) -> int:
+    """Seconds until this daily bucket resets, or 0 if it is already fresh."""
+    ttl = await redis.ttl(quota.key)
+    try:
+        seconds = int(ttl)
+    except (TypeError, ValueError):
+        return 0
+    return seconds if seconds > 0 else 0
+
+
 async def consume(redis: aioredis.Redis, quota: Quota) -> int:
     """Count one request against the quota and return the new total."""
     count = await redis.incr(quota.key)

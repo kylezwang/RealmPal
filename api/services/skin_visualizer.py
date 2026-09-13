@@ -47,6 +47,25 @@ _SHOW_SKIN = re.compile(
     r"\b(?:skin|outfit)\b.{0,80}\b(?:with|clothing|accessory|dye|cloth)\b",
     re.I,
 )
+_LOOK_LIKE_WITH = re.compile(r"\blook\s+like\s+with\b", re.I)
+_WHAT_DOES_LOOK = re.compile(
+    r"\bwhat\s+does\s+(.+?)\s+look\s+like\s+"
+    r"(?:with|if\s+i\s+(?:use|put|wear|add)\s+)(.+?)(?:[.!?]|$)",
+    re.I,
+)
+_LOOK_LIKE = re.compile(r"\blook\s+like\b", re.I)
+_USE_DYE = re.compile(
+    r"\b(?:if\s+i\s+)?(?:use|put|wear|add|try)\b.{0,40}\b(?:cloth|dye)\b",
+    re.I,
+)
+_UNRELATED_SKIN = re.compile(
+    r"\b(?:where\s+(?:does|do)|drop\s+locations?|best\s+(?:bows?|items?)|guide\s+to)\b",
+    re.I,
+)
+_PRONOUN_SKIN = re.compile(
+    r"^(?:it|this|that|the\s+(?:skin|outfit)|what does it)$",
+    re.I,
+)
 _CLOTH_OR_DYE = re.compile(
     r"\b(?:large|small)\s+\S.+\s+cloth\b|\b(?:clothing|accessory)\s+dye\b",
     re.I,
@@ -90,6 +109,7 @@ _EXCHANGE_SLOTS = re.compile(
     r"\b(?:swap|switch|flip)(?:ped|ed)?\s+"
     r"(?:the\s+)?(?:large\s+and\s+small|small\s+and\s+large|"
     r"clothing\s+and\s+accessory|accessory\s+and\s+clothing|"
+    r"cloths?\s+and\s+dyes?|dyes?\s+and\s+cloths?|"
     r"cloths?|dyes?|slots?|them|those)\b",
     re.I,
 )
@@ -100,13 +120,46 @@ _OUTFIT_FOLLOWUP = re.compile(
     re.I,
 )
 _NOT_SKIN_NAME = re.compile(
-    r"^(?:please\s+)?(?:swap|switch|flip|instead)\b", re.I
+    r"^(?:please\s+)?(?:now\s+)?(?:swap|switch|flip|instead)\b",
+    re.I,
 )
+_SWAP_INTENT = re.compile(r"\b(?:now\s+)?(?:swap|switch|flip)(?:ped|ed)?\b", re.I)
 _LARGE_CLOTH_NAME = re.compile(r"^large\s+(.+?)\s+cloth$", re.I)
 _SMALL_CLOTH_NAME = re.compile(r"^small\s+(.+?)\s+cloth$", re.I)
 _CLOTHING_DYE_NAME = re.compile(r"^(.+?)\s+clothing dye$", re.I)
 _ACCESSORY_DYE_NAME = re.compile(r"^(.+?)\s+accessory dye$", re.I)
 _BARE_DYE_NAME = re.compile(r"^(.+?)\s+dye$", re.I)
+_BARE_SIZE_DYE = re.compile(rf"\b((?:large|small)\s+{_DYE_COLOR}\s+dye)\b", re.I)
+_BARE_DYE = re.compile(rf"\b((?:large\s+|small\s+)?{_DYE_COLOR}\s+dye)\b", re.I)
+_PAIRED_SIZE_CLOTH = re.compile(
+    r"\b(?:large\s+and\s+small|small\s+and\s+large)\s+(.+?)\s+(cloths?|dyes?)\b",
+    re.I,
+)
+_DYE_THEN_SLOT = re.compile(
+    rf"\b((?:large\s+|small\s+)?{_DYE_COLOR}\s+dye)\s+"
+    r"(?:on\s+(?:the\s+)?)?(?:the\s+)?(clothing|accessory)\b",
+    re.I,
+)
+_ON_THE_OTHER = re.compile(
+    r"\b(?:on|onto|as|to|for)\s+(?:the\s+)?(?:other|opposite)(?:\s+(?:slot|one|cloth|dye))?\b",
+    re.I,
+)
+_AMBIGUOUS_CLOTH = re.compile(
+    rf"\b((?!large\b)(?!small\b)(?!the\b)(?!and\b){_COLOR}\s+cloth)\b", re.I
+)
+_FOLLOWUP_INTENT = re.compile(
+    r"\b(?:let me see|show me|can i see|i want to see|how about|what about|"
+    r"try(?:\s+it)?|now(?:\s+with)?|also)\b",
+    re.I,
+)
+_SEE_WITH = re.compile(
+    r"\b(?:let me see|show me|can i see|i want to see|how about|what about)\b"
+    r"(?:\s+with)?\s+(.+?)(?:[.!?]|$)",
+    re.I,
+)
+_SKIN_TOKEN = re.compile(
+    r"\[skin:([^|\]]+)\|([^|\]]*)\|([^|\]]*)\|([^|\]]*)\]", re.I
+)
 _LEADING_SIZE = re.compile(r"^(?:large|small)\s+", re.I)
 
 
@@ -116,9 +169,10 @@ class OutfitQuery:
     skin_name: Optional[str]
     clothing: Optional[str]
     accessory: Optional[str]
+    other_slot: Optional[str] = None
 
 
-def is_skin_visualize_query(message: str) -> bool:
+def is_skin_visualize_query(message: str, history: Optional[list[str]] = None) -> bool:
     if is_set_visualize_query(message):
         return False
     text = message or ""
@@ -128,6 +182,16 @@ def is_skin_visualize_query(message: str) -> bool:
         return True
     if _SHOW_SKIN.search(text):
         return True
+    if _WHAT_DOES_LOOK.search(text):
+        return True
+    if _LOOK_LIKE.search(text) and re.search(
+        r"\b(?:cloth|dye|clothing|accessory)\b", text, re.I
+    ):
+        return True
+    if _LOOK_LIKE_WITH.search(text) and re.search(
+        r"\b(?:cloth|dye|clothing|accessory)\b", text, re.I
+    ):
+        return True
     if _EXCHANGE_SLOTS.search(text) and re.search(
         r"\b(?:cloth|dye|clothing|accessory|skin|outfit)\b", text, re.I
     ):
@@ -136,6 +200,21 @@ def is_skin_visualize_query(message: str) -> bool:
         r"\b(?:show|visuali[sz]e|preview|skin|outfit|dye)\b", text, re.I
     ):
         return True
+    if history and _history_has_outfit(history) and not _UNRELATED_SKIN.search(text):
+        if _is_slot_swap(text):
+            return True
+        if _mentions_outfit_piece(text) and (
+            _OUTFIT_FOLLOWUP.search(text)
+            or _FOLLOWUP_INTENT.search(text)
+            or _SEE_WITH.search(text)
+            or _LOOK_LIKE.search(text)
+            or _USE_DYE.search(text)
+            or _TO_ACCESSORY.search(text)
+            or _TO_CLOTHING.search(text)
+            or _DYE_THEN_SLOT.search(text)
+            or not _looks_like_skin(_extract_outfit_from_text(text).skin_name)
+        ):
+            return True
     return False
 
 
@@ -164,9 +243,22 @@ def _looks_like_skin(name: Optional[str]) -> bool:
     text = (name or "").strip()
     if len(text) < 3:
         return False
-    if _NOT_SKIN_NAME.search(text) or _EXCHANGE_SLOTS.search(text):
+    if (
+        _NOT_SKIN_NAME.search(text)
+        or _EXCHANGE_SLOTS.search(text)
+        or _SWAP_INTENT.search(text)
+    ):
         return False
-    if re.fullmatch(r"(?:on|onto|the|slot|with|and|a|an|to|for|as|\s)+", text, re.I):
+    if re.fullmatch(
+        r"(?:on|onto|the|slot|with|and|a|an|to|for|as|it|this|that|"
+        r"clothing|accessory|cloth|dye|large|small|\s)+",
+        text,
+        re.I,
+    ):
+        return False
+    if _PRONOUN_SKIN.search(text):
+        return False
+    if re.search(r"\b(?:what does|look like|if i (?:use|put|wear|add))\b", text, re.I):
         return False
     return True
 
@@ -181,11 +273,104 @@ def _merge_outfit(base: OutfitQuery, overlay: OutfitQuery) -> OutfitQuery:
     )
 
 
-def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) -> OutfitQuery:
-    text = (message or "").strip()
+def _outfit_from_skin_token(text: str) -> Optional[OutfitQuery]:
+    match = _SKIN_TOKEN.search(text or "")
+    if not match:
+        return None
+    clothing = _clean_dye(match.group(3).strip()) if match.group(3).strip() else None
+    accessory = _clean_dye(match.group(4).strip()) if match.group(4).strip() else None
+    return OutfitQuery(
+        class_name=match.group(1).strip() or None,
+        skin_name=match.group(2).strip() or None,
+        clothing=clothing,
+        accessory=accessory,
+    )
+
+
+def _history_has_outfit(history: list[str]) -> bool:
+    for prev in history:
+        if _outfit_from_skin_token(prev):
+            return True
+        prior = _extract_outfit_from_text(prev)
+        if prior.skin_name or prior.class_name:
+            return True
+    return False
+
+
+def _mentions_outfit_piece(text: str) -> bool:
+    if re.search(r"\b(?:cloth|dye|clothing|accessory)s?\b", text or "", re.I):
+        return True
+    if _ON_THE_OTHER.search(text or ""):
+        return True
+    if _BARE_SIZE_DYE.search(text or "") or _BARE_DYE.search(text or ""):
+        return True
+    if _AMBIGUOUS_CLOTH.search(text or ""):
+        return True
+    return False
+
+
+def _normalize_ambiguous_cloth(part: str) -> str:
+    text = (part or "").strip()
+    if re.search(r"\b(?:large|small)\b", text, re.I):
+        return text
+    match = _AMBIGUOUS_CLOTH.search(text)
+    if match:
+        return f"Large {match.group(1).strip()}"
+    return text
+
+
+def _assign_size_dye(
+    part: str,
+    *,
+    clothing: Optional[str],
+    accessory: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    text = (part or "").strip()
+    if not text:
+        return clothing, accessory
+    if re.match(r"^large\b", text, re.I):
+        return clothing or text, accessory
+    if re.match(r"^small\b", text, re.I):
+        return clothing, accessory or text
+    return clothing, accessory
+
+
+def _parse_cloth_accessory(
+    with_part: str,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    text = (with_part or "").strip()
+    if _is_slot_swap(text):
+        return None, None, None
+    if _SWAP_INTENT.search(text) and not (
+        _BARE_DYE.search(text)
+        or _LARGE_CLOTH.search(text)
+        or _SMALL_CLOTH.search(text)
+        or _AMBIGUOUS_CLOTH.search(text)
+        or _CLOTHING_DYE.search(text)
+        or _ACCESSORY_DYE.search(text)
+        or _PAIRED_SIZE_CLOTH.search(text)
+    ):
+        return None, None, None
+    paired = _PAIRED_SIZE_CLOTH.search(text)
+    if paired:
+        color = paired.group(1).strip()
+        kind = "dye" if paired.group(2).lower().startswith("dye") else "cloth"
+        return f"Large {color} {kind}", f"Small {color} {kind}", None
+
+    slot_dye = _DYE_THEN_SLOT.search(text)
+    if slot_dye:
+        dye = slot_dye.group(1).strip()
+        if slot_dye.group(2).lower() == "accessory":
+            return None, dye, None
+        return dye, None, None
+
+    on_other = bool(_ON_THE_OTHER.search(text))
+    if on_other:
+        text = _ON_THE_OTHER.sub("", text)
+        text = re.sub(r"\s+", " ", text).strip(" -:|,.")
+
     clothing = None
     accessory = None
-
     large = _LARGE_CLOTH.search(text)
     small = _SMALL_CLOTH.search(text)
     c_dye = _CLOTHING_DYE.search(text)
@@ -215,31 +400,91 @@ def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) ->
     elif a_label:
         accessory = accessory or a_label.group(1).strip()
 
-    with_m = _WITH_CLAUSE.search(text)
-    if with_m and (not clothing or not accessory):
+    bare = _BARE_DYE.search(text) or _BARE_SIZE_DYE.search(text)
+    if bare:
+        clothing, accessory = _assign_size_dye(
+            bare.group(1).strip(), clothing=clothing, accessory=accessory
+        )
+        if not clothing and not accessory:
+            clothing = bare.group(1).strip()
+
+    amb = _AMBIGUOUS_CLOTH.search(text)
+    if amb and not clothing and not accessory:
+        clothing = _normalize_ambiguous_cloth(amb.group(1).strip())
+
+    if not clothing and not accessory:
         parts = [
             _LEADING_JUNK.sub("", p).strip()
-            for p in _NAME_SPLIT.split(with_m.group(1))
+            for p in _NAME_SPLIT.split(text)
         ]
         parts = [p for p in parts if 2 <= len(p) <= 60]
         for part in parts:
             if _NONE.match(part):
                 continue
             if not clothing and re.search(r"\b(?:large|clothing)\b", part, re.I):
-                clothing = part
+                clothing = _normalize_ambiguous_cloth(part)
             elif not accessory and re.search(r"\b(?:small|accessory)\b", part, re.I):
                 accessory = part
             elif not clothing:
-                clothing = part
+                clothing = _normalize_ambiguous_cloth(part)
             elif not accessory:
                 accessory = part
 
+    if on_other:
+        return None, None, _clean_dye(clothing or accessory)
+    return _clean_dye(clothing), _clean_dye(accessory), None
+
+
+def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) -> OutfitQuery:
+    text = (message or "").strip()
+    see = _SEE_WITH.search(text)
+    if see:
+        clothing, accessory, other = _parse_cloth_accessory(see.group(1).strip())
+        if clothing or accessory or other:
+            return OutfitQuery(
+                class_name=None,
+                skin_name=None,
+                clothing=clothing,
+                accessory=accessory,
+                other_slot=other,
+            )
+
+    what = _WHAT_DOES_LOOK.search(text)
+    if what:
+        skin_part = what.group(1).strip()
+        with_part = what.group(2).strip()
+        clothing, accessory, other = _parse_cloth_accessory(with_part)
+        if _PRONOUN_SKIN.search(skin_part):
+            return OutfitQuery(
+                class_name=None,
+                skin_name=None,
+                clothing=clothing,
+                accessory=accessory,
+                other_slot=other,
+            )
+        class_hit = class_name or _class_from_text(skin_part) or _class_from_text(text)
+        skin = skin_part
+        if class_hit:
+            skin = re.sub(rf"\b{re.escape(class_hit)}\b", " ", skin, flags=re.I)
+            skin = re.sub(r"\s+", " ", skin).strip(" -:|,.")
+        if not _looks_like_skin(skin):
+            skin = None
+        return OutfitQuery(
+            class_name=class_hit,
+            skin_name=skin,
+            clothing=clothing,
+            accessory=accessory,
+            other_slot=other,
+        )
+
+    clothing, accessory, other = _parse_cloth_accessory(text)
+    with_m = _WITH_CLAUSE.search(text)
     rest = text
     if with_m:
         rest = rest[: with_m.start()] + rest[with_m.end() :]
-    for match in (large, small, c_dye, a_dye, c_label, a_label):
-        if match:
-            rest = rest.replace(match.group(0), " ")
+    for label in (clothing, accessory):
+        if label:
+            rest = re.sub(re.escape(label), " ", rest, flags=re.I)
     rest = _LEAD_IN.sub("", rest)
     rest = re.sub(
         r"\b(?:skin|outfit|visuali[sz]er?|preview|clothing|accessory|dye|cloth)\b",
@@ -263,9 +508,114 @@ def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) ->
     return OutfitQuery(
         class_name=class_hit,
         skin_name=skin,
-        clothing=_clean_dye(clothing),
-        accessory=_clean_dye(accessory),
+        clothing=clothing,
+        accessory=accessory,
+        other_slot=other,
     )
+
+
+def _has_size_or_slot(label: Optional[str]) -> bool:
+    return bool(re.search(r"\b(?:large|small|clothing|accessory)\b", label or "", re.I))
+
+
+def _place_followup_slots(prior: OutfitQuery, current: OutfitQuery) -> OutfitQuery:
+    clothing = current.clothing
+    accessory = current.accessory
+    other = current.other_slot
+    if other:
+        if prior.clothing and not prior.accessory:
+            accessory = other
+            clothing = None
+        elif prior.accessory and not prior.clothing:
+            clothing = other
+            accessory = None
+        elif prior.clothing:
+            accessory = other
+            clothing = None
+        else:
+            clothing = other
+    elif (
+        clothing
+        and not accessory
+        and not _has_size_or_slot(clothing)
+        and prior.clothing
+        and not prior.accessory
+    ):
+        accessory = clothing
+        clothing = None
+    return _merge_outfit(
+        prior,
+        OutfitQuery(
+            class_name=current.class_name,
+            skin_name=current.skin_name,
+            clothing=clothing,
+            accessory=accessory,
+        ),
+    )
+
+
+def _names_a_new_dye(text: str) -> bool:
+    return bool(
+        _BARE_DYE.search(text)
+        or _LARGE_CLOTH.search(text)
+        or _SMALL_CLOTH.search(text)
+        or _AMBIGUOUS_CLOTH.search(text)
+        or _CLOTHING_DYE.search(text)
+        or _ACCESSORY_DYE.search(text)
+        or _PAIRED_SIZE_CLOTH.search(text)
+    )
+
+
+def _is_slot_swap(message: str) -> bool:
+    text = message or ""
+    if not _SWAP_INTENT.search(text):
+        return False
+    if _EXCHANGE_SLOTS.search(text):
+        return True
+    return not _names_a_new_dye(text)
+
+
+def _is_outfit_followup(
+    message: str,
+    current: OutfitQuery,
+    history: Optional[list[str]],
+) -> bool:
+    if _OUTFIT_FOLLOWUP.search(message or "") or _is_slot_swap(message or ""):
+        return True
+    if not history or not _history_has_outfit(history):
+        return False
+    piece = bool(
+        current.clothing
+        or current.accessory
+        or current.other_slot
+        or _mentions_outfit_piece(message or "")
+    )
+    if (
+        _FOLLOWUP_INTENT.search(message or "")
+        or _SEE_WITH.search(message or "")
+        or _LOOK_LIKE.search(message or "")
+        or _USE_DYE.search(message or "")
+    ):
+        return piece
+    if not current.skin_name and not current.class_name:
+        return piece
+    return False
+
+
+def _swap_slot_label(name: Optional[str], target: str) -> Optional[str]:
+    """Large cloth becomes Small cloth on accessory, and dyes follow the slot."""
+    if not name:
+        return None
+    color = _color_from_dye_query(name)
+    if not color:
+        return name
+    if re.search(r"\bcloth\b", name, re.I):
+        if target == "accessory":
+            return f"Small {color} Cloth"
+        return f"Large {color} Cloth"
+    if target == "accessory":
+        return f"{color} Accessory Dye"
+    return f"{color} Clothing Dye"
 
 
 def extract_outfit_query(
@@ -274,19 +624,23 @@ def extract_outfit_query(
     history: Optional[list[str]] = None,
 ) -> OutfitQuery:
     current = _extract_outfit_from_text(message, class_name)
-    followup = bool(_OUTFIT_FOLLOWUP.search(message or ""))
+    followup = _is_outfit_followup(message, current, history)
     merged = current
     if followup and history:
         prior = OutfitQuery(class_name, None, None, None)
         for prev in history:
-            prior = _merge_outfit(prior, _extract_outfit_from_text(prev, class_name))
-        merged = _merge_outfit(prior, current)
-    if _EXCHANGE_SLOTS.search(message or ""):
+            token = _outfit_from_skin_token(prev)
+            if token:
+                prior = _merge_outfit(prior, token)
+            else:
+                prior = _merge_outfit(prior, _extract_outfit_from_text(prev, class_name))
+        merged = _place_followup_slots(prior, current)
+    if _is_slot_swap(message or ""):
         return OutfitQuery(
             class_name=merged.class_name,
             skin_name=merged.skin_name,
-            clothing=merged.accessory,
-            accessory=merged.clothing,
+            clothing=_swap_slot_label(merged.accessory, "clothing"),
+            accessory=_swap_slot_label(merged.clothing, "accessory"),
         )
     return merged
 
@@ -558,6 +912,19 @@ def _skin_token(portrait: SkinPortrait) -> str:
     )
 
 
+def outfit_history_from_messages(messages: list) -> list[str]:
+    """User turns plus assistant [skin:...] replies for outfit follow-ups."""
+    lines: list[str] = []
+    for msg in messages:
+        role = getattr(msg, "role", None)
+        content = getattr(msg, "content", None) or ""
+        if role == "user":
+            lines.append(content)
+        elif role == "assistant" and "[skin:" in content:
+            lines.append(content)
+    return lines
+
+
 async def retrieve_skin_visualizer(
     redis: aioredis.Redis,
     message: str,
@@ -577,7 +944,7 @@ async def retrieve_skin_visualizer(
             clothing=query.clothing,
             accessory=query.accessory,
             ttl_seconds=ttl_seconds,
-            cache_only=True,
+            cache_only=False,
         )
     except Exception as e:
         logger.bind(error=str(e), skin=query.skin_name).warning(
@@ -602,3 +969,59 @@ async def retrieve_skin_visualizer(
             f"RealmEye: {portrait.realmeye_url}",
         ]
     )
+
+
+SKIN_OK_TEXT = (
+    "Composited from RealmEye sprites. Class skin plus clothing and accessory "
+    "dyes. That render is code, not a model guess. Ask if you want a different "
+    "cloth or dye combo."
+)
+
+
+def _skin_failure_text(query: OutfitQuery) -> str:
+    parts: list[str] = []
+    if query.skin_name:
+        parts.append(f"skin **{query.skin_name}**")
+    if query.class_name:
+        parts.append(f"class **{query.class_name}**")
+    if query.clothing:
+        parts.append(f"clothing **{query.clothing}**")
+    if query.accessory:
+        parts.append(f"accessory **{query.accessory}**")
+    detail = ", ".join(parts) if parts else "that outfit"
+    return (
+        f"I couldn't render {detail} from RealmEye. "
+        "Double-check the spellings against the wiki skin and cloth names."
+    )
+
+
+async def compose_skin_stored_reply(
+    redis: aioredis.Redis,
+    message: str,
+    *,
+    ttl_seconds: int,
+    history: Optional[list[str]] = None,
+) -> str:
+    """Render the outfit and return a stored chat reply with a [skin:...] token."""
+    query = extract_outfit_query(message, history=history)
+    if not query.skin_name and not query.class_name:
+        return (
+            "I need a class skin name and optional cloth or dye. "
+            "Try: What does Vampire Slayer Archer look like with Large Crown cloth?"
+        )
+    try:
+        portrait = await render_skin_portrait(
+            redis,
+            class_name=query.class_name,
+            skin_name=query.skin_name,
+            clothing=query.clothing,
+            accessory=query.accessory,
+            ttl_seconds=ttl_seconds,
+            cache_only=False,
+        )
+    except Exception as e:
+        logger.bind(error=str(e), skin=query.skin_name).warning(
+            "Skin stored reply could not render outfit"
+        )
+        return _skin_failure_text(query)
+    return f"{_skin_token(portrait)}\n\n{SKIN_OK_TEXT}"

@@ -42,6 +42,15 @@ class UsageResponse(BaseModel):
     remaining: int
     # "user" once signed in, "ip" for anonymous callers.
     scope: str = "ip"
+    # guest (IP), free (signed-in), or paid.
+    tier: str = "guest"
+    claude_used: int = 0
+    claude_limit: int = 0
+    claude_remaining: int = 0
+    spend_cap_usd: float = 0
+    on_demand_spent_usd: float = 0
+    # Seconds until the free daily bucket rolls. 0 if it has not started.
+    resets_in_seconds: int = 0
 
 
 class PaywallResponse(BaseModel):
@@ -53,6 +62,10 @@ class PaywallResponse(BaseModel):
     used: int = 0
     limit: int = 0
     remaining: int = 0
+    # free_quota | claude_pool | spend_cap
+    reason: str = "free_quota"
+    spend_cap_usd: float = 0
+    resets_in_seconds: int = 0
 
 
 class FeedbackRequest(BaseModel):

@@ -19,6 +19,7 @@ from .scraper import (
     scrape_dungeon_indexes,
     scrape_wiki_article,
 )
+from .wiki_scaling import read_cached_item
 
 INDEX_CACHE_KEY = "wiki:dungeon-index:v4"
 PAGE_CACHE_PREFIX = "wiki:guide:v6:"
@@ -59,8 +60,20 @@ _GUIDE_RE = re.compile(
 _MODE_PREFIX = re.compile(r"^(?:hard\s*mode|hardmode|hm|easy\s*mode|easy)\s+", re.I)
 _HARD_MODE_RE = re.compile(r"hard\s*mode|hardmode|\bhm\b", re.I)
 _PUNCT_TAIL = re.compile(r"[?.!]+$")
-_SOURCE_SLUG = "the-source"
-_SOURCE_SPRITE_FALLBACK = "https://www.realmeye.com/s/a/img/wiki/i/bdfzUM2.png"
+_WIKI_IMG = "https://www.realmeye.com/s/a/img/wiki/i/"
+_SOURCE_SPRITE_FALLBACK = f"{_WIKI_IMG}bdfzUM2.png"
+_SHATTERS_PORTAL_FALLBACK = f"{_WIKI_IMG}yA4tlry.png"
+_ENEMY_PORTAL = re.compile(r"(?:ice|fire|stone)[-_\s]?portal", re.I)
+_WIKI_TITLE_TAIL = re.compile(r"\s*[-–—]\s*the RotMG Wiki.*$", re.I)
+# RealmEye dungeon-index sprites. Keep in sync with web/lib/quests.ts.
+_KNOWN_PORTALS = (
+    (re.compile(r"shatter", re.I), re.compile(r"hard\s*mode|hardmode", re.I), _SOURCE_SPRITE_FALLBACK),
+    (re.compile(r"shatter", re.I), None, _SHATTERS_PORTAL_FALLBACK),
+    (re.compile(r"moonlight|\bmv\b", re.I), None, f"{_WIKI_IMG}CHqjDCE.png"),
+    (re.compile(r"sanctuary|\bo3\b", re.I), None, f"{_WIKI_IMG}JGnMCv2.png"),
+    (re.compile(r"\bnest\b", re.I), None, f"{_WIKI_IMG}FgpEOel.png"),
+    (re.compile(r"cultist", re.I), None, f"{_WIKI_IMG}on1ykYB.png"),
+)
 _HM_SHATTERS_TIP = (
     "To keep hardmode, kill the Source (the purple dome) during the clear to "
     "the second boss, Nox the Wild Shadow. After the dome, drag all 4 "
@@ -169,6 +182,18 @@ def _is_hardmode_shatters(query: str) -> bool:
     return _wants_hard_mode(query) and _is_shatters_query(query)
 
 
+def portal_for_dungeon(name: str, fallback: str | None = None) -> str | None:
+    """Index sprite for a known dungeon. Ice/Fire/Stone portals never win."""
+    text = _WIKI_TITLE_TAIL.sub("", name or "").lower()
+    for match, extra, url in _KNOWN_PORTALS:
+        if not match.search(text):
+            continue
+        if extra and not extra.search(text):
+            continue
+        return url
+    return fallback or None
+
+
 def _merge_drop_sources(existing: str, incoming: str) -> str:
     seen: set[str] = set()
     parts: list[str] = []
@@ -270,18 +295,32 @@ def match_index_pages(query: str, entries: list[dict]) -> list[dict]:
     return (dungeons + guides)[:2]
 
 
-def _focus_text(text: str, query: str) -> str:
+def _hard_mode_section(body: str) -> Optional[str]:
+    """The last 'Hard Mode' heading is the real section. An earlier hit is the TOC."""
+    matches = list(re.finditer(r"^Hard Mode\s*$", body or "", re.I | re.M))
+    if not matches:
+        return None
+    start = matches[-1].start()
+    return (body or "")[start : start + 8000]
+
+
+def _focus_text(text: str, query: str, *, include_lead: bool = True) -> str:
     """Keep Hard Mode plus shrine/Umi/layout/drops even when trimming."""
     body = text or ""
     parts: list[str] = []
+    section: Optional[str] = None
     if _wants_hard_mode(query):
-        match = re.search(r"(^Hard Mode\s*$[\s\S]{0,7000})", body, re.I | re.M)
-        if match:
-            parts.append(body[:1800])
-            parts.append(match.group(1))
+        section = _hard_mode_section(body)
+        if section:
+            if include_lead:
+                parts.append(body[:1800])
+            parts.append(section)
     if not parts:
         parts.append(body[:MAX_PAGE_CHARS])
-    for match in _PRIORITY_SECTION.finditer(body):
+    # Stored HM replies stay on the Hard Mode writeup. Do not pull the
+    # contents-list "Drops of Interest" hit from the regular dungeon page.
+    search_in = section if (section and not include_lead) else body
+    for match in _PRIORITY_SECTION.finditer(search_in):
         chunk = match.group(1).strip()
         if chunk and chunk not in "\n".join(parts):
             parts.append(chunk)
@@ -433,10 +472,11 @@ def _merge_media(pages: list[dict], matches: list[dict]) -> dict:
         if not title or not slug.endswith("-guide"):
             title = page.get("title") or title
             url = page.get("url") or url
-        if page.get("portal_url") and (
+        page_portal = page.get("portal_url")
+        if page_portal and not _ENEMY_PORTAL.search(page_portal) and (
             not portal or not slug.endswith("-guide")
         ):
-            portal = page.get("portal_url")
+            portal = page_portal
         if page.get("graves_url") and not graves_url:
             graves_url = page.get("graves_url")
         if page.get("difficulty") is not None:
@@ -460,13 +500,20 @@ def _merge_media(pages: list[dict], matches: list[dict]) -> dict:
                 continue
             seen_drop.add(key)
             drops.append(drop)
+    index_difficulty = None
+    index_portal = None
     for entry in matches:
-        if entry.get("portal_url") and not portal:
-            portal = entry.get("portal_url")
-        if entry.get("difficulty") is not None and difficulty is None:
-            difficulty = entry.get("difficulty")
+        if entry.get("difficulty") is not None and index_difficulty is None:
+            index_difficulty = entry.get("difficulty")
         if not title:
             title = entry.get("title") or title
+        candidate = entry.get("portal_url")
+        if candidate and not _ENEMY_PORTAL.search(candidate) and not index_portal:
+            index_portal = candidate
+    if index_portal:
+        portal = index_portal
+    if index_difficulty is not None:
+        difficulty = index_difficulty
     return {
         "title": title,
         "url": url,
@@ -479,6 +526,20 @@ def _merge_media(pages: list[dict], matches: list[dict]) -> dict:
     }
 
 
+async def _hydrate_drop_sprites(
+    redis: aioredis.Redis, drops: list[dict]
+) -> list[dict]:
+    hydrated: list[dict] = []
+    for drop in drops:
+        row = dict(drop)
+        if not row.get("sprite_url") and row.get("name"):
+            item = await read_cached_item(redis, row["name"])
+            if item and item.sprite_url:
+                row["sprite_url"] = item.sprite_url
+        hydrated.append(row)
+    return hydrated
+
+
 async def _finalize_media(
     redis: aioredis.Redis,
     query: str,
@@ -489,13 +550,19 @@ async def _finalize_media(
     cache_only: bool = False,
 ) -> dict:
     media = _merge_media(pages, matches)
+    forced = portal_for_dungeon(query) or portal_for_dungeon(media.get("title") or "")
+    if forced:
+        media["portal_url"] = forced
+    elif _ENEMY_PORTAL.search(media.get("portal_url") or ""):
+        media["portal_url"] = None
+    media["drops"] = await _hydrate_drop_sprites(redis, media.get("drops") or [])
     if not _is_hardmode_shatters(query):
         return media
-    source = await get_or_scrape_wiki(
-        redis, _SOURCE_SLUG, ttl_seconds=ttl_seconds, cache_only=cache_only
-    )
-    media["portal_url"] = (source or {}).get("portal_url") or _SOURCE_SPRITE_FALLBACK
-    media["tips"] = [_HM_SHATTERS_TIP]
+    media["portal_url"] = _SOURCE_SPRITE_FALLBACK
+    media["tips"] = [
+        "To keep hardmode, kill the Source (the purple dome) on the way to "
+        "Nox the Wild Shadow. After the dome, drag all 4 branches to the center."
+    ]
     media["notes"] = [
         _HM_BOSS_ORDER_NOTE,
         _HM_IDOL_NOTE,
@@ -513,10 +580,10 @@ async def _finalize_media(
 
 def _media_instructions(media: dict) -> str:
     lines = [
-        "DUNGEON MEDIA from RealmEye. The UI already shows the portal sprite "
-        "and grave rating above the title, and the full Drops of Interest "
-        "list from the wiki table. Still include Example Layout images using "
-        "the exact markdown below. If a Shrine / Village Girl Umi quiz is in the chunk, add "
+        "DUNGEON MEDIA from RealmEye. The UI already shows the portal sprite, "
+        "grave rating, Example Layout maps, and the full Drops of Interest "
+        "list from the wiki table. Do not repeat those in prose or markdown. "
+        "If a Shrine / Village Girl Umi quiz is in the chunk, add "
         "## Kitsune Umi with the exact questions and answers (Mushroom, "
         "Carosburg, The Happy Prince when those are the listed answers), "
         "note to wait a few seconds before answering, and that a correct "
@@ -553,13 +620,7 @@ def _media_instructions(media: dict) -> str:
             f"{_HM_AZAMOTH_NOTE}"
         )
     if media.get("difficulty") is not None:
-        lines.append(f"Difficulty: {media['difficulty']}/10")
-    layouts = media.get("layouts") or []
-    if layouts:
-        lines.append("## Example Layout")
-        for layout in layouts:
-            caption = layout.get("caption") or "Example Layout"
-            lines.append(f"![{caption}]({layout['url']})")
+        lines.append(f"Difficulty: {media['difficulty']}/10 (shown as graves in the UI)")
     return "\n".join(lines)
 
 

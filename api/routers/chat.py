@@ -47,7 +47,7 @@ from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.item_aliases import is_set_visualize_query
 from ..services.player_lookup import extract_player_ign
-from ..services.skin_visualizer import is_skin_visualize_query
+from ..services.skin_visualizer import is_skin_visualize_query, outfit_history_from_messages
 from ..services.dev_access import is_debug_unlimited
 from ..services.rate_limit import (
     USER_SCOPE,
@@ -55,11 +55,16 @@ from ..services.rate_limit import (
     consume,
     hash_identifier,
     peek,
+    peek_ttl,
     quota_for,
 )
 from ..services.budget import disabled_reason, record_llm_failure, record_usage
 from ..services.llm import build_chat_client
+from ..services.model_route import pick_chat_model
 from ..services import entitlements
+from ..services.claude_billing import consume_claude_reply, peek_claude_usage
+from ..services import daily_quests
+from ..services.stored_answers import maybe_mint_brief, try_stored_reply
 from ..auth import decode_jwt, email_from_session_header
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -142,6 +147,14 @@ async def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings)
     return await entitlements.is_active(email, settings)
 
 
+def _quest_subject(user: Optional[AuthenticatedUser], quota: Quota) -> str:
+    if user and user.email:
+        return user.email
+    if user:
+        return user.subject
+    return quota.key
+
+
 async def _enforce_quota(
     quota: Quota,
     redis: aioredis.Redis,
@@ -159,9 +172,13 @@ async def _enforce_quota(
         return
 
     count = await consume(redis, quota)
-    if count <= quota.limit:
+    bonus = await daily_quests.peek_free_bonus(
+        redis, _quest_subject(user, quota), settings
+    )
+    if count <= quota.limit + bonus:
         return
 
+    resets_in = await peek_ttl(redis, quota)
     # Anonymous callers have a free way out | sign in. Only prompt for money
     # once someone signed in has actually used up their allowance. Before an
     # identity provider is configured there's nothing to sign into, so fall
@@ -191,6 +208,8 @@ async def _enforce_quota(
             used=min(count, quota.limit),
             limit=quota.limit,
             remaining=0,
+            reason="free_quota",
+            resets_in_seconds=resets_in,
         ).model_dump(),
     )
 
@@ -261,11 +280,19 @@ def _checkout_url_for(
         return None
 
 
+async def _stream_stored(text: str) -> AsyncGenerator[str, None]:
+    chunk = json.dumps({"content": text, "done": False, "stored": True})
+    yield f"data: {chunk}\n\n"
+    yield f"data: {json.dumps({'content': '', 'done': True, 'stored': True})}\n\n"
+
+
 async def _stream_response(
     messages: list[dict],
     system_prompt: str,
     settings: Settings,
     redis: aioredis.Redis,
+    mint=None,
+    model: str = "",
 ) -> AsyncGenerator[str, None]:
     """
     Stream Claude response as SSE chunks.
@@ -280,15 +307,18 @@ async def _stream_response(
     provider = settings.llm_provider
     client = build_chat_client(settings)
     started = time.perf_counter()
+    collected: list[str] = []
 
     try:
+        model_id = model or settings.claude_model
         async with client.messages.stream(
-            model=settings.claude_model,
+            model=model_id,
             max_tokens=settings.max_response_tokens,
             system=system_prompt,
             messages=messages,
         ) as stream:
             async for text in stream.text_stream:
+                collected.append(text)
                 chunk = json.dumps({"content": text, "done": False})
                 yield f"data: {chunk}\n\n"
 
@@ -304,9 +334,16 @@ async def _stream_response(
                     input_tokens=final.usage.input_tokens,
                     output_tokens=final.usage.output_tokens,
                     provider=provider,
+                    model=model_id,
                 )
             except Exception:
                 logger.exception("Could not record spend for a completed stream")
+
+        if mint is not None:
+            try:
+                await mint("".join(collected))
+            except Exception:
+                logger.exception("Could not mint a stored brief after Claude")
 
         yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
 
@@ -348,25 +385,84 @@ async def chat_usage(
             limit=settings.paid_message_limit,
             remaining=settings.paid_message_limit,
             scope="user",
+            tier="paid",
+            claude_limit=settings.paid_claude_included,
+            claude_remaining=settings.paid_claude_included,
         )
     if user and user.email and await entitlements.is_active(user.email, settings):
+        claude = await peek_claude_usage(redis, user.email, settings)
         return UsageResponse(
-            used=0,
-            limit=settings.paid_message_limit,
-            remaining=settings.paid_message_limit,
+            used=claude.used,
+            limit=claude.included,
+            remaining=claude.remaining,
             scope="user",
+            tier="paid",
+            claude_used=claude.used,
+            claude_limit=claude.included,
+            claude_remaining=claude.remaining,
+            spend_cap_usd=claude.spend_cap_usd,
+            on_demand_spent_usd=claude.on_demand_spent_usd,
         )
     try:
         used = await peek(redis, quota)
+        resets_in = await peek_ttl(redis, quota)
+        bonus = await daily_quests.peek_free_bonus(
+            redis, _quest_subject(user, quota), settings
+        )
     except Exception:
         logger.exception("Failed to read chat usage")
         raise HTTPException(status_code=503, detail="Usage unavailable")
+    limit = quota.limit + bonus
     return UsageResponse(
         used=used,
-        limit=quota.limit,
-        remaining=max(0, quota.limit - used),
+        limit=limit,
+        remaining=max(0, limit - used),
         scope=quota.scope,
+        tier="free" if quota.scope == USER_SCOPE else "guest",
+        resets_in_seconds=resets_in,
     )
+
+
+@router.get("/quests/art")
+async def quest_art(
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    shift: int = 0,
+) -> dict:
+    """Today's dungeon portal and a cached shiny sprite for the quests modal."""
+    art = await daily_quests.todays_quest_art(redis, settings, shift=max(0, shift))
+    return {
+        "dungeon_name": art.dungeon_name,
+        "dungeon_prompt": art.dungeon_prompt,
+        "dungeon_portal_url": art.dungeon_portal_url,
+        "shiny_name": art.shiny_name,
+        "shiny_sprite_url": art.shiny_sprite_url,
+    }
+
+
+@router.post("/quests/claim")
+async def claim_daily_quests(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Grant +1 message after today's quests. Free and paid. Once per UTC day."""
+    quota = quota_for(user, request, settings)
+    paid = bool(user and user.email and await entitlements.is_active(user.email, settings))
+    if not paid:
+        paid = await _has_legacy_paid_token(authorization, settings)
+    subject = _quest_subject(user, quota)
+    granted = await daily_quests.claim_daily_bonus(
+        redis, subject, settings, paid=paid
+    )
+    bonus = (
+        await daily_quests.peek_paid_bonus(redis, subject, settings)
+        if paid
+        else await daily_quests.peek_free_bonus(redis, subject, settings)
+    )
+    return {"granted": granted, "bonus": bonus}
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
@@ -432,7 +528,50 @@ async def chat_stream(
         raise HTTPException(status_code=503, detail=unavailable)
 
     quota = quota_for(user, request, settings)
+
+    user_history = [
+        msg.content for msg in body.history[-10:] if msg.role == "user"
+    ]
+    outfit_history = outfit_history_from_messages(body.history[-10:])
+    paid = bool(
+        user
+        and user.email
+        and await entitlements.is_active(user.email, settings)
+    ) or await _has_legacy_paid_token(authorization, settings)
+
+    stored = None
+    try:
+        stored = await try_stored_reply(
+            redis,
+            body.message,
+            history=outfit_history,
+            ttl_seconds=settings.wiki_ttl_seconds,
+            has_attachment=body.attachment is not None,
+        )
+    except Exception:
+        logger.exception("Stored-answer lookup failed; falling through to Claude")
+        stored = None
+    if stored:
+        # Guests still spend a daily message so they hit the sign-in slides.
+        # Signed-in free (and Pro) accounts keep stored answers off the meter.
+        if quota.is_anonymous:
+            await _enforce_quota(quota, redis, settings, authorization, user)
+        logger.bind(
+            session_id=body.session_id[:8],
+            kind=stored.kind,
+            stored_key=stored.key,
+        ).info("Chat served from stored answer")
+        return StreamingResponse(
+            _stream_stored(stored.text),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     await _enforce_quota(quota, redis, settings, authorization, user)
+    await consume_claude_reply(redis, user, settings, paid=paid)
 
     # Player profiles change constantly — scrape on lookup. The short TTL
     # only collapses sidebar + chat hitting RealmEye twice in one session.
@@ -456,10 +595,8 @@ async def chat_stream(
     # Retrieve RAG context. A degraded embeddings/vector backend (e.g. Ollama
     # not running locally) must never take down the whole chat feature |
     # fall back to answering with no retrieved context instead of 500ing.
-    user_history = [
-        msg.content for msg in body.history[-10:] if msg.role == "user"
-    ]
     history_texts = user_history
+    dungeon_only = False
     player_only = False
     try:
         query_text = body.message.strip()
@@ -482,7 +619,7 @@ async def chat_stream(
         if (
             dungeon_only
             or player_only
-            or is_skin_visualize_query(query_text)
+            or is_skin_visualize_query(query_text, history=outfit_history)
             or is_set_visualize_query(query_text)
         ):
             context = ""
@@ -545,15 +682,38 @@ async def chat_stream(
         for msg in body.history[-10:]
     ] + [{"role": "user", "content": body.message}]
 
+    model = pick_chat_model(
+        body.message,
+        settings,
+        history=user_history,
+        context=context,
+        dungeon_only=dungeon_only,
+        player_only=player_only,
+        has_attachment=body.attachment is not None,
+    )
     logger.bind(
         session_id=body.session_id[:8],
         ign=body.ign,
         provider=settings.llm_provider,
+        model=model,
         context_chunks=context.count("---") + 1 if context else 0,
     ).info("Chat stream started")
 
+    async def _mint(reply: str) -> None:
+        if model != settings.claude_model:
+            return
+        await maybe_mint_brief(
+            redis,
+            body.message,
+            reply,
+            history=user_history,
+            ttl_seconds=settings.wiki_ttl_seconds,
+        )
+
     return StreamingResponse(
-        _stream_response(messages, system_prompt, settings, redis),
+        _stream_response(
+            messages, system_prompt, settings, redis, mint=_mint, model=model
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

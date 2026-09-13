@@ -20,7 +20,8 @@ from pydantic import BaseModel
 from ..auth import create_jwt, decode_magic_token, email_from_session_header
 from ..config import Settings, get_settings
 from ..dependencies import enforce_lookup_rate_limit, get_redis
-from ..services import accounts, entitlements
+from ..services import accounts, billing_prefs, entitlements
+from ..services.claude_billing import peek_claude_usage
 from ..services.validation import validate_email
 
 # Stripe subscription statuses that keep the paid tier on. Everything else
@@ -242,3 +243,112 @@ async def verify_magic_link(
     # token itself can't tell those apart, so `paid` is always looked up
     # fresh here rather than assumed from "someone redeemed a valid link."
     return await _session_payload(claims.email, settings)
+
+
+class OnDemandRequest(BaseModel):
+    spend_cap_usd: float = 0
+
+
+class OnDemandResponse(BaseModel):
+    spend_cap_usd: float
+    allowed_caps_usd: list[float]
+    claude_used: int
+    claude_limit: int
+    claude_remaining: int
+    on_demand_spent_usd: float
+    overage_usd: float
+
+
+class BillingResponse(BaseModel):
+    tier: str
+    subscription_status: str | None = None
+    plan_name: str = "RealmPal Pro"
+    plan_price_usd: float = 7.0
+    claude_used_percent: int | None = None
+    spend_cap_usd: float | None = None
+    on_demand_spent_usd: float | None = None
+    overage_usd: float | None = None
+    allowed_caps_usd: list[float] | None = None
+
+
+def _usage_percent(used: int, limit: int) -> int:
+    safe_limit = max(1, limit)
+    return min(100, round(max(0, used) / safe_limit * 100))
+
+
+@router.get("/billing", response_model=BillingResponse)
+async def get_billing(
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    authorization: str | None = Header(default=None),
+) -> BillingResponse:
+    """Plan and usage summary for the signed-in account."""
+    email = email_from_session_header(authorization, settings)
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in to view billing")
+
+    paid = await entitlements.is_active(email, settings)
+    status = await entitlements.get_status(email, settings)
+    if not paid:
+        return BillingResponse(tier="free", subscription_status=status)
+
+    claude = await peek_claude_usage(redis, email, settings)
+    return BillingResponse(
+        tier="paid",
+        subscription_status=status or "active",
+        plan_price_usd=7.0,
+        claude_used_percent=_usage_percent(claude.used, claude.included),
+        spend_cap_usd=claude.spend_cap_usd,
+        on_demand_spent_usd=claude.on_demand_spent_usd,
+        overage_usd=settings.claude_overage_usd,
+        allowed_caps_usd=list(billing_prefs.ALLOWED_CAPS_USD),
+    )
+
+
+async def _paid_email(authorization: str | None, settings: Settings) -> str:
+    email = email_from_session_header(authorization, settings)
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in to manage usage")
+    if not await entitlements.is_active(email, settings):
+        raise HTTPException(status_code=403, detail="Usage billing is for Pro accounts")
+    return email
+
+
+@router.get("/on-demand", response_model=OnDemandResponse)
+async def get_on_demand(
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    authorization: str | None = Header(default=None),
+) -> OnDemandResponse:
+    email = await _paid_email(authorization, settings)
+    claude = await peek_claude_usage(redis, email, settings)
+    return OnDemandResponse(
+        spend_cap_usd=claude.spend_cap_usd,
+        allowed_caps_usd=list(billing_prefs.ALLOWED_CAPS_USD),
+        claude_used=claude.used,
+        claude_limit=claude.included,
+        claude_remaining=claude.remaining,
+        on_demand_spent_usd=claude.on_demand_spent_usd,
+        overage_usd=settings.claude_overage_usd,
+    )
+
+
+@router.post("/on-demand", response_model=OnDemandResponse)
+async def set_on_demand(
+    body: OnDemandRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    authorization: str | None = Header(default=None),
+) -> OnDemandResponse:
+    email = await _paid_email(authorization, settings)
+    await billing_prefs.set_spend_cap_usd(email, body.spend_cap_usd, settings)
+    claude = await peek_claude_usage(redis, email, settings)
+    return OnDemandResponse(
+        spend_cap_usd=claude.spend_cap_usd,
+        allowed_caps_usd=list(billing_prefs.ALLOWED_CAPS_USD),
+        claude_used=claude.used,
+        claude_limit=claude.included,
+        claude_remaining=claude.remaining,
+        on_demand_spent_usd=claude.on_demand_spent_usd,
+        overage_usd=settings.claude_overage_usd,
+    )

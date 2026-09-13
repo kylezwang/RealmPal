@@ -2,10 +2,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchPreferences, savePreferences } from "@/lib/api";
+import { ChangelogModal } from "@/components/chat/ChangelogModal";
 
 export default function AccountSettingsPage() {
   const router = useRouter();
   const [trainOnData, setTrainOnData] = useState(true);
+  const [showChangelog, setShowChangelog] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,6 +83,20 @@ export default function AccountSettingsPage() {
 
         {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
 
+        <div className="rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 mt-3 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-[#ececec]">What&rsquo;s new</p>
+            <p className="text-xs text-[#737373] mt-0.5">See recent RealmPal updates.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowChangelog(true)}
+            className="flex-shrink-0 rounded-lg border border-[#404040] px-3 py-1.5 text-xs font-medium text-[#ececec] hover:bg-[#1a1a1a] transition-colors cursor-pointer"
+          >
+            Changelog
+          </button>
+        </div>
+
         <button
           type="button"
           onClick={() => router.push("/")}
@@ -89,6 +105,8 @@ export default function AccountSettingsPage() {
           Back to chat
         </button>
       </div>
+
+      {showChangelog && <ChangelogModal onClose={() => setShowChangelog(false)} />}
     </div>
   );
 }

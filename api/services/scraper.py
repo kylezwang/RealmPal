@@ -63,6 +63,29 @@ class ScraperError(Exception):
     """Raised when scraping fails after retries."""
 
 
+def _pick_top_pet(pets: list[dict]) -> Optional[dict]:
+    """RealmEye top pet is the highest ability total, not the first yard slot."""
+    scored: list[dict] = []
+    for pet in pets or []:
+        name = (pet.get("name") or "").strip()
+        if not name:
+            continue
+        levels = [int(n) for n in (pet.get("levels") or []) if isinstance(n, (int, float))]
+        scored.append({**pet, "name": name, "levels": levels})
+    if not scored:
+        return None
+
+    def key(pet: dict) -> tuple[int, int, int]:
+        levels = pet.get("levels") or []
+        return (
+            sum(levels),
+            max(levels) if levels else 0,
+            min(levels) if levels else 0,
+        )
+
+    return max(scored, key=key)
+
+
 # Waits for RealmEye's own `drawCharacters()` (see characters.js) to finish.
 # That function composites each character's real, dye-colored portrait onto
 # a runtime <canvas> and injects a `<style>` overriding `.character`'s
@@ -152,6 +175,73 @@ _CHARACTER_TABLE_JS = """
 # `class="maxed"` span (HP/MP max at +25, the other six stats at +5), which
 # we don't currently read separately | the frontend derives "maxed" from
 # the raw number instead of relying on this class name.
+# Pet Yard table: each row is a pet sprite plus Heal / Magic Heal / Electric
+# (or similar) levels. RealmEye does not sort this by strength, so we read
+# every row and pick the highest ability total in Python.
+_PET_YARD_JS = """() => {
+  const pets = [];
+  const seen = new Set();
+  const pushPet = (el, levels) => {
+    const name = (el.getAttribute("title") || "").trim();
+    if (!name || seen.has(name + JSON.stringify(levels))) return;
+    seen.add(name + JSON.stringify(levels));
+    const style = el.getAttribute("style") || "";
+    const pos = /background-position:\\s*(-?\\d+)px\\s+(-?\\d+)px/.exec(style);
+    const sheet = getComputedStyle(el).backgroundImage;
+    const size = getComputedStyle(el).width;
+    pets.push({
+      name,
+      levels,
+      sheet,
+      size,
+      x: pos ? Math.abs(Number(pos[1])) : null,
+      y: pos ? Math.abs(Number(pos[2])) : null,
+    });
+  };
+  const abilityNums = (text) => {
+    const nums = [];
+    for (const match of String(text || "").matchAll(/\\b(\\d{1,3})\\b/g)) {
+      const n = Number(match[1]);
+      if (n >= 1 && n <= 100) nums.push(n);
+    }
+    return nums.slice(0, 3);
+  };
+  for (const table of document.querySelectorAll("table")) {
+    const headers = [...table.querySelectorAll("thead th, tr th")].map(
+      (th) => (th.textContent || "").toLowerCase(),
+    );
+    if (!headers.some((h) => /ability|pet/.test(h))) continue;
+    const abilityIdx = headers
+      .map((h, i) => (/ability/.test(h) ? i : -1))
+      .filter((i) => i >= 0);
+    for (const row of table.querySelectorAll("tbody tr")) {
+      const pet = row.querySelector("span.pet[title]");
+      if (!pet) continue;
+      const cells = [...row.querySelectorAll("td")];
+      let levels = [];
+      if (abilityIdx.length) {
+        for (const i of abilityIdx) {
+          levels.push(...abilityNums(cells[i] ? cells[i].innerText : ""));
+        }
+        levels = levels.slice(0, 3);
+      } else {
+        levels = abilityNums(
+          cells.slice(1).map((td) => td.innerText).join(" "),
+        );
+      }
+      pushPet(pet, levels);
+    }
+  }
+  if (!pets.length) {
+    for (const el of document.querySelectorAll("span.pet[title]")) {
+      const host = el.closest("tr, li, div") || el.parentElement;
+      pushPet(el, abilityNums(host ? host.innerText : ""));
+    }
+  }
+  return pets;
+}"""
+
+
 _EXALTATION_TABLE_JS = """
 (table) => {
   const rows = Array.from(table.querySelectorAll('tbody tr'));
@@ -579,54 +669,38 @@ async def scrape_player_profile(username: str) -> PlayerProfile:
             except Exception as e:
                 logger.bind(username=username, error=str(e)).warning("Exaltation list scrape failed")
 
-            # Top pet (first in pet list | Realmeye orders by most active).
-            # The Pet Yard tab lazy-loads via AJAX (no pet data in the initial
-            # HTML), and each pet renders as a crop of a single shared sprite
-            # sheet rather than its own image file:
-            #   <span class="pet" data-item="32639" title="Reaper"
-            #         style="background-position: -336px -288px;"></span>
-            #   background-image: url(".../s/ht/img/renders.png")
-            # Grab the sheet URL + crop offset so the frontend can replicate
-            # the exact same crop via CSS instead of guessing a random sprite.
+            # Top pet: highest Heal/Magic Heal/Electric (etc.) total on the
+            # Pet Yard tab. RealmEye lists pets in yard order, so the first
+            # span.pet is often a low pet (Monkey Head), not the best one.
             top_pet: Optional[PetInfo] = None
             try:
                 pet_tab = page.get_by_text("Pet Yard", exact=False)
                 if await pet_tab.count() > 0:
                     await pet_tab.first.click()
-                    # The pet grid renders empty placeholder `<span class="pet">`
-                    # slots immediately (with an empty/zero data-item), then
-                    # fills real ones in once the AJAX response lands | so we
-                    # can't just wait for the first span.pet, we need to poll
-                    # until at least one slot actually has a title (i.e. holds
-                    # a real pet, not an empty slot).
-                    pet_span = None
-                    for _ in range(20):
-                        candidates = page.locator("span.pet")
-                        n = await candidates.count()
-                        for i in range(n):
-                            cand = candidates.nth(i)
-                            if await cand.get_attribute("title"):
-                                pet_span = cand
-                                break
-                        if pet_span is not None:
+                    pets: list[dict] = []
+                    for _ in range(24):
+                        pets = await page.evaluate(_PET_YARD_JS)
+                        if pets and any(pet.get("levels") for pet in pets):
                             break
                         await asyncio.sleep(0.25)
-                    if pet_span is not None:
-                        pet_name = await pet_span.get_attribute("title")
-                        style = await pet_span.get_attribute("style") or ""
-                        pos_match = re.search(r"background-position:\s*(-?\d+)px\s+(-?\d+)px", style)
-                        if pet_name and pos_match:
-                            sheet_bg = await pet_span.evaluate("e => getComputedStyle(e).backgroundImage")
-                            sheet_match = re.search(r'url\("?([^")]+)"?\)', sheet_bg)
-                            size_raw = await pet_span.evaluate("e => getComputedStyle(e).width")
-                            size_match = re.search(r"\d+", size_raw or "")
-                            top_pet = PetInfo(
-                                name=pet_name.strip(),
-                                sprite_sheet_url=sheet_match.group(1) if sheet_match else None,
-                                sprite_x=abs(int(pos_match.group(1))),
-                                sprite_y=abs(int(pos_match.group(2))),
-                                sprite_size=int(size_match.group(0)) if size_match else 48,
-                            )
+                    picked = _pick_top_pet(pets)
+                    if picked and picked.get("x") is not None and picked.get("y") is not None:
+                        sheet_match = re.search(
+                            r'url\("?([^")]+)"?\)', picked.get("sheet") or ""
+                        )
+                        size_match = re.search(r"\d+", picked.get("size") or "")
+                        top_pet = PetInfo(
+                            name=picked["name"],
+                            sprite_sheet_url=sheet_match.group(1) if sheet_match else None,
+                            sprite_x=int(picked["x"]),
+                            sprite_y=int(picked["y"]),
+                            sprite_size=int(size_match.group(0)) if size_match else 48,
+                        )
+                        logger.bind(
+                            username=username,
+                            pet=top_pet.name,
+                            levels=picked.get("levels"),
+                        ).info("Picked top pet by RealmEye ability total")
             except Exception as e:
                 logger.bind(username=username, error=str(e)).warning("Pet sprite lookup failed")
                 pass
@@ -1176,25 +1250,38 @@ _DUNGEON_PAGE_JS = """
   let portal_url = null;
   let difficulty = null;
   let graves_url = null;
-  const graveSrcs = [];
   for (const img of root.querySelectorAll('img')) {
     const alt = (img.getAttribute('alt') || img.getAttribute('title') || '').trim();
     const src = abs(img.getAttribute('src'));
-    if (/portal/i.test(alt) && src && !portal_url) portal_url = src;
-    const grave = alt.match(/difficulty:\\s*(\\d+)/i);
-    if (grave && src) {
-      graveSrcs.push(src);
-      difficulty = Number(grave[1]);
-      if (!graves_url) graves_url = src;
+    if (/portal/i.test(alt) && src && !portal_url && !/(ice|fire|stone)\\s*portal/i.test(alt)) {
+      portal_url = src;
     }
   }
-  if (graveSrcs.length >= 1 && graveSrcs.length <= 10) {
-    difficulty = graveSrcs.length;
-  }
   const tables = Array.from(root.querySelectorAll('table'));
+  const infoTable = tables[0];
+  if (infoTable) {
+    let graveCount = 0;
+    for (const img of infoTable.querySelectorAll('img')) {
+      const alt = (img.getAttribute('alt') || img.getAttribute('title') || '').trim();
+      const src = abs(img.getAttribute('src'));
+      if (skipImg(alt, src)) continue;
+      const labeled = alt.match(/difficulty:\\s*(\\d+(?:\\.\\d+)?)/i);
+      if (labeled) {
+        difficulty = Number(labeled[1]);
+        if (!graves_url && src) graves_url = src;
+        graveCount++;
+      }
+    }
+    if (difficulty == null && graveCount >= 1 && graveCount <= 10) {
+      difficulty = graveCount;
+    }
+  }
   if (!portal_url && tables[0]) {
     const firstImg = tables[0].querySelector('img');
-    if (firstImg) portal_url = abs(firstImg.getAttribute('src'));
+    const tableAlt = (firstImg && (firstImg.getAttribute('alt') || firstImg.getAttribute('title') || '')) || '';
+    if (firstImg && !/(ice|fire|stone)\\s*portal/i.test(tableAlt)) {
+      portal_url = abs(firstImg.getAttribute('src'));
+    }
   }
   if (difficulty == null) {
     const blob = root.innerText || '';
@@ -1245,19 +1332,9 @@ _DUNGEON_PAGE_JS = """
       const cell = cells[0];
       const fromCell = cells[fromIdx] || cells[1];
       const dropsFrom = ((fromCell && fromCell.innerText) || '').replace(/\\s+/g, ' ').trim();
-      for (const a of cell.querySelectorAll('a[href*="/wiki/"]')) {
-        const img = a.querySelector('img');
-        const href = a.getAttribute('href') || '';
-        const slugM = href.match(/\\/wiki\\/([^?#]+)/);
-        const name = (
-          (a.textContent || '').trim()
-          || (a.getAttribute('title') || '')
-          || (img && (img.getAttribute('alt') || img.getAttribute('title') || ''))
-          || (slugM ? slugM[1].replace(/-/g, ' ') : '')
-        ).replace(/\\s+/g, ' ').trim();
+      const pushDrop = (name, img, wikiSlug) => {
         const key = name.toLowerCase();
-        if (!key || skipName.test(name)) continue;
-        if (href.includes('#') && /stat-increase|enchanting/i.test(href)) continue;
+        if (!key || skipName.test(name)) return;
         if (seenDrop.has(key)) {
           const prev = drops.find((d) => (d.name || '').toLowerCase() === key);
           if (prev && dropsFrom) {
@@ -1267,15 +1344,38 @@ _DUNGEON_PAGE_JS = """
               prev.drops_from = [prev.drops_from, extra.join(', ')].filter(Boolean).join(', ');
             }
           }
-          continue;
+          if (prev && !prev.sprite_url && img) {
+            prev.sprite_url = abs(img.getAttribute('src'));
+          }
+          return;
         }
         seenDrop.add(key);
         drops.push({
           name,
           sprite_url: img ? abs(img.getAttribute('src')) : null,
-          wiki_slug: slugM ? slugM[1] : null,
+          wiki_slug: wikiSlug || null,
           drops_from: dropsFrom || null,
         });
+      };
+      let linked = false;
+      for (const a of cell.querySelectorAll('a[href*="/wiki/"]')) {
+        const img = a.querySelector('img') || cell.querySelector('img');
+        const href = a.getAttribute('href') || '';
+        const slugM = href.match(/\\/wiki\\/([^?#]+)/);
+        const name = (
+          (a.textContent || '').trim()
+          || (a.getAttribute('title') || '')
+          || (img && (img.getAttribute('alt') || img.getAttribute('title') || ''))
+          || (slugM ? slugM[1].replace(/-/g, ' ') : '')
+        ).replace(/\\s+/g, ' ').trim();
+        if (href.includes('#') && /stat-increase|enchanting/i.test(href)) continue;
+        linked = true;
+        pushDrop(name, img, slugM ? slugM[1] : null);
+      }
+      if (!linked) {
+        const img = cell.querySelector('img');
+        const name = (cell.innerText || '').replace(/\\s+/g, ' ').trim().split(/[,\\n]/)[0].trim();
+        pushDrop(name, img, null);
       }
     }
   }

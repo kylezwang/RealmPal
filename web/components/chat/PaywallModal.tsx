@@ -2,15 +2,36 @@
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { createCheckout, decodeAuthEmail, registerAccount, type PlayerProfile } from "@/lib/api";
+import {
+  createCheckout,
+  decodeAuthEmail,
+  registerAccount,
+  type OnDemandUsage,
+  type PaywallReason,
+  type PlayerProfile,
+} from "@/lib/api";
 import { SWORD_SPRITE } from "@/lib/sprites";
 import { PetSprite } from "./PetCompanion";
+import { SpendingLimitModal } from "./SpendingLimitModal";
 
 /** Extra free messages a guest gets by creating an account. */
 export const ACCOUNT_BONUS_MESSAGES = 2;
 
 const LAST_STEP = 2;
+const REMINDER_STEP = 3;
 const MIN_PASSWORD_LENGTH = 8;
+
+function formatResetWait(seconds: number): string {
+  if (seconds <= 0) return "soon";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours >= 2) return `about ${hours} hours`;
+  if (hours === 1) {
+    return minutes >= 20 ? "about an hour and a half" : "about an hour";
+  }
+  if (minutes >= 2) return `about ${minutes} minutes`;
+  return "a few minutes";
+}
 
 const fieldClass =
   "w-full rounded-lg border border-[#404040] bg-[#262626] px-3 py-2.5 text-sm text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-white transition-colors";
@@ -133,6 +154,11 @@ interface Props {
   onClose: () => void;
   /** Guests end on create-account. Signed-in free users end on Pro. */
   signedIn?: boolean;
+  reason?: PaywallReason;
+  onUsageEnabled?: () => void;
+  spendCapUsd?: number;
+  onDemandSpentUsd?: number;
+  resetsInSeconds?: number;
   /** Optional MP4/WebM URLs once demos are recorded. Empty = placeholder. */
   setBuildingDemoSrc?: string;
   visualizerDemoSrc?: string;
@@ -164,7 +190,7 @@ function VideoPlaceholder({
     <div
       className="relative flex aspect-video w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-xl border border-dashed border-[#525252] bg-[#141414]"
       role="img"
-      aria-label={`${label} — demo video coming soon`}
+      aria-label={`${label}: demo video coming soon`}
     >
       <div
         className="pointer-events-none absolute inset-0 opacity-40"
@@ -215,10 +241,16 @@ export function PaywallModal({
   pet,
   onClose,
   signedIn = false,
+  reason = "free_quota",
+  onUsageEnabled,
+  spendCapUsd = 0,
+  onDemandSpentUsd = 0,
+  resetsInSeconds = 0,
   setBuildingDemoSrc,
   visualizerDemoSrc,
 }: Props) {
-  const [step, setStep] = useState(0);
+  const isOnDemand = reason === "claude_pool" || reason === "spend_cap";
+  const [step, setStep] = useState(isOnDemand ? LAST_STEP : 0);
   const [ign, setIgn] = useState("");
   const [email, setEmail] = useState(() => decodeAuthEmail() ?? "");
   const [password, setPassword] = useState("");
@@ -226,6 +258,7 @@ export function PaywallModal({
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSpendLimit, setShowSpendLimit] = useState(false);
 
   const goNext = useCallback(() => {
     setStep((s) => Math.min(LAST_STEP, s + 1));
@@ -238,18 +271,30 @@ export function PaywallModal({
   }, []);
 
   const isLast = step === LAST_STEP;
-  const isSignup = isLast && !signedIn;
-  const isPricing = isLast && signedIn;
+  const isReminder = step === REMINDER_STEP;
+  const isSignup = isLast && !signedIn && !isOnDemand;
+  const isPricing = isLast && signedIn && !isOnDemand;
+
+  const leavePricing = useCallback(() => {
+    setStep(REMINDER_STEP);
+    setError(null);
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && isLast) onClose();
-      if (e.key === "ArrowRight") goNext();
-      if (e.key === "ArrowLeft") goBack();
+      if (e.key === "Escape") {
+        if (isPricing) {
+          leavePricing();
+          return;
+        }
+        if (isLast || isReminder) onClose();
+      }
+      if (e.key === "ArrowRight" && !isReminder) goNext();
+      if (e.key === "ArrowLeft" && !isReminder) goBack();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, goNext, goBack, isLast]);
+  }, [isLast, isPricing, isReminder, goNext, goBack, leavePricing, onClose]);
 
   async function handleCreateAccount() {
     if (!ign.trim()) {
@@ -306,7 +351,13 @@ export function PaywallModal({
     }
   }
 
+  function handleSpendLimitSaved(_saved: OnDemandUsage) {
+    onUsageEnabled?.();
+    onClose();
+  }
+
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
@@ -314,20 +365,22 @@ export function PaywallModal({
       aria-labelledby="paywall-title"
     >
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={isLast ? onClose : undefined}
+        className="absolute inset-0 bg-black/30"
+        onClick={
+          isPricing ? leavePricing : isLast || isReminder ? onClose : undefined
+        }
         aria-hidden="true"
       />
 
       <div
         className={`relative z-10 w-full rounded-2xl border border-[#404040] bg-[#1e1e1e] p-6 shadow-2xl animate-slide-up ${
-          isLast ? "max-w-sm" : "max-w-md"
+          isLast || isReminder ? "max-w-sm" : "max-w-md"
         }`}
       >
-        {isLast && (
+        {(isLast || isReminder) && (
           <button
             type="button"
-            onClick={onClose}
+            onClick={isPricing ? leavePricing : onClose}
             className="absolute top-4 right-4 rounded p-1 text-[#737373] transition-colors hover:text-[#ececec]"
             aria-label="Close"
           >
@@ -344,7 +397,7 @@ export function PaywallModal({
               Set-building AI, with enchanting guides
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
-              Ask for a class and a stat — get a real loadout, not vibes. Enchant rolls that
+              Ask for a class and a stat. Get a real loadout, not vibes. Enchant rolls that
               matter for your build land next to the gear, so you stop guessing which UT to
               keep.
             </p>
@@ -365,7 +418,7 @@ export function PaywallModal({
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Shiny and divine sets render as a four-slot loadout. Dye a class skin with cloths
-              and accessories the way RealmEye outfits do — for people who care how it looks
+              and accessories the way RealmEye outfits do, for people who care how it looks
               in-game.
             </p>
             <VideoPlaceholder
@@ -455,6 +508,29 @@ export function PaywallModal({
           </div>
         )}
 
+        {isOnDemand && isLast && (
+          <div key="slide-ondemand" className="animate-fade-in">
+            <h2 id="paywall-title" className="mb-1 text-center text-lg font-semibold text-[#ececec]">
+              {reason === "spend_cap" ? "Usage cap reached" : "Included Claude replies used"}
+            </h2>
+            <p className="mb-6 text-center text-sm text-[#a3a3a3]">
+              Stored builds, drops, and dungeon guides stay free. Extra Claude
+              replies are $0.08 each. Set a monthly spending limit to keep going.
+            </p>
+            {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
+            <button
+              type="button"
+              onClick={() => setShowSpendLimit(true)}
+              className="w-full rounded-lg bg-white py-2.5 text-sm font-semibold text-[#1a1a1a] transition-colors hover:bg-[#e5e5e5] cursor-pointer"
+            >
+              Manage spending limit
+            </button>
+            <p className="mt-3 text-center text-xs text-[#525252]">
+              Pick $20, $50, $100, or a custom cap. Change it anytime in Billing.
+            </p>
+          </div>
+        )}
+
         {isPricing && (
           <div key="slide-pricing" className="animate-fade-in">
             <div className="mb-4 flex justify-center">
@@ -478,8 +554,8 @@ export function PaywallModal({
               {freeMessagesHeading(remaining, limit)}
             </h2>
             <p className="mb-6 text-center text-sm text-[#a3a3a3]">
-              Upgrade to RealmPal Pro to support the project and continue | Hosting and AI
-              costs are expensive, <br /> your support helps keeps it alive!
+              $7 includes a major increase in messages. Stored wiki and build answers
+              stay free and do not burn that pool. Keep going on usage after that.
             </p>
 
             <div className="mb-6 flex items-center justify-center gap-2">
@@ -489,13 +565,10 @@ export function PaywallModal({
 
             <ul className="mb-6 space-y-2 text-sm text-[#a3a3a3]">
               {[
-                "All RotMG questions",
-                "Set-building AI for DPS",
-                "Enchanting guides & DPS Calculation",
-                "Skin customization preview (Cloths and Dyes)",
-                "Account & character details",
-                "Item/Dungeon guides",
-                "And more",
+                "~ 100 messages included each month",
+                "Stored builds, drops, and dungeon guides included",
+                "Set-building, skins, item cards, and dungeon guides",
+                "Enchanting, DPS calculations, and more",
               ].map((f) => (
                 <li key={f} className="flex items-center gap-2">
                   <span className="text-xs text-white">✓</span>
@@ -521,6 +594,28 @@ export function PaywallModal({
           </div>
         )}
 
+        {isReminder && (
+          <div key="slide-refresh" className="animate-fade-in">
+            <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
+              Your {limit} daily messages refresh in <br />{" "}
+              <span className="text-[#D4AF37]">{formatResetWait(resetsInSeconds)}</span>
+            </h2>
+            <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
+              Come back then for another {limit} free chats. Stored wiki answers
+              will still count toward that daily trial. Pro is $7/month if you
+              want to keep going now.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-6 w-full rounded-lg bg-white py-2.5 text-sm font-semibold text-[#1a1a1a] transition-colors hover:bg-[#e5e5e5]"
+            >
+              Got it
+            </button>
+          </div>
+        )}
+
+        {!isReminder && (
         <div className="mt-6 flex items-center justify-between gap-3">
           <button
             type="button"
@@ -544,14 +639,26 @@ export function PaywallModal({
           ) : (
             <button
               type="button"
-              onClick={onClose}
+              onClick={isPricing ? leavePricing : onClose}
               className="rounded-lg px-3 py-2 text-sm text-[#737373] transition-colors hover:text-[#a3a3a3] cursor-pointer"
             >
               Not now
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
+
+    {showSpendLimit && isOnDemand && (
+      <SpendingLimitModal
+        currentCap={spendCapUsd}
+        spentSoFar={onDemandSpentUsd}
+        exhausted
+        onClose={() => setShowSpendLimit(false)}
+        onSaved={handleSpendLimitSaved}
+      />
+    )}
+    </>
   );
 }

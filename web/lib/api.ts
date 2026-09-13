@@ -146,6 +146,8 @@ export interface ChatChunk {
 /** Which bucket a quota was counted against: an account, or a client IP. */
 export type QuotaScope = "user" | "ip";
 
+export type PaywallReason = "free_quota" | "claude_pool" | "spend_cap";
+
 export interface PaywallInfo {
   upgrade: true;
   message: string;
@@ -155,6 +157,9 @@ export interface PaywallInfo {
   used?: number;
   limit?: number;
   remaining?: number | null;
+  reason?: PaywallReason;
+  spend_cap_usd?: number;
+  resets_in_seconds?: number;
 }
 
 export interface ChatUsage {
@@ -162,6 +167,35 @@ export interface ChatUsage {
   limit: number;
   remaining: number;
   scope?: QuotaScope;
+  tier?: "guest" | "free" | "paid";
+  claude_used?: number;
+  claude_limit?: number;
+  claude_remaining?: number;
+  spend_cap_usd?: number;
+  on_demand_spent_usd?: number;
+  resets_in_seconds?: number;
+}
+
+export interface OnDemandUsage {
+  spend_cap_usd: number;
+  allowed_caps_usd: number[];
+  claude_used: number;
+  claude_limit: number;
+  claude_remaining: number;
+  on_demand_spent_usd: number;
+  overage_usd: number;
+}
+
+export interface BillingInfo {
+  tier: "free" | "paid";
+  subscription_status?: string | null;
+  plan_name: string;
+  plan_price_usd: number;
+  claude_used_percent?: number | null;
+  spend_cap_usd?: number | null;
+  on_demand_spent_usd?: number | null;
+  overage_usd?: number | null;
+  allowed_caps_usd?: number[] | null;
 }
 
 /** Generate a stable session ID persisted in localStorage */
@@ -292,6 +326,22 @@ export function decodeAuthEmail(): string | null {
     const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
     const claims = JSON.parse(json) as { email?: string };
     return typeof claims.email === "string" ? claims.email : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort read of the `ign` claim off the stored JWT, for display only. */
+export function decodeAuthIgn(): string | null {
+  const token = getAuthToken();
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claims = JSON.parse(json) as { ign?: string };
+    const ign = typeof claims.ign === "string" ? claims.ign.trim() : "";
+    return ign || null;
   } catch {
     return null;
   }
@@ -538,6 +588,40 @@ export async function sendFeedback(payload: {
   if (!res.ok) throw new Error("Failed to send feedback");
 }
 
+export interface QuestArtResponse {
+  dungeon_name: string;
+  dungeon_prompt: string;
+  dungeon_portal_url?: string | null;
+  shiny_name: string;
+  shiny_sprite_url?: string | null;
+  item_sprite_url?: string | null;
+}
+
+export async function fetchQuestArt(shift = 0): Promise<QuestArtResponse> {
+  const params = shift > 0 ? `?shift=${encodeURIComponent(String(shift))}` : "";
+  const res = await fetch(`${API_URL}/chat/quests/art${params}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not load quest art");
+  }
+  return data as QuestArtResponse;
+}
+
+export async function claimDailyQuestBonus(): Promise<{ granted: boolean; bonus: number }> {
+  const res = await fetch(`${API_URL}/chat/quests/claim`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not claim quest bonus");
+  }
+  return data as { granted: boolean; bonus: number };
+}
+
 export async function fetchChatUsage(): Promise<ChatUsage> {
   const sessionId = getSessionId();
   const res = await fetch(
@@ -563,6 +647,43 @@ export async function createCheckout(email?: string): Promise<string> {
     throw new Error(typeof data.detail === "string" ? data.detail : "Failed to create checkout");
   }
   return data.checkout_url;
+}
+
+export async function fetchOnDemand(): Promise<OnDemandUsage> {
+  const res = await fetch(`${API_URL}/payments/on-demand`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not load usage");
+  }
+  return data as OnDemandUsage;
+}
+
+export async function fetchBilling(): Promise<BillingInfo> {
+  const res = await fetch(`${API_URL}/payments/billing`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not load billing");
+  }
+  return data as BillingInfo;
+}
+
+export async function saveOnDemand(spendCapUsd: number): Promise<OnDemandUsage> {
+  const res = await fetch(`${API_URL}/payments/on-demand`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ spend_cap_usd: spendCapUsd }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not save usage cap");
+  }
+  return data as OnDemandUsage;
 }
 
 export async function confirmCheckout(sessionId: string): Promise<AuthSession> {

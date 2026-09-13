@@ -75,23 +75,19 @@ async def get_optional_user(
     return None
 
 
-async def enforce_lookup_rate_limit(
+async def consume_lookup_quota(
     request: Request,
-    settings: Annotated[Settings, Depends(get_settings)],
-    redis: Annotated[aioredis.Redis, Depends(get_redis)],
-    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
+    settings: Settings,
+    redis: aioredis.Redis,
+    user: Optional[AuthenticatedUser] = None,
 ) -> None:
     """
-    Throttle players/items/dungeons/skins/sprite lookups.
+    Count one scrape-triggering lookup, or raise 429.
 
-    A cache miss on any of these launches a real headless browser behind a
-    single-Chromium semaphore in api/services/scraper.py. Without a limiter
-    here, one caller's flood queues behind itself and delays every other
-    visitor's lookup — a free denial-of-service, and real compute cost,
-    that the chat quota in api/services/budget.py never covers.
-
-    Fails open on a Redis problem, matching the budget check's philosophy:
-    an infra blip should degrade, not take the feature down.
+    Cache hits must not call this. The limiter exists because a miss launches
+    Playwright behind a single-Chromium semaphore — not because reading Redis
+    is expensive. A dungeon guide that fans out 30 warmed item cards used to
+    burn the anonymous 12/min window and 429 the rest of the grid.
     """
     if await is_debug_unlimited(user, settings):
         return
@@ -110,6 +106,21 @@ async def enforce_lookup_rate_limit(
             detail="Too many lookups. Try again in a minute.",
             headers={"Retry-After": str(quota.window_seconds)},
         )
+
+
+async def enforce_lookup_rate_limit(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
+) -> None:
+    """
+    FastAPI dependency for routes that always scrape-or-equivalent.
+
+    Item cards check the warm store first and call `consume_lookup_quota`
+    only on a miss — see api/routers/items.py.
+    """
+    await consume_lookup_quota(request, settings, redis, user)
 
 
 async def require_user(

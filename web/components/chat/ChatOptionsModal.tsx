@@ -40,7 +40,7 @@ export function ChatOptionsModal({ title, onRename, onDelete, onClose }: Props) 
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/30"
         onClick={onClose}
         aria-hidden="true"
       />

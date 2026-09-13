@@ -1,0 +1,566 @@
+"""RealmPal reply store: serve common answers without calling Claude.
+
+Warming is the fact store (item profiles, hubs, dungeon pages). This is the
+reply store. A drop question, a best-slot list, an early-game list, a minted
+`{stat} {class}` brief, or a dungeon walkthrough should hit Redis. Claude
+only when the ask is new or constrained ("no ST", "white bag only").
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+import redis.asyncio as aioredis
+from loguru import logger
+
+from ..models.build import CLASS_ABILITY_HUB
+from .dungeon_guide import (
+    _focus_text,
+    _is_hardmode_shatters,
+    extract_dungeon_query,
+    get_or_scrape_index,
+    get_or_scrape_wiki,
+    match_index_pages,
+)
+from .item_aliases import extract_set_item_names, resolve_item_query
+from .player_lookup import extract_player_ign
+from .realmshark import parse_query
+from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
+from .wiki_scaling import HUB_PREFIX, read_cached_item
+
+BUILD_PREFIX = "wiki:build:v1"
+GUIDE_BRIEF_PREFIX = "wiki:guide-brief:v2"
+BRIEF_INDEX_KEY = "wiki:brief-index"
+MAX_BRIEF_CHARS = 8_000
+GUIDE_MAX_CHARS = 16_000
+
+_CONSTRAINT = re.compile(
+    r"\b("
+    r"no\s+st(?:s)?|without\s+st(?:s)?|no\s+soulbound|"
+    r"white\s+bags?\s+only|whites?\s+only|"
+    r"no\s+ut(?:s)?|without\s+ut(?:s)?|"
+    r"with\s+my\s+mule|on\s+my\s+mule|"
+    r"f2p\s+only|budget\s+only|no\s+st/?ut"
+    r")\b",
+    re.I,
+)
+_DROP = re.compile(
+    r"(?:"
+    r"where\s+(?:does|do)\s+(.+?)\s+drop|"
+    r"where\s+(?:can|do)\s+i\s+(?:get|find|farm)\s+(.+?)|"
+    r"how\s+(?:do\s+i|to)\s+(?:get|find|farm)\s+(.+?)|"
+    r"what\s+drops\s+(.+?)|"
+    r"(.+?)\s+drop\s+locations"
+    r")\s*\??\s*$",
+    re.I,
+)
+_SLOT = re.compile(
+    r"\bbest\s+(bows?|longbows?|wands?|staves|staffs?|swords?|daggers?|"
+    r"katanas?|lutes?|wakizashi|traps?|quivers?|tomes?|seals?|cloaks?|"
+    r"helms?|shields?|rings?|orbs?|prisms?|scepters?|stars?|maces?|"
+    r"sheaths?|sigils?|poisons?|skulls?|spells?)\b",
+    re.I,
+)
+_SHINY_DIVINE_ITEM = re.compile(
+    r"(?:"
+    r"(?:show|see|visualize)\s+(?:me\s+)?(?:a\s+)?"
+    r")?"
+    r"(?:a\s+)?(?:shiny\s+divine|divine\s+shiny)\s+(.+?)\s*$",
+    re.I,
+)
+
+_EARLY = re.compile(
+    r"\b(early[\s-]?game|beginner|new\s+player|starter)\b.+\b(items?|gear|loadout|equips?)\b"
+    r"|\bbest\s+(early[\s-]?game|beginner|starter)\b",
+    re.I,
+)
+_SLOT_SLUG = {
+    "bow": "bows",
+    "bows": "bows",
+    "longbow": "longbows",
+    "longbows": "longbows",
+    "wand": "wands",
+    "wands": "wands",
+    "staff": "staves",
+    "staffs": "staves",
+    "staves": "staves",
+    "sword": "swords",
+    "swords": "swords",
+    "dagger": "daggers",
+    "daggers": "daggers",
+    "katana": "katanas",
+    "katanas": "katanas",
+    "lute": "lutes",
+    "lutes": "lutes",
+    "wakizashi": "wakizashi",
+    "trap": "traps",
+    "traps": "traps",
+    "quiver": "quivers",
+    "quivers": "quivers",
+    "tome": "tomes",
+    "tomes": "tomes",
+    "seal": "seals",
+    "seals": "seals",
+    "cloak": "cloaks",
+    "cloaks": "cloaks",
+    "helm": "helms",
+    "helms": "helms",
+    "shield": "shields",
+    "shields": "shields",
+    "ring": "rings",
+    "rings": "rings",
+    "orb": "orbs",
+    "orbs": "orbs",
+    "prism": "prisms",
+    "prisms": "prisms",
+    "scepter": "scepters",
+    "scepters": "scepters",
+    "star": "stars",
+    "stars": "stars",
+    "mace": "maces",
+    "maces": "maces",
+    "sheath": "sheaths",
+    "sheaths": "sheaths",
+    "sigil": "sigils",
+    "sigils": "sigils",
+    "poison": "poisons",
+    "poisons": "poisons",
+    "skull": "skulls",
+    "skulls": "skulls",
+    "spell": "spells",
+    "spells": "spells",
+}
+
+_EARLY_TEXT = (
+    "Early-game gear is T0–T6 from the Nexus priest and the first dungeons "
+    "(Snake Pit, Sprite World, Undead Lair). Buy the T6 weapon, ability, and "
+    "armor for your class; swap the ring once you have something with a real "
+    "stat (Sprite Wand / Snake Eye Ring are common first finds).\n\n"
+    "Skip UT hunting until those T6s are on. Come back when you want a "
+    "stat-specific endgame brief.\n\n"
+    "[item:Sprite Wand] [item:Snake Eye Ring]"
+)
+
+_SKIN_TEXT = (
+    "Composited from RealmEye sprites — class skin plus clothing and accessory "
+    "dyes. That render is code, not a model guess. Ask if you want a different "
+    "cloth or dye combo."
+)
+
+
+async def _skin_reply(
+    redis: aioredis.Redis,
+    message: str,
+    *,
+    history: Optional[list[str]] = None,
+    ttl_seconds: int,
+) -> Optional[StoredReply]:
+    if not is_skin_visualize_query(message, history=history):
+        return None
+    text = await compose_skin_stored_reply(
+        redis, message, ttl_seconds=ttl_seconds, history=history
+    )
+    return StoredReply(text=text, kind="skin")
+
+
+@dataclass(frozen=True)
+class StoredReply:
+    text: str
+    kind: str
+    key: str = ""
+
+
+def is_constrained(message: str) -> bool:
+    return bool(_CONSTRAINT.search(message or ""))
+
+
+def build_brief_key(class_name: str, stat: str) -> str:
+    return f"{BUILD_PREFIX}:{class_name.lower()}:{stat.lower()}"
+
+
+def guide_brief_key(dungeon_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (dungeon_name or "").lower()).strip("-")
+    return f"{GUIDE_BRIEF_PREFIX}:{slug}"
+
+
+def _item_tags(names: list[str]) -> str:
+    tags = [f"[item:{name}]" for name in names if name]
+    return ("\n\n" + " ".join(tags)) if tags else ""
+
+
+_ITEM_TAG = re.compile(r"\[(?:item|sprite):[^\]]+\]", re.I)
+_WIKI_LINK = re.compile(
+    r"\[([^\]]+)\]\((?:https?://(?:www\.)?realmeye\.com)?/wiki/[^)]+\)",
+    re.I,
+)
+
+
+def _strip_item_card_hooks(text: str) -> str:
+    """Keep readable names; drop hooks that fan out dozens of item-card fetches."""
+    cleaned = _ITEM_TAG.sub("", text or "")
+    cleaned = _WIKI_LINK.sub(r"\1", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+_WIKI_CHROME = re.compile(
+    r"(?im)^(?:This page is currently a work in progress\.?|"
+    r"The .+? Guide is currently a work in progress\.?|"
+    r"Last updated:.*|"
+    r"Contents|"
+    r"Back to top|"
+    r"For details pertaining to the version.+|"
+    r"WIP)\s*$"
+)
+_WIKI_TITLE_TAIL = re.compile(r"\s*[-–—]\s*the RotMG Wiki.*$", re.I | re.M)
+_INSTRUCTION_VOICE = re.compile(
+    r"(?im)^.*("
+    r"do not mention wings|"
+    r"do not list (?:the )?bridge sentinel|"
+    r"do not tell players|"
+    r"never call it|"
+    r"never emit|"
+    r"these override realmeye|"
+    r"do not write separate sections|"
+    r"that mechanic is regular"
+    r").*$"
+)
+
+
+def _strip_wiki_chrome(text: str) -> str:
+    """Keep RealmEye prose. Drop navigation, WIP banners, and update stamps."""
+    cleaned = _WIKI_TITLE_TAIL.sub("", text or "")
+    cleaned = "\n".join(
+        line
+        for line in cleaned.splitlines()
+        if not _WIKI_CHROME.match(line.strip())
+        and not _INSTRUCTION_VOICE.match(line.strip())
+    )
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+_HM_PLAYER_NOTES = (
+    "To keep hardmode, kill the Source (the purple dome) on the way to "
+    "Nox the Wild Shadow. After the dome, drag all 4 branches to the center.",
+    "Hard Mode bosses are Valen the Unbreakable, then Nox the Wild Shadow, "
+    "then King Azamoth and The Shattered Queen.",
+    "Before Valen, kill the Stone Idol by finding the Void Phantasm. "
+    "Do not break all 8 monuments until the Idol is dead.",
+    "The Azamoth fight takes almost twice as long as regular Shatters and "
+    "needs heavy damage for The Shattered Queen.",
+    "Chrysalis of Eternity is a very low chance from King Azamoth.",
+)
+
+
+def _clean_drop_name(raw: str) -> str:
+    name = re.sub(r"\b(drop|drops|from|locations?)\b", "", raw or "", flags=re.I)
+    return re.sub(r"[?.!]+$", "", name).strip(" \t-")
+
+
+def _shiny_divine_item_name(message: str) -> Optional[str]:
+    """Single item from 'show me a shiny divine Crown'. Not a four-slot set."""
+    if extract_set_item_names(message or ""):
+        return None
+    match = _SHINY_DIVINE_ITEM.search((message or "").strip())
+    if not match:
+        return None
+    name = re.sub(r"\b(item|sprite|set|loadout)\b", "", match.group(1), flags=re.I)
+    name = re.sub(r"[?.!]+$", "", name).strip(" \t-")
+    if not name or len(name) > 80:
+        return None
+    return name
+
+
+async def _shiny_divine_reply(
+    redis: aioredis.Redis, message: str, ttl: int
+) -> Optional[StoredReply]:
+    name = _shiny_divine_item_name(message)
+    if not name:
+        return None
+    item = await read_cached_item(redis, name)
+    if item is None:
+        try:
+            resolved = await resolve_item_query(
+                redis, name, ttl_seconds=ttl, allow_scrape=False
+            )
+        except Exception:
+            resolved = None
+        if resolved:
+            item = await read_cached_item(redis, resolved)
+            title = item.name if item else resolved
+        else:
+            title = name
+    else:
+        title = item.name
+    return StoredReply(
+        text=f"[loadout shiny divine]\n[item:{title}]",
+        kind="shiny",
+        key=f"item:profile:v3:{title.lower()}",
+    )
+
+
+async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional[StoredReply]:
+    match = _DROP.search((message or "").strip())
+    if not match:
+        return None
+    raw = next((group for group in match.groups() if group), "")
+    name = _clean_drop_name(raw)
+    if not name or len(name) > 80:
+        return None
+    lookup = name
+    try:
+        resolved = await resolve_item_query(
+            redis, name, ttl_seconds=ttl, allow_scrape=False
+        )
+        if resolved:
+            lookup = resolved
+    except Exception:
+        lookup = name
+    item = await read_cached_item(redis, lookup)
+    if item is None:
+        return None
+    drops = [d for d in (item.drop_locations or []) if d]
+    if not drops:
+        body = (
+            f"**{item.name}** is in the wiki store, but this profile has no "
+            f"drop locations yet. Check {item.wiki_url or 'RealmEye'}."
+        )
+    else:
+        lines = "\n".join(f"- {place}" for place in drops[:12])
+        body = f"**{item.name}** drops from:\n{lines}"
+    return StoredReply(
+        text=body + _item_tags([item.name]),
+        kind="drop",
+        key=f"item:profile:v3:{item.name.lower()}",
+    )
+
+
+async def _slot_reply(redis: aioredis.Redis, message: str) -> Optional[StoredReply]:
+    match = _SLOT.search(message or "")
+    if not match:
+        return None
+    class_name, stat, _buildish = parse_query(message)
+    if class_name and stat:
+        return None
+    slug = _SLOT_SLUG.get(match.group(1).lower())
+    if not slug:
+        return None
+    raw = await redis.get(f"{HUB_PREFIX}:{slug}")
+    if not raw:
+        return None
+    try:
+        rows = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    names: list[str] = []
+    for row in rows:
+        name = (row.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+        if len(names) >= 6:
+            break
+    if not names:
+        return None
+    label = slug.replace("-", " ")
+    lines = "\n".join(f"- {name}" for name in names)
+    return StoredReply(
+        text=f"Top **{label}** from the warmed RealmEye hub:\n{lines}"
+        + _item_tags(names),
+        kind="slot",
+        key=f"{HUB_PREFIX}:{slug}",
+    )
+
+
+async def _build_reply(
+    redis: aioredis.Redis, message: str, history: Optional[list[str]]
+) -> Optional[StoredReply]:
+    class_name, stat, buildish = parse_query(message, history=history)
+    if not (buildish and class_name and stat):
+        return None
+    if class_name not in CLASS_ABILITY_HUB:
+        return None
+    key = build_brief_key(class_name, stat)
+    raw = await redis.get(key)
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+        text = (payload.get("text") or "").strip()
+    except json.JSONDecodeError:
+        text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    if not text:
+        return None
+    return StoredReply(text=text, kind="build", key=key)
+
+
+async def _guide_reply(
+    redis: aioredis.Redis, message: str, history: Optional[list[str]], ttl: int
+) -> Optional[StoredReply]:
+    dungeon = extract_dungeon_query(message, history=history)
+    if not dungeon:
+        return None
+    key = guide_brief_key(dungeon)
+    raw = await redis.get(key)
+    if raw:
+        try:
+            payload = json.loads(raw)
+            text = (payload.get("text") or "").strip()
+        except json.JSONDecodeError:
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+        if text:
+            return StoredReply(text=_strip_item_card_hooks(text), kind="guide", key=key)
+    composed = await _compose_guide_brief(redis, dungeon, ttl)
+    if not composed:
+        return None
+    await _write_brief(redis, key, composed, ttl, kind="guide")
+    return StoredReply(text=composed, kind="guide", key=key)
+
+
+async def _compose_guide_brief(
+    redis: aioredis.Redis, dungeon: str, ttl: int
+) -> Optional[str]:
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl, cache_only=True
+        )
+    except Exception:
+        return None
+    if not entries:
+        return None
+    matches = match_index_pages(dungeon, entries)
+    pages: list[dict] = []
+    for entry in matches:
+        page = await get_or_scrape_wiki(
+            redis,
+            entry.get("slug") or "",
+            ttl_seconds=ttl,
+            cache_only=True,
+        )
+        if page:
+            pages.append(page)
+    if not pages:
+        return None
+    hm = _is_hardmode_shatters(dungeon)
+    hm_pages = [
+        p
+        for p in pages
+        if re.search(r"^Hard Mode\s*$", p.get("text") or "", re.I | re.M)
+    ]
+    guide_pages = [
+        p
+        for p in pages
+        if (p.get("url") or "").rsplit("/", 1)[-1].endswith("-guide")
+    ]
+    # One RealmEye page, not a Claude essay. The wiki is the reply store.
+    use_pages = (hm_pages[:1] if hm else None) or (guide_pages[:1] or pages[:1])
+    chunks = [f"# {dungeon.strip().title()}"]
+    for page in use_pages:
+        focused = _focus_text(
+            page.get("text") or "", dungeon, include_lead=not hm
+        )
+        title = _WIKI_TITLE_TAIL.sub("", page.get("title") or page.get("slug") or "Guide")
+        body = _strip_wiki_chrome(focused)
+        if body:
+            chunks.append(f"## {title.strip()}\n{body}")
+    if hm:
+        chunks.append(
+            "Hardmode notes:\n" + "\n".join(f"- {note}" for note in _HM_PLAYER_NOTES)
+        )
+    text = _strip_item_card_hooks("\n\n".join(chunks))
+    return text[:GUIDE_MAX_CHARS] if text else None
+
+
+async def try_stored_reply(
+    redis: aioredis.Redis,
+    message: str,
+    *,
+    history: Optional[list[str]] = None,
+    ttl_seconds: int,
+    has_attachment: bool = False,
+) -> Optional[StoredReply]:
+    """Return a ready reply, or None if this turn still needs Claude."""
+    if has_attachment or not (message or "").strip():
+        return None
+    if is_constrained(message):
+        return None
+    if extract_player_ign(message):
+        return None
+    skin = await _skin_reply(
+        redis, message, history=history, ttl_seconds=ttl_seconds
+    )
+    if skin:
+        return skin
+
+    shiny = await _shiny_divine_reply(redis, message, ttl_seconds)
+    if shiny:
+        return shiny
+
+    drop = await _drop_reply(redis, message, ttl_seconds)
+    if drop:
+        return drop
+    guide = await _guide_reply(redis, message, history, ttl_seconds)
+    if guide:
+        return guide
+    if _EARLY.search(message or ""):
+        return StoredReply(text=_EARLY_TEXT, kind="early")
+    slot = await _slot_reply(redis, message)
+    if slot:
+        return slot
+    return await _build_reply(redis, message, history)
+
+
+async def maybe_mint_brief(
+    redis: aioredis.Redis,
+    message: str,
+    reply: str,
+    *,
+    history: Optional[list[str]] = None,
+    ttl_seconds: int,
+) -> Optional[str]:
+    """Persist a solid Claude build reply for the next identical ask.
+
+    Dungeon how-tos stay on the warmed RealmEye page. Do not mint a model
+    rewrite over that source.
+    """
+    if is_constrained(message) or not (reply or "").strip():
+        return None
+    if extract_dungeon_query(message, history=history):
+        return None
+    text = reply.strip()[:MAX_BRIEF_CHARS]
+    class_name, stat, buildish = parse_query(message, history=history)
+    if not (buildish and class_name and stat):
+        return None
+    key = build_brief_key(class_name, stat)
+    if await redis.get(key):
+        return None
+    await _write_brief(redis, key, text, ttl_seconds, kind="build")
+    return key
+
+
+async def _write_brief(
+    redis: aioredis.Redis,
+    key: str,
+    text: str,
+    ttl_seconds: int,
+    *,
+    kind: str,
+) -> None:
+    payload = json.dumps(
+        {"text": text, "kind": kind, "minted_at": int(time.time())}
+    )
+    await redis.setex(key, ttl_seconds, payload)
+    await redis.sadd(BRIEF_INDEX_KEY, key)
+    logger.bind(key=key, kind=kind).info("Stored RealmPal brief")
+
+
+async def invalidate_briefs(redis: aioredis.Redis) -> int:
+    """Drop minted briefs so weekly wiki refresh cannot leave stale essays."""
+    keys = list(await redis.smembers(BRIEF_INDEX_KEY) or [])
+    removed = 0
+    if keys:
+        removed = await redis.delete(*keys)
+    await redis.delete(BRIEF_INDEX_KEY)
+    logger.bind(removed=removed).info("Invalidated stored briefs")
+    return int(removed or 0)

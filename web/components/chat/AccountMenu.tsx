@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PlayerProfile } from "@/lib/api";
-import { AUTH_CHANGED_EVENT, clearAuthToken, decodeAuthEmail } from "@/lib/api";
+import { AUTH_CHANGED_EVENT, clearAuthToken, decodeAuthEmail, decodeAuthIgn } from "@/lib/api";
+import { BillingModal } from "./BillingModal";
 import { GuestAvatar } from "./GuestAvatar";
 
 function SettingsIcon({ size = 16 }: { size?: number }) {
@@ -19,6 +20,15 @@ function BellIcon({ size = 16 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
       <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
+function BillingIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+      <line x1="1" y1="10" x2="23" y2="10" />
     </svg>
   );
 }
@@ -108,17 +118,20 @@ export function AccountMenu({
   triggerClassName = "",
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [showBilling, setShowBilling] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
+  const [ign, setIgn] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   useEffect(() => {
-    function syncEmail() {
+    function syncAuth() {
       setEmail(decodeAuthEmail());
+      setIgn(decodeAuthIgn());
     }
-    syncEmail();
-    window.addEventListener(AUTH_CHANGED_EVENT, syncEmail);
-    return () => window.removeEventListener(AUTH_CHANGED_EVENT, syncEmail);
+    syncAuth();
+    window.addEventListener(AUTH_CHANGED_EVENT, syncAuth);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, syncAuth);
   }, []);
 
   useEffect(() => {
@@ -152,10 +165,12 @@ export function AccountMenu({
   function handleLogout() {
     clearAuthToken();
     setEmail(null);
+    setIgn(null);
     setOpen(false);
   }
 
   const isSignedIn = Boolean(email);
+  const primaryLabel = isSignedIn ? ign || email || "Account" : "Guest";
 
   return (
     <div ref={containerRef} className="relative inline-flex w-full">
@@ -169,9 +184,12 @@ export function AccountMenu({
       >
         <GuestAvatar pet={pet} size={size} />
         {showLabel && (
-          <span className="text-sm font-medium text-[#ececec] truncate">
-            {isSignedIn ? email : "Guest"}
-          </span>
+          <div className="min-w-0 flex-1 text-left">
+            <p className="text-sm font-medium text-[#ececec] truncate">{primaryLabel}</p>
+            {isSignedIn && ign && email ? (
+              <p className="text-xs text-[#737373] truncate">{email}</p>
+            ) : null}
+          </div>
         )}
       </button>
 
@@ -186,11 +204,13 @@ export function AccountMenu({
             <GuestAvatar pet={pet} size={40} />
             <div className="min-w-0">
               <p className="text-sm font-semibold text-[#ececec] truncate">
-                {isSignedIn ? "RealmPal account" : "Guest"}
+                {isSignedIn ? primaryLabel : "Guest"}
               </p>
-              <p className="text-xs text-[#737373] truncate">
-                {isSignedIn ? email : "Not signed in"}
-              </p>
+              {isSignedIn && ign && email ? (
+                <p className="text-xs text-[#737373] truncate">{email}</p>
+              ) : !isSignedIn ? (
+                <p className="text-xs text-[#737373] truncate">Not signed in</p>
+              ) : null}
             </div>
           </div>
 
@@ -199,6 +219,7 @@ export function AccountMenu({
           {isSignedIn ? (
             <>
               <MenuItem icon={<SettingsIcon />} label="Settings" onClick={() => { setOpen(false); router.push("/account/settings"); }} />
+              <MenuItem icon={<BillingIcon />} label="Billing" onClick={() => { setOpen(false); setShowBilling(true); }} />
               <MenuItem icon={<BellIcon />} label="Notifications" onClick={() => { setOpen(false); router.push("/account/notifications"); }} />
               <div className="border-t border-[#303030] my-1" />
               <MenuItem icon={<LogoutIcon />} label="Log out" onClick={handleLogout} danger />
@@ -211,6 +232,8 @@ export function AccountMenu({
           )}
         </div>
       )}
+
+      {showBilling && <BillingModal onClose={() => setShowBilling(false)} />}
     </div>
   );
 }

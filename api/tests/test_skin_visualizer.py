@@ -1,0 +1,182 @@
+"""Skin visualizer query detection and outfit parsing."""
+import json
+
+import pytest
+
+from api.services.skin_visualizer import (
+    compose_skin_stored_reply,
+    extract_outfit_query,
+    is_skin_visualize_query,
+)
+
+
+def test_look_like_with_cloth_is_skin_query():
+    msg = "What does Vampire Slayer Archer look like with Large Crown cloth?"
+    assert is_skin_visualize_query(msg)
+
+
+def test_extract_vampire_slayer_archer_outfit():
+    msg = "What does Vampire Slayer Archer look like with Large Crown cloth?"
+    query = extract_outfit_query(msg)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown cloth"
+    assert query.accessory is None
+
+
+def test_ambiguous_crown_cloth_defaults_large():
+    msg = "What does Vampire Slayer Archer look like with crown cloth?"
+    query = extract_outfit_query(msg)
+    assert query.clothing == "Large crown cloth"
+
+
+def test_followup_small_black_dye_is_skin_query():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+    ]
+    msg = "Let me see with small black dye"
+    assert is_skin_visualize_query(msg, history=history)
+
+
+def test_followup_extracts_merged_outfit():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+    ]
+    msg = "Let me see with small black dye"
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown cloth"
+    assert query.accessory == "small black dye"
+
+
+def test_followup_uses_skin_token_history():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|]\n\nComposited from RealmEye.",
+    ]
+    query = extract_outfit_query("Let me see with small black dye", history=history)
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown Cloth"
+    assert query.accessory == "small black dye"
+
+
+def test_large_and_small_crown_cloth():
+    msg = "What does Vampire Slayer Archer look like with Large and small Crown cloth?"
+    query = extract_outfit_query(msg)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown cloth"
+    assert query.accessory == "Small Crown cloth"
+
+
+def test_followup_black_dye_on_the_other():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|]",
+    ]
+    msg = "Let me see with black dye on the other"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown Cloth"
+    assert query.accessory == "black dye"
+
+
+def test_followup_what_does_it_look_like_if_i_use_small_black_dye():
+    history = [
+        "What does Vampire Slayer Archer look like with Large and small Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|Small Crown Cloth]",
+    ]
+    msg = "What does it look like if I use small black dye"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown Cloth"
+    assert query.accessory == "small black dye"
+
+
+def test_followup_black_dye_accessory_keeps_skin():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|]",
+    ]
+    msg = "black dye accessory"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Large Crown Cloth"
+    assert query.accessory == "black dye"
+
+
+def test_large_and_small_black_dye():
+    msg = "What does Vampire Slayer Archer look like with Large and small black dye?"
+    query = extract_outfit_query(msg)
+    assert query.clothing == "Large black dye"
+    assert query.accessory == "Small black dye"
+
+
+def test_followup_now_switch_swaps_slots():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|Black Accessory Dye]",
+    ]
+    msg = "Now switch"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing == "Black Clothing Dye"
+    assert query.accessory == "Small Crown Cloth"
+
+
+def test_swap_the_cloth_and_dye_converts_sizes():
+    history = [
+        "[skin:Archer|Vampire Slayer|Large Crown Cloth|Black Accessory Dye]",
+    ]
+    query = extract_outfit_query("Swap the cloth and dye", history=history)
+    assert query.clothing == "Black Clothing Dye"
+    assert query.accessory == "Small Crown Cloth"
+
+
+def test_set_visualize_not_skin_query():
+    msg = "Show me a shiny divine Huntress set"
+    assert not is_skin_visualize_query(msg)
+
+
+@pytest.mark.asyncio
+async def test_compose_skin_stored_reply_includes_token(redis_client, anon_settings):
+    catalog = {
+        "classes": [
+            {
+                "id": 3,
+                "name": "Archer",
+                "skins": [{"id": 42, "name": "Vampire Slayer"}],
+            }
+        ],
+        "clothing": [{"id": 7, "name": "Large Crown Cloth"}],
+        "accessory": [],
+    }
+    await redis_client.set("outfit:catalog:v1", json.dumps(catalog))
+    portrait_json = json.dumps(
+        {
+            "class_name": "Archer",
+            "class_id": 3,
+            "skin_name": "Vampire Slayer",
+            "skin_id": 42,
+            "clothing": {"name": "Large Crown Cloth", "item_id": 7},
+            "accessory": None,
+            "portrait_data_uri": "data:image/png;base64,abc",
+            "realmeye_url": "https://example.com/outfit",
+        }
+    )
+    await redis_client.set("outfit:portrait:v1:3:42:7:0", portrait_json)
+
+    msg = "What does Vampire Slayer Archer look like with Large Crown cloth?"
+    text = await compose_skin_stored_reply(
+        redis_client, msg, ttl_seconds=anon_settings.wiki_ttl_seconds
+    )
+    assert "[skin:Archer|Vampire Slayer|Large Crown Cloth|]" in text
+    assert "RealmEye" in text

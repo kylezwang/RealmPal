@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { CharacterStats, CharacterSummary, EquipmentItem, ExaltationEntry, PlayerProfile } from "@/lib/api";
 import { fetchPlayer } from "@/lib/api";
 import { SpriteIcon, ShinyStar, isShinyTooltip, DIAMOND_FRAME_OFFSET_PX } from "./SpriteIcon";
+import { SpriteZoomTrigger } from "./SpriteZoom";
 import { PetSprite } from "./PetCompanion";
 import { FAME_SPRITE } from "@/lib/sprites";
 
@@ -119,7 +120,7 @@ function CharacterRow({
     character.sprite_y != null &&
     character.sprite_width != null;
 
-  return (
+  const row = (
     <div className="flex items-center gap-3 rounded-xl bg-[#212121] border border-[#333333] px-3 py-2.5">
       {hasSprite ? (
         <SpriteIcon
@@ -129,7 +130,7 @@ function CharacterRow({
           nativeWidth={character.sprite_width!}
           nativeHeight={character.sprite_height ?? character.sprite_width!}
           displaySize={44}
-          alt={character.class_name}
+          alt=""
         />
       ) : (
         <div className="w-11 h-11 flex items-center justify-center text-xl flex-shrink-0" aria-hidden="true">
@@ -159,7 +160,8 @@ function CharacterRow({
                 href={character.place_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-[#ececec] hover:underline"
+                className="relative z-10 hover:text-[#ececec] hover:underline"
+                onClick={(e) => e.stopPropagation()}
               >
                 Rank #{character.place.toLocaleString()}
               </a>
@@ -183,13 +185,24 @@ function CharacterRow({
             />
           )}
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 relative z-10">
           {Array.from({ length: EQUIPMENT_SLOTS }, (_, i) => character.equipment?.[i]).map((item, i) =>
             item ? <EquipmentIcon key={i} item={item} /> : <EmptyEquipmentSlot key={i} />
           )}
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <SpriteZoomTrigger
+      details={{ title: character.class_name }}
+      direct
+      preview="card"
+      className="block w-full"
+    >
+      {row}
+    </SpriteZoomTrigger>
   );
 }
 
@@ -207,50 +220,64 @@ function EquipmentIcon({ item }: { item: EquipmentItem }) {
     !!item.slot_sprite_size;
   const diamondX = hasSlot ? diamondSlotX(item.slot_sprite_x!) : null;
 
-  // RealmEye's own item icons link out to that item's wiki page | scraped
-  // straight off each `.item-wrapper`'s inner <a href="/wiki/...">.
-  const Stage = item.wiki_url ? "a" : "div";
-  const stageProps = item.wiki_url
-    ? { href: item.wiki_url, target: "_blank", rel: "noopener noreferrer" }
-    : {};
-
   return (
-    <div className="group relative">
-      {/* Stage so the slot frame and item icon stack exactly on top of each
-       * other, matching RealmEye's rarity-tiered decoration (e.g. Divine's
-       * 4 gold diamonds). The diamonds sit at the icon's corners over
-       * mostly-transparent pixels, so they need to paint *after* (on top
-       * of) the item icon to actually show, rather than being hidden
-       * underneath it. */}
-      <Stage
-        className="relative block"
-        style={{ width: EQUIPMENT_ICON_SIZE, height: EQUIPMENT_ICON_SIZE }}
-        {...stageProps}
+    <div className="group relative z-10">
+      <SpriteZoomTrigger
+        source={{
+          kind: "sheet",
+          sheetUrl: item.sprite_sheet_url,
+          x: item.sprite_x,
+          y: item.sprite_y,
+          nativeSize: item.sprite_size,
+          alt: item.name,
+        }}
+        details={{
+          title: item.name,
+          wikiUrl: item.wiki_url,
+          caption: item.tooltip,
+          glow: item.glow_color,
+          shiny: isShinyTooltip(item.tooltip),
+          slotFrame:
+            diamondX != null
+              ? {
+                  sheetUrl: item.slot_sprite_sheet_url!,
+                  x: diamondX,
+                  y: item.slot_sprite_y!,
+                  nativeSize: item.slot_sprite_size!,
+                }
+              : undefined,
+        }}
+        className="relative z-10 block"
       >
-        <SpriteIcon
-          sheetUrl={item.sprite_sheet_url}
-          x={item.sprite_x}
-          y={item.sprite_y}
-          nativeSize={item.sprite_size}
-          displaySize={EQUIPMENT_ICON_SIZE}
-          alt={item.name}
-          className={`absolute inset-0 ${item.wiki_url ? "cursor-pointer" : "cursor-default"}`}
-          style={item.glow_color ? { filter: `drop-shadow(${item.glow_color} 0 0 2px)` } : undefined}
-        />
-        {diamondX != null && (
+        <span
+          className="relative block"
+          style={{ width: EQUIPMENT_ICON_SIZE, height: EQUIPMENT_ICON_SIZE }}
+        >
           <SpriteIcon
-            sheetUrl={item.slot_sprite_sheet_url!}
-            x={diamondX}
-            y={item.slot_sprite_y!}
-            nativeSize={item.slot_sprite_size!}
+            sheetUrl={item.sprite_sheet_url}
+            x={item.sprite_x}
+            y={item.sprite_y}
+            nativeSize={item.sprite_size}
             displaySize={EQUIPMENT_ICON_SIZE}
             alt=""
-            className="absolute pointer-events-none"
-            style={{ top: DIAMOND_FRAME_OFFSET_PX, left: DIAMOND_FRAME_OFFSET_PX }}
+            className="absolute inset-0 pointer-events-none"
+            style={item.glow_color ? { filter: `drop-shadow(${item.glow_color} 0 0 2px)` } : undefined}
           />
-        )}
-        {isShinyTooltip(item.tooltip) && <ShinyStar size={10} />}
-      </Stage>
+          {diamondX != null && (
+            <SpriteIcon
+              sheetUrl={item.slot_sprite_sheet_url!}
+              x={diamondX}
+              y={item.slot_sprite_y!}
+              nativeSize={item.slot_sprite_size!}
+              displaySize={EQUIPMENT_ICON_SIZE}
+              alt=""
+              className="absolute pointer-events-none"
+              style={{ top: DIAMOND_FRAME_OFFSET_PX, left: DIAMOND_FRAME_OFFSET_PX }}
+            />
+          )}
+          {isShinyTooltip(item.tooltip) && <ShinyStar size={10} />}
+        </span>
+      </SpriteZoomTrigger>
       {/* Hover tooltip, same idea as RealmEye's own item hover popover */}
       <div
         className="pointer-events-none absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-1.5
@@ -367,7 +394,7 @@ function ExaltationRow({ exaltation }: { exaltation: ExaltationEntry }) {
     exaltation.sprite_y != null &&
     exaltation.sprite_width != null;
 
-  return (
+  const row = (
     <div className="flex items-center gap-3 rounded-xl bg-[#212121] border border-[#333333] px-3 py-2">
       {hasSprite ? (
         <SpriteIcon
@@ -377,7 +404,7 @@ function ExaltationRow({ exaltation }: { exaltation: ExaltationEntry }) {
           nativeWidth={exaltation.sprite_width!}
           nativeHeight={exaltation.sprite_height ?? exaltation.sprite_width!}
           displaySize={36}
-          alt={exaltation.class_name}
+          alt=""
         />
       ) : (
         <div className="w-9 h-9 flex items-center justify-center text-lg flex-shrink-0" aria-hidden="true">
@@ -410,5 +437,16 @@ function ExaltationRow({ exaltation }: { exaltation: ExaltationEntry }) {
         })}
       </div>
     </div>
+  );
+
+  return (
+    <SpriteZoomTrigger
+      details={{ title: exaltation.class_name }}
+      direct
+      preview="card"
+      className="block w-full"
+    >
+      {row}
+    </SpriteZoomTrigger>
   );
 }
