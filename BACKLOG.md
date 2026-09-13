@@ -180,18 +180,21 @@ Floor margin is better than the old 90-reply (~`$3.29`–`$3.69`) read (~`$1.70`
 |---|---|---|---|
 | **300 msgs/mo** (burn ~10/day) | 90 | **22** × `$0.08` = `$1.76` rev; cost `$0.80`–`$0.90`; **profit ~`$0.86`–`$0.96`** | **15** × `$0.08` = `$1.20` rev; cost `$0.55`–`$0.62`; **profit ~`$0.58`–`$0.65`** |
 | **450 msgs/mo** (burn ~15/day) | 135 | **67** × `$0.08` = `$5.36` rev; cost `$2.45`–`$2.75`; **profit ~`$2.61`–`$2.91`** | **60** × `$0.08` = `$4.80` rev; cost `$2.19`–`$2.46`; **profit ~`$2.34`–`$2.61`** |
+| **600 msgs/mo** (burn ~20/day) | 180 | **112** × `$0.08` = `$8.96` rev; cost `$4.09`–`$4.59`; **profit ~`$4.37`–`$4.87`** | **105** × `$0.08` = `$8.40` rev; cost `$3.83`–`$4.31`; **profit ~`$4.09`–`$4.57`** |
 
-**Stack the two layers** (base is unchanged; PAYG adds). “Per day” here is only burn speed: a heavy user can empty the `$2.50` / `$2.75` balance before month-end and live on PAYG sooner.
+**Stack for the preferred `$2.50` included budget** (base `$2.90` is unchanged; PAYG adds). Needs a spend cap high enough: 450 ≈ `$5.36` PAYG, 600 ≈ `$8.96` PAYG (default `$0` / `$5` caps stop earlier).
 
-| | `$2.50` budget @ 300 msgs | `$2.50` @ 450 msgs | `$2.75` @ 300 msgs | `$2.75` @ 450 msgs |
-|---|---|---|---|---|
-| Layer 1: base `$7` after included Claude | **`$2.90`** / user (**`$290`** / 100) | same | **`$2.65`** / user (**`$265`** / 100) | same |
-| Layer 2: PAYG profit | **~`$0.86`–`$0.96`** | **~`$2.61`–`$2.91`** | **~`$0.58`–`$0.65`** | **~`$2.34`–`$2.61`** |
-| **Total left / user** | **~`$3.76`–`$3.86`** | **~`$5.51`–`$5.81`** | **~`$3.23`–`$3.30`** | **~`$4.99`–`$5.26`** |
-| **Total left / 100** | **~`$376`–`$386`** | **~`$551`–`$581`** | **~`$323`–`$330`** | **~`$499`–`$526`** |
-| User pays | `$7` + ~`$1.76` ≈ **`$8.76`** | `$7` + ~`$5.36` ≈ **`$12.36`** | `$7` + ~`$1.20` ≈ **`$8.20`** | `$7` + ~`$4.80` ≈ **`$11.80`** |
+| `$2.50` included + PAYG | 300 msgs (~10/day) | 450 msgs (~15/day) | 600 msgs (~20/day) |
+|---|---|---|---|
+| Layer 1: base `$7` | **`$2.90`** / user (**`$290`** / 100) | same | same |
+| Layer 2: PAYG profit | **~`$0.86`–`$0.96`** | **~`$2.61`–`$2.91`** | **~`$4.37`–`$4.87`** |
+| **Total left / user** | **~`$3.76`–`$3.86`** | **~`$5.51`–`$5.81`** | **~`$7.27`–`$7.77`** |
+| **Total left / 100** | **~`$376`–`$386`** | **~`$551`–`$581`** | **~`$727`–`$777`** |
+| User pays | `$7` + ~`$1.76` ≈ **`$8.76`** | `$7` + ~`$5.36` ≈ **`$12.36`** | `$7` + ~`$8.96` ≈ **`$15.96`** |
 
-So: **`$2.50`** leaves more base margin (`$2.90` vs `$2.65`) and hits PAYG a bit sooner; **`$2.75`** is slightly more generous on included Claude and still ~`$2.65` base after Stripe/host. Both beat sizing the sticker as if it ate ~`$3.30`–`$3.70` of Claude. Pick the product reply count to match the budget you want (`paid_claude_included` ≈ 65–70 for `$2.50`, ≈ 70–75 for `$2.75`), not “90 forever.”
+(For comparison, `$2.75` base is `$2.65`/user; at 300/450/600 PAYG profit is ~`$0.58`–`$0.65` / ~`$2.34`–`$2.61` / ~`$4.09`–`$4.57`, so totals land ~`$0.25`–`$0.40` lower per user than `$2.50`.)
+
+So: **`$2.50`** leaves more base margin (`$2.90` vs `$2.65`) and hits PAYG a bit sooner; **`$2.75`** is slightly more generous on included Claude and still ~`$2.65` base after Stripe/host. Both beat sizing the sticker as if it ate ~`$3.30`–`$3.70` of Claude. Pick the product reply count to match the budget you want (`paid_claude_included` ≈ 65–70 for `$2.50`, ≈ 70–75 for `$2.75`), not “90 forever.” Heavier habits do not hurt the `$7` floor; they add PAYG margin on top.
 
 **Pricing implication (`$7` + included Claude budget + PAYG, not a `$10` sticker).** Size the sticker on layer 1 (included Sonnet budget + Stripe + hosting share). Meter power use on layer 2. Hosting gets cheaper per head as you grow; Claude does not.
 
@@ -199,8 +202,9 @@ So: **`$2.50`** leaves more base margin (`$2.90` vs `$2.65`) and hits PAYG a bit
 |---|---|---|
 | Base `$7` after **`$2.50`** Claude | **+`$290`** | Fatter floor; ~61–68 included replies. |
 | Base `$7` after **`$2.75`** Claude | **+`$265`** | Slightly more included; still strong floor. |
+| `$2.50` base + PAYG @ 300 msgs | **~`$376`–`$386`** | Light overage (~`$1.76` PAYG). |
 | `$2.50` base + PAYG @ 450 msgs | **~`$551`–`$581`** | Base `$290` plus PAYG ~`$261`–`$291`. |
-| `$2.75` base + PAYG @ 450 msgs | **~`$499`–`$526`** | Base `$265` plus PAYG ~`$234`–`$261`. |
+| `$2.50` base + PAYG @ 600 msgs | **~`$727`–`$777`** | Base `$290` plus PAYG ~`$437`–`$487`. |
 | `$7` with **no** pool (old sketch) | −`$15` to +`$45` | Break-even trap; do not size on this. |
 
 Keep guest 3 / free 5. Do not raise quotas to “make `$10` feel fair.” The token strategy is still skipping the model.
