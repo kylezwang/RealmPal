@@ -37,16 +37,18 @@ Dungeon how-tos: compose from warmed `wiki:guide:v6:` pages (`GUIDE_BRIEF_PREFIX
 
 Signed-in stored hits skip the daily free/guest meter. Guests still consume a daily message on a stored hit.
 
-Paid Claude is a monthly pool (`PAID_CLAUDE_INCLUDED` = 90). Stored hits do not count against the pool. After the pool, `$0.08`/reply up to a user spend cap (default $0) via `GET`/`POST /payments/on-demand`. Daily 200 remains the fuse. Paywall copy matches. Dismissing the $7 slide shows when the 5 daily free messages refresh.
+Paid Claude is a monthly pool (`PAID_CLAUDE_INCLUDED` = 68, about $2.50 of Claude at ~$0.0365/reply). Old 90 is replaced. Stored hits do not count against the pool. After the pool, `$0.08`/reply up to a user spend cap (default $0) via `GET`/`POST /payments/on-demand`. Daily fuse is 50 msgs/day (`paid_message_limit`). 70/30 stored/Claude is a success metric, not a hard quota. Paywall copy matches. Dismissing the $7 slide shows when the 5 daily free messages refresh.
+
+Unit-econ estimates: `docs/pricing.md` (local, gitignored). Chat quality traces: `docs/chat-quality-benchmarks.md`. Internal doc history: `.cursor/rules/doc-history.mdc` (keep dated prior text; do not overwrite). **Developer changelog:** `CHANGELOG.md` (technical details, breaking changes, migrations). **User-facing changelog:** `web/lib/changelog.ts` (UI only). **Project structure:** Only `README.md` and `BACKLOG.md` live at root; all other docs in `docs/` folder.
 
 ### Changelog / "what's new" — **done** (this session)
 
-`web/lib/changelog.ts` holds `CHANGELOG` (newest entry first) plus `LATEST_VERSION`, `hasUnseenChangelog()`, and `markChangelogSeen()` (keyed on a `localStorage` version string, no backend). `ChangelogModal.tsx` renders the list. Wired in three places: a minimal "What's new" button in the header cluster (dot badge while unseen) with an automatic first-load popup when the visitor hasn't seen `LATEST_VERSION`; a "Changelog" button on `/account/settings`. `.cursor/rules/changelog.mdc` (`alwaysApply`) tells future sessions to add a concise, user-facing entry for every deploy-worthy change and skip internal-only work.
+`web/lib/changelog.ts` holds `CHANGELOG` (newest entry first) plus `LATEST_VERSION`, `hasUnseenChangelog()`, and `markChangelogSeen()` (keyed on a `localStorage` version string, no backend). `ChangelogModal.tsx` renders the list. Wired in three places: a minimal "What's new" button in the header cluster (dot badge while unseen) with an automatic first-load popup when the visitor hasn't seen `LATEST_VERSION`; a "Changelog" button on `/account/settings`. `.cursor/rules/changelog.mdc` (`alwaysApply`) tells future sessions to add a concise, user-facing entry for every deploy-worthy change and skip internal-only work. `.cursor/rules/doc-history.mdc` (`alwaysApply`) tells sessions to keep dated prior text when updating `BACKLOG.md`, `README.md`, or `docs/`.
 
 ### Minimal UI fixes — done (this session)
 
 - Sidebar quick-suggestion prompts (Look up player / What does X look like with Y / Guide to complete Z) can now be collapsed. A small chevron button sits centered above the list in `ChatInterface.tsx`; click flips it and hides/shows the prompt list, remembered in `localStorage` (`realm_pal_suggestions_hidden`) so a visitor who hides them stays hidden on reload.
-- Usage meters removed from the chat header and sidebar (`0/90 Claude replies` no longer shown everywhere). Replaced with a clickable **Daily quests** percent bar that opens a quests modal (ask about the Shatters, see a shiny divine item, look up a player, and similar — three rotate each UTC day). Completing all grants +1 message on **free and paid** via `POST /chat/quests/claim`, once per day (free daily quota or paid included reply). Billing lives in the account menu → **Billing** popup. `GET /payments/billing` added. `DEBUG_UNLIMITED_IGNS` default cleared so Turbine behaves as a normal free account unless explicitly allowlisted in `.env`.
+- Usage meters removed from the chat header and sidebar (the old `0/90 Claude replies` chip, from when the pool was 90). Replaced with a clickable **Daily quests** percent bar that opens a quests modal (ask about the Shatters, see a shiny divine item, look up a player, and similar — three rotate each UTC day). Completing all grants +1 message on **free and paid** via `POST /chat/quests/claim`, once per day (free daily quota or paid included reply). Billing lives in the account menu → **Billing** popup. `GET /payments/billing` added. `DEBUG_UNLIMITED_IGNS` default cleared so Turbine behaves as a normal free account unless explicitly allowlisted in `.env`.
 - Lookup 429s on HMS guides: `/items` no longer spends the 12/min scrape window on warmed Redis hits. Chat no longer fans out every dungeon drop as an item-card fetch; stored guide briefs strip `[item:]` / wiki-link hooks so a minted HMS page cannot enqueue 20+ cards.
 - Daily quests modal: rotating dungeon (Shatters / Moonlight Village / …) with cached portal sprite, player lookup uses the user icon, shiny-divine shows a cached shiny sprite from `GET /chat/quests/art`.
 - Quests header: small `{percent}%` to the right of the progress bar.
@@ -69,6 +71,8 @@ Daily quests persist as `realm_pal_daily_quests:{email}` and `realm_pal_quest_sh
 ### PAYG / billing UI - **done** (this session)
 
 `api/services/claude_billing.py` + `billing_prefs.py`. Billing and spend-cap live in the account menu (`BillingModal`, `SpendingLimitModal`). Included pool and overage match the sketch below. This is no longer "new billing work."
+
+Stripe Checkout (`api/routers/payments.py` `/checkout`, and the legacy `_checkout_url_for` in `api/routers/chat.py`) both pass `payment_method_types=["card", "link"]` so the hosted checkout page offers Link (Stripe's own saved-payment-method flow), not just a bare card form. We do not build our own checkout page; Stripe's hosted page is "the paywall page" once someone clicks Upgrade. Its icon/color branding is a Stripe Dashboard business-branding setting, not code.
 
 ### Stored answers (notes)
 
@@ -95,98 +99,17 @@ Build order (all four shipped):
 
 Guest 3 / signed-in 5 per day stays. That is a trial, not a token strategy — the token strategy is skipping the model.
 
-**Chat quality benchmarks → stored-answer map** (same prompts as the table below). Almost all of them should skip Claude after minting; only live player lookups stay off this path.
+**Target mix: ~70% stored / ~30% Claude.** Success metric, not a hard quota. Meter Claude replies only. Stored hits stay $0.
 
-| Benchmark prompt | Stored? | How |
-|---|---|---|
-| Best attack Bard / Dex Huntress / Wis Mystic / Dex Samurai / Mana Mystic / Wis Kensei | **Yes** | `wiki:build:v1:{class}:{stat}`. Huntress appears twice in the log — one brief after mint. |
-| Guide to complete Hardmode Shatters | **Yes** | Wiki dump from warmed `wiki:guide:v6:` (`wiki:guide-brief:v2`). HM focuses the last Hard Mode heading, no regular-page lead. Keep the HMS fact: after the purple dome (the Source) on the clear to Nox, drag all 4 branches/flames to center; “wings” is regular Shatters. |
-| Where does X drop? (same family; not in the table) | **Yes** | Template from `item:profile:v3` `drop_locations` — no model. |
-| What does Vampire Slayer Archer look like with Large Crown Cloth? | **Mostly no model already** | Skin composite is code. Short chat text can be a template; that row burned ~$0.02 on unused wiki RAG — skip RAG on skin-only asks. |
-| Look up player Turbine | **No — keep live** | Player profiles go stale in minutes (`player_ttl_seconds` = 120). Do not store “the Turbine answer.” Still skip wiki RAG on player-only lookups (that row paid for unused chunks). |
+Rule of thumb: same question for every user (build, dungeon how-to, drops, best bows) → RealmPal brief. About **this player right now** → live scrape, keep it cheap. Constrained follow-ups (“no ST”, “white bag only”) still stream Claude. They do not replace the brief.
 
-Rule of thumb for implementers: same question for every user (build, dungeon how-to, drops, best bows) → RealmPal brief. About **this player right now** → live scrape, keep it cheap. Constrained follow-ups (“no ST”, “white bag only”) still stream Claude; they do not replace the brief.
+Chat quality traces and the stored-answer map: `docs/chat-quality-benchmarks.md`. Unit-econ estimates and the shipped 68 / $2.50 table: `docs/pricing.md` (local, gitignored).
 
-**Target mix: ~70% stored / ~30% Claude.** Recorded chat costs (10 traces) average **$0.0365**/msg; the eight build-style rows average **$0.041**. Stored hits are ~$0. After the mix, effective cost is **~$0.011**/msg (blended) or **~$0.012**/msg (if the 30% is always a build). First mint of a brief still costs a full Claude call; these numbers are the steady state.
+### History
 
-Why “$500 Claude” is already the 70/30 number, not all-Claude:
+#### Until Sep 13, 2026
 
-```
-100 paid × 15 msgs/day × 30 days = 45,000 messages
-70% stored  = 31,500 × $0     = $0
-30% Claude  = 13,500 × $0.0365 = $493   (or × $0.041 = $554)
-```
-
-All-Claude on that same habit would be 45,000 × $0.0365 = **~$1,640**. The mix already cuts ~$1,150. What’s left is still 13.5k real Sonnet calls at ~4¢. Per paying user that’s 450 msgs × $0.011 ≈ **$5 Claude on a $7 plan**.
-
-Quotas used below: guest **3**/day, signed-in free **5**/day, paid **200**/day (`paid_message_limit`). Each row is 100 people of **one** kind, every day for 30 days — not stacked 300 users. $20 `MONTHLY_COST_BUDGET_USD` is still a launch fuse.
-
-**200/day is not frequent use.** That is ~one message every 5 minutes for 16 hours, or a script. A real heavy RotMG day is a few sessions (player lookup, a couple of builds, a dungeon how-to, a follow-up) — call that **15–25**, not 200. Size cost and $7 on that band. Keep 200 as a kill switch only.
-
-| Cohort (100 people) | Per day | Msgs / mo | All-Claude @ $0.0365 | 70/30 @ $0.011 | 70/30 builds @ $0.012 |
-|---|---|---|---|---|---|
-| No account (guest) | 3 | 9,000 | ~$330 | **~$99** | **~$110** |
-| Free account | 5 | 15,000 | ~$550 | **~$165** | **~$185** |
-| Paid, light | 10 | 30,000 | ~$1,095 | **~$330** | **~$370** |
-| Paid, daily habit | 15 | 45,000 | ~$1,640 | **~$495** | **~$555** |
-| Paid, frequent / power evening | 25 | 75,000 | ~$2,740 | **~$825** | **~$900** |
-| Paid abuse cap (do not size on this) | 200 | 600,000 | ~$21,900 | **~$6,570** | **~$7,380** |
-
-Revenue: 100 × $7 = **$700**/mo. That covers the 15/day habit (~$495–555) with room. 25/day every day from all 100 starts to squeeze $7 (~$825–900) unless the stored share is better than 70% or they are not all power users. 100 × $4.99/mo annual (~$499) is break-even with the 15/day habit. Implementers: keep 70/30 as a **success metric** (share of `/chat/stream` that never calls the LLM).
-
-**Hosting is mostly fixed.** Same Azure stack whether 20 people or 100 use it. Launch SKUs (East US-ish list, 2026): Container Apps API min-1 replica, ~2 vCPU / 4 GiB for Playwright (~$50–80 if the replica is idle most of the day, ~$120–160 if Chromium keeps it “active”); Azure Cache for Redis Basic C1 1 GB for the wiki store (~$40; C0 250 MB is ~$16 if it fits); Qdrant Cloud free/starter or a tiny always-on container (~$0–25); Static Web Apps Free ($0; Standard ~$9); Files + Key Vault + egress (~$5). **Use ~$110/mo as the working hosting number** (cheap path ~$60, always-hot Playwright ~$180). Voyage embeddings on the 30% that still RAG are cents. Stripe (~$0.50 per $7 charge) is payment processing, not infra — ~$50 extra if 100 people pay.
-
-| 100 people at the average | Claude 70/30 | + hosting ~$110 | vs $7 revenue |
-|---|---|---|---|
-| Guests at 3/day | ~$100–110 | **~$210–220** | $0 |
-| Free accounts at 5/day | ~$165–185 | **~$275–295** | $0 |
-| Paid daily habit 15/day | ~$495–555 | **~$605–665** | **$700** — still covers |
-| Paid frequent 25/day | ~$825–900 | **~$935–1,010** | $700 — does not cover |
-
-If those three 100-person cohorts exist **at the same time** (300 people): Claude ~$760–850 + hosting ~$110 = **~$870–960/mo**, against **$700** from the paid hundred. Guests + free are the leak; they add ~$265–295 Claude and $0 revenue. Size the product on **paid habit + one hosting bill**, and treat guest/free as acquisition cost, not as three stacks.
-
-**Do not read ~$650 as hosting.** That row is Claude (~$500) + the $110 Azure bill. Hosting alone is still ~$110.
-
-Profit on **100 paid at 15/day, 70/30**, no guests/free stacked:
-
-| | |
-|---|---|
-| Revenue | **$700** |
-| Claude | −$495 to −$555 |
-| Hosting | −$110 |
-| Stripe (~$0.50 per $7) | −$50 |
-| **Left** | **about −$15 to +$45** |
-
-That is roughly break-even. The $7 covers tokens + lights, not a real margin, until either more than 100 pay (hosting does not grow 1:1), stored share beats 70%, or people chat less than 15/day. Annual $4.99 (~$499) loses money at this habit.
-
-**Pricing implication (shipped as $7 + PAYG, not a $10 sticker).** Per paying user at 15/day 70/30: ~$5 Claude + ~$0.50 Stripe + ~$1.10 hosting share ≈ **$6.60 cost on a $7 price**. Hosting gets cheaper per head as you grow; Claude does not. So “just get more users” does not fix a $5 token bill.
-
-| Price | 100 paid, 15/day, 70/30 (after Stripe + $110 host) | Notes |
-|---|---|---|
-| $7 / mo | −$15 to +$45 | Break-even. Current plan. |
-| $10 / mo | **+$230 to +$290** (~30%+) | Honest if the 15/day habit is real. |
-| $12 / mo | **+$420 to +$480** | Comfortable. Same “compute, not wiki” story. |
-| $4.99/mo annual | **−$200-ish** | Do not ship at this unit cost. |
-
-If real use lands closer to **10/day**, $7 already has ~$200 left on 100 people — raise later, not now. If 15/day sticks, charge **$10** (or $12) and keep guest 3 / free 5. Do not raise quotas to “make $10 feel fair”; the token strategy is still skipping the model.
-
-**Pay-as-you-go (Cursor-style) - shipped.** Flat $7 cannot be unlimited; the 200/day cap is a fuse, not a product. PAYG lets Pro keep going after an included Claude pool. Metered overage is live (`GET`/`POST /payments/on-demand`), not just copy.
-
-Meter **Claude replies**, not all messages. Stored hits stay $0 for them and for us. That is how 70/30 becomes a user-facing perk (“wiki answers don’t burn your pool”).
-
-Working $7 + on-demand sketch:
-
-| | |
-|---|---|
-| Subscription | **$7/mo** |
-| Included | **~80–100 Claude replies/mo** (~$3 of Sonnet). At 70/30 that’s ~9–11 mixed chats/day. |
-| After that | **$0.08 per Claude reply** (~2× the ~$0.037 cost). Stored still free. |
-| Spend cap | User-set monthly extra, default **$0** (stop) or **$5**. Cursor-style. No surprise $80 bill. |
-| Fuse | Keep **200 msgs/day** even with PAYG so a loop can’t print money in an hour. |
-
-A 15/day habit user (135 Claude replies/mo) pays $7 + ~35 extra × $0.08 ≈ **$7 + $2.80**. We take ~$2 extra margin on the tail; they never hit a wall. A 25/day power user pays more and we don’t eat it. Copy: “$7 includes a lot. Keep going on usage. Stored answers are free.” Not “unlimited for $7.”
-
-This is how $7 can stay the sticker and still not be a $1-profit trap: the subscription is the floor, power use is metered. Stored answers and PAYG both shipped this session, so the included pool is not eaten by drops and wiki dumps.
+The stored-answer map, 10-trace cost table, 70/30 cohort math, hosting estimates, unlimited-$7 break-even, and the working PAYG sketch (included **~80–100 / 90** Claude, daily fuse **200**) lived in this file. Copied in full to `docs/chat-quality-benchmarks.md` and `docs/pricing.md` the same day. Shipped product numbers became **68** Claude included (~$2.50) and a **50** msgs/day fuse. Old 90 is replaced.
 
 ---
 
@@ -285,22 +208,15 @@ First full warm (this machine): abilities 19/19, items 1255/1256, dungeons 179/1
 
 ## Chat quality base cases
 
-Starting traces for token + factual quality. More logs incoming.
-
-| Prompt | In / out | Cost | Notes |
-|---|---|---|---|
-| What does Vampire Slayer Archer look like with Large Crown Cloth? | 6,548 / 56 | $0.0205 | Two wiki RAG pulls (incl. unused Archer ability scaling). Composite is not LLM. |
-| Guide to complete Hardmode Shatters | 11,603 / 848 | $0.0475 | `context_chunks: 8`. Wiki RAG mixed regular Shatters (“wings”) into HMS. Item-card burst hit anonymous lookup 12/min (fetches were unauthenticated). |
-| Look up player Turbine | 4,139 / 94 | $0.0138 | Wiki RAG still ran for a player-only lookup. |
-| Best attack build for Bard (after player lookup) | 8,343 / 846 | $0.0377 | 15s to first token (`context_chunks: 18`). RAG glued prior “Look up player Turbine” into the query. Live wiki crawl held the one Chromium lock so item cards (Triangle, Doom Bow, Ritual Robe) queued. Curly-apostrophe slugs 8s-timed-out. Doom Bow leaked into a Bard takeaway. |
-| Best items for a Dex Huntress | 7,660 / 963 | $0.0374 | Wiki specialist cancelled so item cards could load. Answer missed the **2 DEX-scaling traps**. Chat must read the twice-weekly stored hub, not live-scrape. |
-| Best items for a Dex Huntress (stored hub) | 8,547 / 594 | $0.0346 | Fast. Named Lotus + Honeytomb. |
-| Best wis mystic build? | 9,426 / 981 | $0.0430 | No stored Mystic wiki (`answering from DPS boards`). Not on RealmShark. |
-| Best dex samurai build? | 9,077 / 813 | $0.0394 | RealmShark board present; no stored Samurai wiki. Invented Berserk on **Ryu's Blade** (Lotus effect leaked from the Huntress turn / global prompt). |
-| Best items for a Mana mystic (after warm) | 11,041 / 1,065 | $0.0491 | Fast chat. Item cards still live-scraped — they read `item:profile:v2` while warm wrote v3. Fixed; cards now prefer v3. |
-| Best items for a Wis Kensei (after v3 + warm) | 8,906 / 994 | $0.0416 | Chat + almost every card from Redis. Only Rift Rippers scraped. Grid showed Ninja leather (Hirejou Tenne, Venerable Coral Silk, Centaur's Shielding). Grid now filters `wearable=false`; comparison prose stays. |
+Traces and the stored-answer map now live in `docs/chat-quality-benchmarks.md`.
 
 **HMS fact to keep:** after the purple dome (the Source) on the clear to Nox (2nd boss), drag all 4 branches/flames to the center. “Wings” is regular The Shatters, not Hardmode.
+
+### History
+
+#### Until Sep 13, 2026
+
+The 10-row in/out/cost table lived in this section. Copied in full to `docs/chat-quality-benchmarks.md` the same day.
 
 Local tester: signed-in IGN **Turbine** skips chat + lookup quotas only when listed in `DEBUG_UNLIMITED_IGNS` with `DEBUG=true` (default is empty — normal free/paid testing).
 
@@ -333,6 +249,6 @@ This Cursor chat (**Stored-answer chat**): classify-then-Redis replies; Sonnet-f
 
 Run `pip install -r api/requirements-dev.txt` then `pytest` from repo root.
 
-Decisions already made: per-user accounts in one deployment; managed auth; $7 + PAYG (not a $10 sticker); anonymous free tier keyed on IP (3) vs signed-in (5); Azure-native deploy; SQLite until Azure Postgres; session in httpOnly cookies; global daily spend cap (~$20/month); 70/30 stored/Claude as the success metric.
+Decisions already made: per-user accounts in one deployment; managed auth; $7 + PAYG (not a $10 sticker); Pro included Claude = 68 (~$2.50), daily fuse = 50; anonymous free tier keyed on IP (3) vs signed-in (5); Azure-native deploy; SQLite until Azure Postgres; session in httpOnly cookies; global daily spend cap (~$20/month); 70/30 stored/Claude as the success metric.
 
 Do not continue Entra in a depleted session. Start the next one by reading this file, then Enchantment wiring + tests.
