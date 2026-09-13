@@ -19,7 +19,7 @@ Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com
 - **Daily quests** - three tasks a day in chat; finish the set for an extra message
 - **What's new** - in-app changelog from `web/lib/changelog.ts`
 - **RAG** - scraped wiki context indexed in Qdrant so Claude answers stay grounded
-- **Freemium** - 3 guest messages / 5 signed-in free messages per 24h, then $7/month via Stripe Checkout. Pro includes 90 Claude replies; stored wiki/build answers do not count (signed-in stored hits also skip the daily meter). Extra Claude is $0.08 with a user-set spend cap.
+- **Freemium** - 3 guest messages / 5 signed-in free messages per 24h, then $7/month via Stripe Checkout. Pro includes 68 Claude replies (about $2.50 of Claude); stored wiki/build answers do not count (signed-in stored hits also skip the daily meter). Extra Claude is $0.08 with a user-set spend cap.
 
 ---
 
@@ -54,6 +54,7 @@ RealmPal/
 │   ├── app/           # chat, sign-in / register, account, legal
 │   ├── components/    # chat UI, item/player cards, sprite zoom, quests, billing
 │   └── lib/           # API client, changelog, quests, chat history
+├── docs/              # chat-quality benchmarks; pricing.md is local / gitignored
 ├── .github/workflows/ # weekly wiki specialist refresh
 ├── docker-compose.yml # Qdrant + Redis (+ optional API image)
 ├── start_services.ps1 # Windows local stack
@@ -147,7 +148,9 @@ API docs (when `DEBUG=true`): [http://localhost:8001/docs](http://localhost:8001
 5. Claude (when used) streams a short answer plus UI tokens (`[item:]`, `[loadout]`, `[skin:...]`).
 6. The web app fetches warmed item profiles (`GET /items/{name}`) for sprites and cards. Click a character row, item card, or skin tile to zoom the whole card. The card grid drops items the asked class cannot equip; comparison text can still name sister-class gear.
 
-**Paid flow:** Redis counts Claude-using messages per IP (guest, 3/24h) or signed-in email (5/24h). Signed-in stored hits skip that daily meter. The next Claude request returns `402`; guests are asked to sign in, signed-in users see Stripe Checkout. Pro is $7/month for 90 Claude replies. After the pool, `$0.08`/reply up to a user spend cap (`GET`/`POST /payments/on-demand`). Daily 200 is the fuse.
+**Paid flow:** Redis counts Claude-using messages per IP (guest, 3/24h) or signed-in email (5/24h). Signed-in stored hits skip that daily meter. The next Claude request returns `402`; guests are asked to sign in, signed-in users see Stripe Checkout. Pro is $7/month for 68 Claude replies (about $2.50 of Claude). After the pool, `$0.08`/reply up to a user spend cap (`GET`/`POST /payments/on-demand`). Daily 50 is the fuse.
+
+Until Sep 13, 2026 this paragraph said 90 Claude replies and a daily fuse of 200.
 
 ---
 
@@ -199,7 +202,12 @@ Optional until you turn on paid + production embeddings:
 
 ---
 
-See [BACKLOG.md](BACKLOG.md) for planned work. Stored-answer chat shipped; next is Enchantment wiring, then Entra, then the Foundry billing block.
+See [BACKLOG.md](BACKLOG.md) for planned work. Stored-answer chat and the Enchantment specialist have shipped; next is Entra, then the Foundry billing block.
+
+## History
+
+### Until Sep 13, 2026
+Stored-answer chat shipped; next is Enchantment wiring, then Entra, then the Foundry billing block.
 
 ---
 

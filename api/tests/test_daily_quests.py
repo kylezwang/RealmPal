@@ -67,6 +67,32 @@ async def test_guest_claim_survives_quota_key_shape(redis_client, anon_settings)
     assert body["remaining"] == 1
 
 
+async def test_claim_expires_with_quota_not_at_utc_midnight(redis_client, anon_settings):
+    """The bonus/claim keys must expire when the caller's actual rolling
+    quota resets, not at a fixed UTC-midnight boundary. Otherwise a claim
+    near midnight could either vanish before the quota it boosts resets, or
+    (worse) become re-claimable while the same quota window is still live."""
+    from api.services.daily_quests import _claimed_key, _free_bonus_key, identity_key
+    from api.services.rate_limit import consume
+
+    quota = quota_for(None, build_request(peer=CALLER_IP), anon_settings)
+    await consume(redis_client, quota)  # Starts the quota's own rolling TTL.
+    quota_ttl = await redis_client.ttl(quota.key)
+    assert quota_ttl > 0
+
+    async with _client(redis_client, anon_settings) as http:
+        claimed = (await http.post("/chat/quests/claim")).json()
+    assert claimed["granted"] is True
+
+    bucket = identity_key(quota.key, anon_settings)
+    claim_ttl = await redis_client.ttl(_claimed_key(bucket))
+    bonus_ttl = await redis_client.ttl(_free_bonus_key(bucket))
+    # Synced to the quota's TTL (within a couple seconds of test runtime),
+    # not a full fresh 24h from claim time and not a fixed calendar key.
+    assert 0 < claim_ttl <= quota_ttl
+    assert 0 < bonus_ttl <= quota_ttl
+
+
 async def test_quest_art_returns_todays_dungeon_and_shiny(redis_client, anon_settings):
     from api.models.item import ItemProfile
     from api.services.daily_quests import todays_dungeon_name

@@ -15,7 +15,7 @@ from loguru import logger
 
 from ..models.build import PLAYER_STATS, STAT_ALIASES
 from .scraper import REALMEYE_BASE, ScraperError, scrape_enchanting_page
-from .wiki_scaling import retrieve_umi_bis
+from .wiki_scaling import infer_item_base_stat, read_cached_item, retrieve_umi_bis
 
 CACHE_KEY = "wiki:enchanting:v1"
 SOURCE_URL = f"{REALMEYE_BASE}/wiki/enchanting"
@@ -417,6 +417,25 @@ async def retrieve_enchanting_brief(
         )
         if resolved:
             item_name = resolved
+
+    # No stat named ("what enchants on Cackling Straitjacket")? Infer one
+    # from the item's own On Equip bonus | a +20 Attack robe implies an
+    # Attack build, so recommend Attack-focused enchants unless the user
+    # asked for a different stat outright.
+    inferred_stat = False
+    inferred_from = ""
+    if not stat and item_name:
+        item = await read_cached_item(redis, item_name)
+        if item:
+            guess = infer_item_base_stat(item)
+            if guess:
+                stat = guess
+                inferred_stat = True
+                inferred_from = item.stats.get("On Equip") or next(
+                    (v for k, v in (item.stats or {}).items() if "on equip" in k.lower()),
+                    "",
+                )
+
     slot = infer_gear_slot(item_name or message)
     matched = filter_rolls(rolls, stat=stat, slot=slot, item_name=item_name)
     parts = [
@@ -427,7 +446,15 @@ async def retrieve_enchanting_brief(
     ]
     if item_name:
         parts.append(f"Item: {item_name}" + (f" ({slot})" if slot else ""))
-    if stat:
+    if inferred_stat:
+        parts.append(
+            f"No stat was named. {item_name}'s own On Equip bonus is "
+            f"{inferred_from or stat}, which implies a {stat} build | "
+            f"recommend {stat}-focused enchants to match. Say so briefly, "
+            "then only recommend other-stat flats if the user asks for a "
+            "different build on this item."
+        )
+    elif stat:
         parts.append(f"Requested stat: {stat}. Do not recommend other-stat flats.")
     table = format_enchant_table(matched)
     if table:

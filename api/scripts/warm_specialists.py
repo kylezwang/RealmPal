@@ -59,6 +59,11 @@ def _print_status(snapshot: dict) -> None:
         f"Skin catalog      {'yes' if skins['stored'] else 'no'}  "
         f"{skins['classes']} classes"
     )
+    enchanting = snapshot.get("enchanting") or {}
+    print(
+        f"Enchanting rolls  {'yes' if enchanting.get('stored') else 'no'}  "
+        f"{enchanting.get('rolls', 0)} rolls"
+    )
     print("Players           live scrape (not stored)")
 
 
@@ -98,6 +103,7 @@ async def main() -> None:
         print(f"DPS {result.get('dps')}")
         print(f"Umi {sum((result.get('umi') or {}).values())}")
         print(f"Skins {result.get('skins')}")
+        print(f"Enchanting {result.get('enchanting')}")
         print(f"Sets {result.get('sets')}")
     finally:
         await redis.aclose()

@@ -1,8 +1,19 @@
-"""Daily quest completion bonus: +1 message once per UTC day.
+"""Daily quest completion bonus: +1 message once per rolling quota window.
 
 Free and guest accounts get one extra daily chat. Paid accounts get one extra
-included Claude reply. Claim is idempotent — a second call the same day
-does nothing.
+included Claude reply. Claim is idempotent within that window.
+
+The free/guest bonus is deliberately NOT keyed to the UTC calendar day. The
+message quota itself (`rate_limit.Quota`) is a rolling 24h window that starts
+on a caller's first message, not one aligned to midnight. A calendar-day
+bonus key would drift out of sync with it: the bonus could vanish hours
+before the quota it boosts actually resets (key rolls over at midnight,
+quota doesn't), or a caller could re-claim right after midnight and stack a
+second bonus onto a quota window that hasn't reset yet. `claim_daily_bonus`
+takes the caller's live quota TTL (`rate_limit.peek_ttl`) and expires the
+claim/bonus keys at the same moment the quota resets, so the two can't drift.
+The paid path is unaffected: it increments a calendar-month pool
+(`_paid_bonus_key`), which matches the monthly Claude included-pool it feeds.
 
 Also picks today's dungeon portal and a cached shiny-divine sprite so the
 quests modal can show real wiki art instead of empty checkboxes.
@@ -63,11 +74,13 @@ def identity_key(subject: str, settings: Settings) -> str:
 
 
 def _claimed_key(bucket: str) -> str:
-    return f"quest:claimed:{bucket}:{_today()}"
+    # No date suffix: this key's TTL (set at claim time from the caller's
+    # live quota TTL) is what defines "today", not the calendar.
+    return f"quest:claimed:{bucket}"
 
 
 def _free_bonus_key(bucket: str) -> str:
-    return f"quest:bonus:free:{bucket}:{_today()}"
+    return f"quest:bonus:free:{bucket}"
 
 
 def _paid_bonus_key(bucket: str) -> str:
@@ -169,10 +182,20 @@ async def claim_daily_bonus(
     settings: Settings,
     *,
     paid: bool,
+    quota_ttl_seconds: int = 0,
 ) -> bool:
-    """Grant today's +1 if it has not already been claimed. Returns True if new."""
+    """Grant this window's +1 if it has not already been claimed.
+
+    `quota_ttl_seconds` should be the caller's live message-quota TTL
+    (`rate_limit.peek_ttl`) for the free/guest path, so the claim and the
+    bonus it grants expire at the same instant the quota itself resets. Pass
+    0 (or omit) when the quota key doesn't exist yet, e.g. the caller hasn't
+    sent a message on this window yet, in which case a full rolling day is
+    used instead. Returns True if this call actually granted a new bonus.
+    """
     bucket = identity_key(subject, settings)
-    first = await redis.set(_claimed_key(bucket), "1", nx=True, ex=QUOTA_TTL_SECONDS)
+    ttl = quota_ttl_seconds if quota_ttl_seconds > 0 else QUOTA_TTL_SECONDS
+    first = await redis.set(_claimed_key(bucket), "1", nx=True, ex=ttl)
     if not first:
         return False
     if paid:
@@ -180,5 +203,5 @@ async def claim_daily_bonus(
         await redis.incr(key)
         await redis.expire(key, 40 * 24 * 3600)
     else:
-        await redis.set(_free_bonus_key(bucket), "1", ex=QUOTA_TTL_SECONDS)
+        await redis.set(_free_bonus_key(bucket), "1", ex=ttl)
     return True

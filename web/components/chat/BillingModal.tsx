@@ -4,6 +4,7 @@ import {
   createCheckout,
   fetchBilling,
   fetchChatUsage,
+  openBillingPortal,
   type BillingInfo,
   type ChatUsage,
   type OnDemandUsage,
@@ -62,6 +63,7 @@ export function BillingModal({ onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [showSpendLimit, setShowSpendLimit] = useState(false);
 
   useEffect(() => {
@@ -142,6 +144,18 @@ export function BillingModal({ onClose }: Props) {
     }
   }
 
+  async function handleManageSubscription() {
+    setPortalLoading(true);
+    setError(null);
+    try {
+      const url = await openBillingPortal();
+      window.location.href = url;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open billing portal");
+      setPortalLoading(false);
+    }
+  }
+
   const isPaid = billing?.tier === "paid";
   const monthlyPercent = billing?.claude_used_percent ?? 0;
   const freePercent = usage ? usagePercent(usage.used, usage.limit) : 0;
@@ -214,6 +228,14 @@ export function BillingModal({ onClose }: Props) {
                     </span>
                     . Billed through Stripe.
                   </p>
+                  <button
+                    type="button"
+                    disabled={portalLoading}
+                    onClick={() => void handleManageSubscription()}
+                    className="mt-3 w-full rounded-lg border border-[#404040] bg-[#1a1a1a] py-2 text-xs font-medium text-[#ececec] hover:bg-[#333333] transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    {portalLoading ? "Opening..." : "Manage subscription or cancel"}
+                  </button>
                 </div>
               )}
 
@@ -244,7 +266,7 @@ export function BillingModal({ onClose }: Props) {
                 <div className="rounded-xl border border-[#404040] bg-[#262626] px-4 py-3">
                   <p className="text-sm font-medium text-[#ececec]">Pay-as-you-go</p>
                   <p className="text-xs text-[#737373] mt-0.5 mb-3">
-                    After your included pool, extra replies are charged up to the monthly cap you choose.
+                    7x AI usage included. Afterwards, pay as you go.
                     {(billing.on_demand_spent_usd ?? 0) > 0 && (
                       <>
                         {" "}

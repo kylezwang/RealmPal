@@ -10,6 +10,7 @@ import {
   type PaywallReason,
   type PlayerProfile,
 } from "@/lib/api";
+import { loadSavedAccountProfile, saveSavedAccountProfile } from "@/lib/accountProfile";
 import { SWORD_SPRITE } from "@/lib/sprites";
 import { PetSprite } from "./PetCompanion";
 import { SpendingLimitModal } from "./SpendingLimitModal";
@@ -321,8 +322,21 @@ export function PaywallModal({
     setLoading(true);
     setError(null);
     try {
+      // Save the IGN under this email *before* registering. registerAccount
+      // stores the new auth token and fires the auth-changed event as part
+      // of the same call, and the sidebar reads the saved profile back the
+      // instant that event fires. Without this, it finds nothing yet (this
+      // is the account's first ever sign-in) and clears the IGN box even
+      // though the user just typed it, so the pet never gets scraped. Skip
+      // if this browser already has a saved profile for that email (e.g.
+      // registration fails because the email is taken) so a failed attempt
+      // can't clobber an existing account's cached IGN/pet.
+      const trimmedIgn = ign.trim();
+      if (trimmedIgn && !loadSavedAccountProfile(trimmed)) {
+        saveSavedAccountProfile({ ign: trimmedIgn }, trimmed);
+      }
       await registerAccount(trimmed, password, {
-        ign: ign.trim(),
+        ign: trimmedIgn,
         confirmPassword,
       });
       onClose();
@@ -394,7 +408,7 @@ export function PaywallModal({
               RealmPal Pro
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              Set-building AI, with enchanting guides
+              Instant set-building with enchanting guides
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Ask for a class and a stat. Get a real loadout, not vibes. Enchant rolls that
@@ -554,8 +568,8 @@ export function PaywallModal({
               {freeMessagesHeading(remaining, limit)}
             </h2>
             <p className="mb-6 text-center text-sm text-[#a3a3a3]">
-              $7 includes a major increase in messages. Stored wiki and build answers
-              stay free and do not burn that pool. Keep going on usage after that.
+              RealmPal Pro includes a 7x usage increase for
+
             </p>
 
             <div className="mb-6 flex items-center justify-center gap-2">
@@ -565,9 +579,9 @@ export function PaywallModal({
 
             <ul className="mb-6 space-y-2 text-sm text-[#a3a3a3]">
               {[
-                "~ 100 messages included each month",
-                "Stored builds, drops, and dungeon guides included",
-                "Set-building, skins, item cards, and dungeon guides",
+                "7x usage & AI credits included each month",
+                "Stored builds, drops, and all RotMG information",
+                "Instant set-building, skins, item cards, and dungeon guides",
                 "Enchanting, DPS calculations, and more",
               ].map((f) => (
                 <li key={f} className="flex items-center gap-2">
@@ -596,15 +610,30 @@ export function PaywallModal({
 
         {isReminder && (
           <div key="slide-refresh" className="animate-fade-in">
-            <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
-              Your {limit} daily messages refresh in <br />{" "}
-              <span className="text-[#D4AF37]">{formatResetWait(resetsInSeconds)}</span>
-            </h2>
-            <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
-              Come back then for another {limit} free chats. Stored wiki answers
-              will still count toward that daily trial. Pro is $7/month if you
-              want to keep going now.
-            </p>
+            {remaining != null && remaining > 0 ? (
+              <>
+                <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
+                  {remaining === 1
+                    ? "You still have 1 free message left today"
+                    : `You still have ${remaining} free messages left today`}
+                </h2>
+                <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
+                  Keep chatting for free, or go Pro for $7/month whenever
+                  you're ready.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
+                  Your {limit} daily messages refresh in <br />{" "}
+                  <span className="text-[#D4AF37]">{formatResetWait(resetsInSeconds)}</span>
+                </h2>
+                <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
+                  Come back then for another {limit} free chats. Pro is $7/month if you
+                  want to keep going now.
+                </p>
+              </>
+            )}
             <button
               type="button"
               onClick={onClose}

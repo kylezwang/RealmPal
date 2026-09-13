@@ -14,6 +14,7 @@ from loguru import logger
 
 from ..models.build import CLASS_ABILITY_HUB, CLASS_ARMOR_HUB, STAT_RING_HUB
 from .dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX, get_or_scrape_index, get_or_scrape_wiki
+from .enchanting import enchanting_store_status, warm_enchanting_store
 from .ingestion import WIKI_HUB_SLUGS
 from .item_aliases import load_item_catalog
 from .realmshark import GRAPH_CACHE_KEY, load_graph, load_top_loadouts
@@ -360,6 +361,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
     dps = await dps_store_status(redis)
     umi = await umi_store_status(redis)
     skins = await skin_catalog_status(redis)
+    enchanting = await enchanting_store_status(redis)
     return {
         "abilities": abilities,
         "hubs": hubs,
@@ -368,6 +370,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
         "dps": dps,
         "umi": umi,
         "skins": skins,
+        "enchanting": enchanting,
     }
 
 
@@ -406,6 +409,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
         if row.get("stored", 0) <= 0
     ]
     skins = snapshot.get("skins") or {}
+    enchanting = snapshot.get("enchanting") or {}
     item_cached = int(items.get("cached") or 0)
     item_total = int(items.get("total") or 0)
     dungeon_cached = int(dungeons.get("cached") or 0)
@@ -422,6 +426,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
         or (edges > 0 and not _store_mostly_full(loadouts, edges)),
         "umi": umi,
         "skins": not skins.get("stored"),
+        "enchanting": not enchanting.get("stored"),
     }
 
 
@@ -434,6 +439,7 @@ def has_missing_work(work: dict[str, Any]) -> bool:
         or work.get("dps")
         or work.get("umi")
         or work.get("skins")
+        or work.get("enchanting")
     )
 
 
@@ -517,6 +523,14 @@ async def warm_all_specialists(
         )
     else:
         result["skins"] = snapshot["skins"]
+
+    if force or work["enchanting"]:
+        await _phase(
+            "enchanting",
+            lambda: warm_enchanting_store(redis, ttl_seconds=ttl_seconds, force=force),
+        )
+    else:
+        result["enchanting"] = snapshot["enchanting"]
 
     if force or work["dungeons"]:
         await _phase(

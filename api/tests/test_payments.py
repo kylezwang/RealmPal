@@ -202,6 +202,27 @@ async def test_checkout_completed_opens_an_active_entitlement(entitlement_settin
     assert await entitlements.is_active("player@example.com", entitlement_settings) is True
 
 
+async def test_checkout_completed_falls_back_to_customer_details_email(entitlement_settings):
+    """A guest who reached checkout with no known email (anonymous quota-
+    exhausted flow) types their own email into Stripe's page. `customer_email`
+    is never set for them (we only pre-fill it for a signed-in email) and
+    `metadata.email` is empty for the same reason, so `customer_details.email`
+    (what Stripe actually confirmed) must be checked or the entitlement never
+    opens even though the payment succeeded."""
+    event = _stripe_event(
+        "checkout.session.completed",
+        {
+            "customer_email": None,
+            "customer_details": {"email": "guest@example.com"},
+            "metadata": {"email": ""},
+            "customer": "cus_777",
+            "subscription": "sub_888",
+        },
+    )
+    await _apply_stripe_event(event, entitlement_settings)
+    assert await entitlements.is_active("guest@example.com", entitlement_settings) is True
+
+
 async def test_subscription_deleted_revokes_the_matching_customer(entitlement_settings):
     await entitlements.upsert(
         "player@example.com",
@@ -348,6 +369,83 @@ async def test_confirm_rejects_a_session_for_another_email(
 
     assert response.status_code == 403
     assert await entitlements.is_active("player@example.com", settings) is False
+
+
+# --- Stripe Customer Portal (cancel / manage subscription) ----------------
+
+
+async def test_portal_opens_for_a_paid_account_with_a_stripe_customer(
+    redis_client, entitlement_settings, monkeypatch
+):
+    from api.auth import create_jwt
+
+    await entitlements.upsert(
+        "player@example.com",
+        status="active",
+        settings=entitlement_settings,
+        stripe_customer_id="cus_portal_1",
+    )
+    token = create_jwt({"email": "player@example.com"}, entitlement_settings)
+
+    captured = {}
+
+    class _PortalSession:
+        url = "https://billing.stripe.com/session/test_123"
+
+    def _fake_create(*, customer, return_url):
+        captured["customer"] = customer
+        captured["return_url"] = return_url
+        return _PortalSession()
+
+    monkeypatch.setattr("stripe.billing_portal.Session.create", _fake_create)
+    settings = entitlement_settings.model_copy(
+        update={"stripe_secret_key": "sk_test_dummy", "stripe_price_id": "price_dummy"}
+    )
+
+    async with _client(redis_client, settings) as http:
+        response = await http.post(
+            "/payments/portal", headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 200
+    assert response.json()["portal_url"] == "https://billing.stripe.com/session/test_123"
+    assert captured["customer"] == "cus_portal_1"
+    assert captured["return_url"] == settings.app_url
+
+
+async def test_portal_requires_sign_in(redis_client, entitlement_settings):
+    settings = entitlement_settings.model_copy(
+        update={"stripe_secret_key": "sk_test_dummy"}
+    )
+    async with _client(redis_client, settings) as http:
+        response = await http.post("/payments/portal")
+    assert response.status_code == 401
+
+
+async def test_portal_404s_when_the_account_never_paid(redis_client, entitlement_settings):
+    """No entitlement row at all, and separately, a row with no Stripe
+    customer ID (shouldn't happen, but must not crash calling Stripe with
+    customer=None)."""
+    from api.auth import create_jwt
+
+    token = create_jwt({"email": "never-paid@example.com"}, entitlement_settings)
+    settings = entitlement_settings.model_copy(
+        update={"stripe_secret_key": "sk_test_dummy", "stripe_price_id": "price_dummy"}
+    )
+
+    async with _client(redis_client, settings) as http:
+        response = await http.post(
+            "/payments/portal", headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert response.status_code == 404
+
+
+async def test_get_stripe_customer_id_returns_none_with_no_row(entitlement_settings):
+    assert (
+        await entitlements.get_stripe_customer_id("ghost@example.com", entitlement_settings)
+        is None
+    )
 
 
 async def test_webhook_with_a_bad_signature_is_rejected(redis_client, entitlement_settings):

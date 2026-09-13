@@ -33,6 +33,7 @@ from ..models.build import (
     StatScalingGraph,
 )
 from .dungeon_guide import extract_dungeon_query
+from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .item_aliases import is_set_visualize_query
 from .skin_visualizer import is_skin_visualize_query
 from .player_lookup import extract_player_ign
@@ -41,6 +42,7 @@ from .wiki_scaling import (
     HUB_PREFIX,
     cached_class_wiki_scaling,
     format_wiki_scaling,
+    infer_class_primary_stat,
     retrieve_armor_brief,
     retrieve_umi_bis,
 )
@@ -537,7 +539,18 @@ async def retrieve_build_knowledge(
     dungeon_name = extract_dungeon_query(message, history=history)
     set_visualize = is_set_visualize_query(message)
     skin_visualize = is_skin_visualize_query(message)
-    if not buildish and not player_ign and not dungeon_name and not set_visualize and not skin_visualize:
+    # "What enchants on QOT" has no class/stat/build keyword, so it isn't
+    # buildish on its own | without this it would fall through the gate
+    # below with no context and Claude would have to invent roll numbers.
+    enchant_only = is_enchant_query(message) and not buildish
+    if (
+        not buildish
+        and not player_ign
+        and not dungeon_name
+        and not set_visualize
+        and not skin_visualize
+        and not enchant_only
+    ):
         return ""
 
     if set_visualize:
@@ -614,6 +627,20 @@ async def retrieve_build_knowledge(
             logger.bind(
                 error=str(e), player=player_ign, dungeon=dungeon_name
             ).warning("Lookup specialist unavailable")
+            return ""
+
+    if enchant_only:
+        try:
+            return await retrieve_enchanting_brief(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                class_name=class_name,
+                stat=stat,
+                cache_only=True,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Enchantment specialist unavailable")
             return ""
 
     parts: list[str] = []
@@ -695,5 +722,41 @@ async def retrieve_build_knowledge(
         logger.bind(class_name=class_name).info(
             "No stored wiki scaling yet; answering from DPS boards"
         )
+
+    # A full "best {stat} {class}" build covers Weapon/Ability/Armor/Ring
+    # above; Enchantments is the fifth slot. Same RealmEye roll table as
+    # the enchant-only branch, filtered to this stat so a Wisdom build
+    # doesn't get handed Attack-flat rolls. No stat named ("best kensei
+    # build")? Most DPS builds chase whichever stat the class's own
+    # abilities scale with | infer that the same way a single-item ask
+    # infers from the item's own On Equip bonus, instead of dropping
+    # Enchantments from the build entirely.
+    effective_stat = stat
+    stat_inferred = False
+    if class_name and not effective_stat and cached_wiki:
+        effective_stat = infer_class_primary_stat(cached_wiki)
+        stat_inferred = bool(effective_stat)
+    if class_name and effective_stat:
+        try:
+            enchant_brief = await retrieve_enchanting_brief(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                class_name=class_name,
+                stat=effective_stat,
+                cache_only=True,
+            )
+            if enchant_brief:
+                if stat_inferred:
+                    enchant_brief = (
+                        f"No stat was named; {class_name}'s abilities mostly "
+                        f"scale with {effective_stat}, so enchants below "
+                        f"target {effective_stat}.\n{enchant_brief}"
+                    )
+                parts.append(enchant_brief)
+        except Exception as e:
+            logger.bind(error=str(e), class_name=class_name).warning(
+                "Enchantment specialist unavailable for build"
+            )
 
     return "\n\n".join(parts)

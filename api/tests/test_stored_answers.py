@@ -9,6 +9,8 @@ from api.dependencies import get_optional_user, get_qdrant, get_redis
 from api.identity import AuthenticatedUser
 from api.main import create_app
 from api.models.item import ItemProfile
+from api.services import entitlements
+from api.services.claude_billing import peek_claude_usage
 from api.services.rate_limit import peek, quota_for
 from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
 from api.services.stored_answers import (
@@ -199,6 +201,42 @@ async def test_signed_in_stored_answer_skips_daily_quota(
     assert calls == []
     quota = quota_for(SIGNED_IN, build_request(peer=CALLER[0]), anon_settings)
     assert await peek(redis_client, quota) == 0
+
+
+async def test_paid_stored_hit_does_not_increment_claude_meter(
+    redis_client, anon_settings, monkeypatch
+):
+    email = "pro-stored@example.com"
+    await entitlements.upsert(email, status="active", settings=anon_settings)
+    user = AuthenticatedUser(subject=email, email=email, claims={"email": email})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "api.routers.chat.build_chat_client",
+        lambda _settings: _FakeClient(calls),
+    )
+    app = create_app()
+    app.dependency_overrides[get_optional_user] = lambda: user
+    client = _client(app, redis_client, anon_settings)
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Doom Bow",
+            drop_locations=["The Shatters"],
+        ),
+        anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={"message": "Where does Doom Bow drop?", "session_id": "s1c"},
+        )
+        assert response.status_code == 200
+        await _read_sse_text(response)
+    assert calls == []
+    usage = await peek_claude_usage(redis_client, email, anon_settings)
+    assert usage.used == 0
+    assert usage.included == anon_settings.paid_claude_included
 
 
 async def test_second_wis_kensei_is_a_cache_hit(stream_app, redis_client, anon_settings):

@@ -13,30 +13,21 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. **Finish Enchantment specialist** - 4 wiring tasks (warm, RAG, skip, tests).
-2. Entra External ID - needs portal values (tenant/client IDs).
-3. Foundry - **blocked**, see Blocked section below. Don't retry deployment until billing clears.
+1. Entra External ID - **portal setup done** (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
+2. Foundry - **blocked**, see Blocked section below. Don't retry deployment until billing clears.
+3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
+4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
 
----
+**Enchantment specialist is done** (wiring + implied-stat inference + tests, Sep 13). See `CHANGELOG.md` [2026.09.13] for detail.
 
-## In Progress
+**Stripe checkout → webhook → entitlement audit is done** (Sep 13): found and fixed a real bug (guest checkout emails only in `customer_details.email` were silently dropped) and shipped a self-service Stripe Customer Portal link. See `CHANGELOG.md` [2026.09.13] for detail.
 
-### Enchantment specialist (started Sep 13, not finished)
-
-LangGraph slot next to weapon / ability / armor / ring. Reads RealmEye `/wiki/enchanting` tables (eligible slot, I–IV, unique/awakened) plus Umi general-tab BIS enchant notes. Isolation like Ring: an Attack ask must not pick up Mana Bonus.
-
-**Already in the tree:**
-- `api/services/enchanting.py` — `is_enchant_query`, `retrieve_enchanting_brief`, `warm_enchanting_store`, cache `wiki:enchanting:v1`
-- `api/services/scraper.py` — `scrape_enchanting_page()`
-- `api/services/slot_graph.py` — `"enchantment"` on `SlotName`, `_enchantment_agent`, enchant-only routing
-
-**Still open (do these before calling it done):**
-1. Wire `warm_enchanting_store` into `specialist_snapshot` / `missing_specialist_work` / `warm_all_specialists` and `warm_specialists --status`. Category hub `enchanting` stays an index (0 items); the roll-table store is separate.
-2. `retrieve_build_knowledge`: enchant-only early-return; inject `retrieve_enchanting_brief` on full builds.
-3. `chat.py`: skip extra wiki RAG on enchant-only questions (same pattern as dungeon).
-4. Tests: "what enchants on QOT", "best DEX roll on Leaf Bow", must not fire on unrelated item questions.
-
-Do not start Entra until those four are done.
+## History
+### Until Sep 13, 2026 (later same day)
+Resume order was:
+1. Entra External ID - portal values collected (Sep 13). Next: MSAL SPA + swap local email+password for Entra tokens.
+2. Foundry - blocked, see Blocked section below. Don't retry deployment until billing clears.
+3. Audit the Stripe checkout → webhook → entitlement flow end to end (no known bug, just unverified since Link was added).
 
 ---
 
@@ -56,23 +47,32 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 
 ---
 
-## Next Up After Enchantment
+## Next Up
 
-### Entra External ID — research done, portal setup pending
+### Entra External ID — portal done, code integration next
 
-Researched, not yet built. User will provide portal values (tenant ID, client IDs, JWKS URL). Sign-in methods: **Google + email OTP** (known Google bug; decision to make: keep Google and force `prompt=select_account`, or use email OTP only).
+**Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true.
 
-**What's needed from you:**
-- Portal setup steps in `docs/DEPLOYMENT_GUIDE.md` (already provided Sep 13)
-- Copy 7 values into `.env`
-- Code integration once values are in place
+**Still to build:**
+1. Frontend MSAL (PKCE) against the SPA client + user flow on `ciamlogin.com`
+2. Wire Sign in / Create account to Entra instead of (or alongside) local SQLite email+password
+3. Keep IGN collection in-app after first Entra sign-up
+4. Defer Google (silent-renewal bug); add later if wanted
 
-Backend is already prepared: `api/identity.py` verifies JWKS-signed tokens. Frontend holds session in httpOnly cookies and forwards Bearer token. No additional verification code needed.
-
-**Findings:**
+**Findings kept:**
 - Two app registrations (API + SPA), not one
 - Authority: `ciamlogin.com` (not `login.microsoftonline.com`) for CIAM
-- Google bug: unsupported `username` parameter during silent renewal (12–24h after first sign-in)
+- No SPA client secret (public client + PKCE)
+
+#### History
+##### Until Sep 13, 2026 - Entra External ID
+Researched, not yet built. User will provide portal values (tenant ID, client IDs, JWKS URL). Sign-in methods: **Google + email OTP** (known Google bug; decision to make: keep Google and force `prompt=select_account`, or use email OTP only).
+
+What's needed from you: portal setup in `docs/DEPLOYMENT_GUIDE.md`, copy 7 values into `.env`, code integration once values are in place.
+
+Backend prepared: `api/identity.py` verifies JWKS-signed tokens. Frontend holds session in httpOnly cookies and forwards Bearer token.
+
+Findings: two app registrations; `ciamlogin.com` authority; Google silent-renewal bug 12-24h after first sign-in.
 
 Portal values to collect: tenant ID, SPA client ID, API client ID / Application ID URI, JWKS URL, issuer, audience.
 
@@ -82,11 +82,15 @@ Portal values to collect: tenant ID, SPA client ID, API client ID / Application 
 
 The following were completed and archived:
 
+**Enchantment specialist** — LangGraph slot next to weapon/ability/armor/ring. Reads RealmEye `/wiki/enchanting` tables + Umi BIS notes. Infers the implied stat from an item's own base stat (or a class's dominant scaling stat for stat-less full builds) when the user doesn't name one.
+
 **Stored answers** — Redis caching of drops, builds, dungeon guides, shiny items. Specialist warming system. 70/30 stored/Claude as success metric.
 
 **Daily quests** — Rotating dungeon/player/shiny item, persistent per-user, grant +1 message/day via `POST /chat/quests/claim`.
 
 **Pay-as-you-go billing** — 68 included Claude/mo (~$2.50), $0.08 overage, user spend cap, Stripe Link payment method.
+
+**Stripe audit + Customer Portal** — Full checkout → webhook → entitlement review. Fixed a real bug: guest-checkout emails only present in `customer_details.email` were silently dropped, no entitlement created. Added self-service "Manage subscription or cancel" via `stripe.billing_portal.Session` (`POST /payments/portal`), gated on enabling the Portal once in the Stripe Dashboard.
 
 **Email+password auth** — Local SQLite (PBKDF2-SHA256), fallback to magic-link. Primary sign-in method until Entra.
 
@@ -116,9 +120,9 @@ See `CHANGELOG.md` [2026.09.13] for commits, migrations, tests, and technical de
 
 ## Future (Planned, Lower Priority)
 
-### DPS specialist (started, lower than Enchantment)
+### DPS specialist (started)
 
-Wiki formula + RealmShark loadouts as reference. Files exist; same wiring as Enchantment. Finish Enchantment first.
+Wiki formula + RealmShark loadouts as reference. Files exist; same wiring pattern the Enchantment specialist used (warm store, build-knowledge injection, chat RAG skip, tests).
 
 ### Per-user Qdrant filtering
 

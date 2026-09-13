@@ -12,15 +12,15 @@ export interface SavedAccountProfile {
 
 const PROFILE_KEY = "realm_pal_account_profile";
 
-function profileKey(): string | null {
-  const email = decodeAuthEmail();
-  if (!email) return null;
-  return `${PROFILE_KEY}:${email.trim().toLowerCase()}`;
+function profileKey(email?: string): string | null {
+  const target = email ?? decodeAuthEmail();
+  if (!target) return null;
+  return `${PROFILE_KEY}:${target.trim().toLowerCase()}`;
 }
 
-export function loadSavedAccountProfile(): SavedAccountProfile | null {
+export function loadSavedAccountProfile(email?: string): SavedAccountProfile | null {
   if (typeof window === "undefined") return null;
-  const key = profileKey();
+  const key = profileKey(email);
   if (!key) return null;
   try {
     const raw = localStorage.getItem(key);
@@ -33,9 +33,17 @@ export function loadSavedAccountProfile(): SavedAccountProfile | null {
   }
 }
 
-export function saveSavedAccountProfile(profile: SavedAccountProfile): void {
+/**
+ * `email` lets a caller save this before the auth token exists yet, e.g.
+ * right before account creation, so the IGN is already there in storage the
+ * instant the auth-changed event fires and the sidebar reads it back.
+ */
+export function saveSavedAccountProfile(
+  profile: SavedAccountProfile,
+  email?: string,
+): void {
   if (typeof window === "undefined") return;
-  const key = profileKey();
+  const key = profileKey(email);
   if (!key) return;
   try {
     localStorage.setItem(

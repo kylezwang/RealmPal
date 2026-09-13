@@ -88,7 +88,7 @@ async def create_checkout(
     try:
         checkout = stripe.checkout.Session.create(
             mode="subscription",
-            payment_method_types=["card"],
+            payment_method_types=["card", "link"],
             customer_email=email,
             line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
             success_url=_success_url(settings),
@@ -166,8 +166,19 @@ async def _apply_stripe_event(event: dict, settings: Settings) -> None:
     data = event.get("data", {}).get("object", {})
 
     if event_type == "checkout.session.completed":
+        # `customer_details.email` first: it's what Stripe actually confirmed
+        # at checkout. `customer_email` only reflects a pre-fill we supplied
+        # (e.g. a signed-in email); it comes back null once Stripe attaches a
+        # Customer object, and is never set at all for a guest who reached
+        # checkout with no known email and typed their own in on Stripe's
+        # page. Without this, that guest's entitlement was silently never
+        # opened even though they paid: `metadata.email` is empty because we
+        # had no email to put there, and `customer_email` was never set
+        # either. Same ordering `confirm_checkout` already used above.
+        details = data.get("customer_details") or {}
         email = (
-            data.get("customer_email")
+            details.get("email")
+            or data.get("customer_email")
             or (data.get("metadata") or {}).get("email")
             or ""
         )
@@ -259,6 +270,10 @@ class OnDemandResponse(BaseModel):
     overage_usd: float
 
 
+class PortalResponse(BaseModel):
+    portal_url: str
+
+
 class BillingResponse(BaseModel):
     tier: str
     subscription_status: str | None = None
@@ -303,6 +318,47 @@ async def get_billing(
         overage_usd=settings.claude_overage_usd,
         allowed_caps_usd=list(billing_prefs.ALLOWED_CAPS_USD),
     )
+
+
+@router.post("/portal", response_model=PortalResponse)
+async def create_billing_portal(
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(default=None),
+) -> PortalResponse:
+    """
+    Stripe Customer Portal link so a paid user can cancel, swap their
+    payment method, or download invoices without emailing support.
+
+    Requires the Customer Portal to be configured once in the Stripe
+    Dashboard (Settings -> Billing -> Customer portal) before this works;
+    Stripe returns a clear error if it isn't.
+    """
+    email = email_from_session_header(authorization, settings)
+    if not email:
+        raise HTTPException(status_code=401, detail="Sign in to manage your subscription")
+    if not settings.stripe_configured:
+        raise HTTPException(status_code=503, detail="Payments not configured")
+
+    customer_id = await entitlements.get_stripe_customer_id(email, settings)
+    if not customer_id:
+        raise HTTPException(
+            status_code=404,
+            detail="No Stripe subscription found for this account",
+        )
+
+    stripe.api_key = settings.stripe_secret_key
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=settings.app_url,
+        )
+    except stripe.StripeError as exc:
+        logger.exception("Stripe billing portal session failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not open billing portal. Make sure it's configured in the Stripe Dashboard.",
+        ) from exc
+    return PortalResponse(portal_url=session.url)
 
 
 async def _paid_email(authorization: str | None, settings: Settings) -> str:

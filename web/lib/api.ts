@@ -686,6 +686,21 @@ export async function saveOnDemand(spendCapUsd: number): Promise<OnDemandUsage> 
   return data as OnDemandUsage;
 }
 
+/** Stripe Customer Portal link so a paid user can cancel or update payment
+ * method themselves. Requires the Portal to be configured once in the
+ * Stripe Dashboard (Settings -> Billing -> Customer portal). */
+export async function openBillingPortal(): Promise<string> {
+  const res = await fetch(`${API_URL}/payments/portal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not open billing portal");
+  }
+  return data.portal_url;
+}
+
 export async function confirmCheckout(sessionId: string): Promise<AuthSession> {
   const res = await fetch(`${API_URL}/payments/confirm`, {
     method: "POST",

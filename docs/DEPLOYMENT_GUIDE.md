@@ -61,9 +61,13 @@
 
 ---
 
-## PRIORITY 2: Enchantment Specialist Wiring (MEDIUM PRIORITY)
+## PRIORITY 2: Enchantment Specialist Wiring - DONE (Sep 13, 2026)
 
-**Status:** Code files exist, but not wired into warm/tests.
+**Status:** Complete. All 4 tasks below shipped same day; see `CHANGELOG.md`
+[2026.09.13] "Enchantment specialist" for the actual diffs, tests, and the
+implied-stat inference (`infer_item_base_stat`, `infer_class_primary_stat`)
+added on top of this wiring. Steps kept below for reference only, they
+describe what was built, not what's left to do.
 
 **Why it matters:** Completes the specialist system before moving to Entra. Four precise tasks:
 
@@ -157,23 +161,49 @@ async def test_enchant_follow_up_still_calls_claude(redis_client, anon_settings)
 
 **Why it matters:** Multi-tenancy + managed auth (Google + email OTP). Do NOT code until you have portal values pasted back here.
 
-### Step 1: Create CIAM Tenant (if not already created)
+### Step 1: Create the External Tenant (if not already created)
 
-1. Go to **[Azure Portal](https://portal.azure.com)**
-2. Search for **"Azure AD B2C"** (or **"Entra External ID"** in newer portal)
-3. Click **"Create new external identity customer tenant"**
-   - **Organization name:** RealmPal Production
-   - **Country/Region:** United States
-   - **Domain name:** realmpal-prod (or similar; must be globally unique)
-4. Wait ~5 minutes for provisioning
-5. Once created, you'll be redirected to the new tenant
+Reachable straight from the **Azure Portal**, from inside your existing
+"Default Directory" (that's your **workforce** tenant, manages who on your
+team can access Azure resources; it's just where this creation flow lives,
+you're not configuring that tenant itself here).
+
+1. **[Azure Portal](https://portal.azure.com)**, signed into your Default
+   Directory
+2. Open the **Microsoft Entra ID** blade → **Overview**
+3. Click **"Manage tenants"**
+4. Click **"Create"**
+5. Select **"External"**, then **"Continue"** (URL will show
+   `CreateDirectoryBlade/tenantType=ciam` when you're on the right page)
+6. **Basics tab:**
+   - **Tenant Name:** RealmPal Production
+   - **Domain Name:** realmpal-prod (or similar; must be globally unique,
+     becomes `<name>.onmicrosoft.com`; cannot be edited or deleted later,
+     though a custom domain can be added afterward)
+   - **Country/Region:** United States (also cannot be changed later)
+7. Click **"Next: Add a subscription"**
+8. **Add a subscription tab:**
+   - **Subscription:** select your existing Azure subscription
+   - **Resource group:** select one, or click **"Create new"** and name it
+     `realmpal-prod` if none exists
+9. Click **"Next: Review + create"**, confirm the details, then click
+   **"Create"**
+10. Provisioning can take **up to 30 minutes** (watch the Notifications bell,
+    top right). Once done, switch into the new tenant via the **Settings**
+    (gear) icon, top menu → **"Directories + subscriptions"** → select the
+    new tenant
+
+Once you're in the new external tenant, everything in Steps 2-6 below
+(App registrations, API permissions, user flow) is done from that same
+Entra ID blade, now scoped to the new tenant instead of the Default
+Directory.
 
 ### Step 2: Create API Application Registration
 
 1. In your CIAM tenant, search for **"App registrations"** (top search)
 2. Click **"New registration"**
    - **Name:** RealmPal API
-   - **Supported account types:** Accounts in any identity provider or organizational directory (for multi-tenant scenarios)
+   - **Supported account types:** "Single tenant only - RealmPal" (customers sign in via a User Flow inside this tenant, not via their own separate Entra tenant or a personal Microsoft account, so this is single-tenant even though the end users are external customers)
    - **Redirect URI:** Leave blank for now
 3. Once created, copy and save:
    - **Application (client) ID** → paste into `.env` as `ENTRA_API_CLIENT_ID`
@@ -193,70 +223,82 @@ async def test_enchant_follow_up_still_calls_claude(redis_client, anon_settings)
 
 1. Still in **App registrations**, click **"New registration"**
    - **Name:** RealmPal Web
-   - **Supported account types:** Same as API (multi-tenant)
-   - **Redirect URI:** Web → `http://localhost:3000/auth/callback` (for local dev)
+   - **Supported account types:** "Single tenant only - RealmPal" (same reasoning as the API app above)
+   - **Redirect URI:** platform dropdown → **"Single-page application (SPA)"** (not "Web"; SPA uses PKCE, no client secret) → `http://localhost:3000/auth/callback` (for local dev)
 2. Once created, copy and save:
    - **Application (client) ID** → paste into `.env` as `ENTRA_WEB_CLIENT_ID`
-3. Click **"API permissions"** (left sidebar)
+3. Click **"Authentication"** (left sidebar)
+   - Under the SPA platform's redirect URIs, click **"Add URI"** and also add the production URL once known, e.g. `https://realmpal.com/auth/callback`
+   - Leave both "Implicit grant and hybrid flows" checkboxes unchecked
+4. Click **"API permissions"** (left sidebar)
    - Remove any default permissions
    - Click **"Add a permission"** → **"My APIs"** → select **"RealmPal API"**
    - Check the `access_as_user` scope → **"Add permissions"**
-4. Click **"Certificates & secrets"** (left sidebar)
-   - Click **"New client secret"**
-   - Set expiration to **6 months**
-   - Copy the **Value** (NOT the ID) → paste into `.env` as `ENTRA_WEB_CLIENT_SECRET`
+
+**No client secret for this app.** SPAs are public clients (the code runs in the user's browser, so any embedded secret would be visible to anyone with dev tools open); MSAL uses PKCE instead. Do not create one here.
 
 ### Step 4: Get JWKS URL and Issuer
 
-1. Still in your CIAM tenant, search for **"Token configuration"** (in App registration context)
-   - Or navigate: **App registrations** → **RealmPal API** → **Token configuration** (left sidebar)
-2. Look for the **OpenID Connect metadata endpoint**:
-   - It will be something like: `https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0/.well-known/openid-configuration`
-3. Open that URL in a browser (it's public JSON)
-4. Copy the value of `jwks_uri` → paste into `.env` as `AUTH_JWKS_URL`
-5. Copy the value of `issuer` → paste into `.env` as `AUTH_ISSUER`
-6. Paste the API **client ID** again as `AUTH_AUDIENCE` in `.env`
+1. Open this URL directly in a browser (public JSON, no login needed),
+   using your tenant ID copied via the copy-icon next to "Tenant ID" on
+   the Entra ID Overview page (do not retype it by hand, see History below
+   for why that matters):
+   ```
+   https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0/.well-known/openid-configuration
+   ```
+2. Copy the value of `jwks_uri` → paste into `.env` as `AUTH_JWKS_URL`. For
+   a CIAM tenant this resolves to
+   `https://[tenant-id].ciamlogin.com/[tenant-id]/discovery/v2.0/keys`
+   (not under `/v2.0/.well-known/...` like a workforce tenant's JWKS URL)
+3. Copy the value of `issuer` → paste into `.env` as `AUTH_ISSUER`
+   (`https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0`)
+4. Paste the API **client ID** again as `AUTH_AUDIENCE` in `.env`
+5. Verify without printing secrets: `python -c "from api.config import
+   Settings; print(Settings().auth_configured)"` should print `True`
 
-### Step 5: Configure Social Identity Providers
+### Step 5: Identity Providers (skip for MVP)
 
-1. Back in CIAM tenant, search for **"Identity providers"** (left sidebar)
-2. Click **"+ New identity provider"** → **"Google"**
-   - Enter your Google OAuth credentials (from Google Cloud Console)
-   - **Note:** Known bug with silent renewal — if you hit this, either:
-     - Keep Google but lose silent SSO (add `prompt=select_account` to auth request), OR
-     - Use email OTP only (remove Google)
-   - **Recommendation for now:** Email OTP only (simpler, no Google bugs)
-3. Email OTP is already a built-in provider — no extra setup needed
+Email with password is a built-in local account method. No Identity
+providers page setup is required. Skip Google for now (known silent-renewal
+bug 12-24h after first sign-in). Add Google later under External Identities
+→ All identity providers if needed.
 
 ### Step 6: Create Sign-In/Sign-Up User Flow
 
 1. Search for **"User flows"** (left sidebar)
-2. Click **"New user flow"**
+2. Click **"+ New user flow"**
    - **Type:** Sign up and sign in
    - **Name:** sign-up-sign-in
 3. Configure:
-   - **Identity providers:** Select **"Email Accounts (OTP only)"** and optionally **"Google"**
-   - **User attributes to collect:** email, given name, surname
-   - **Page layout:** Choose a theme (default is fine)
-4. Once created, copy the **User flow policy ID** (e.g., `B2C_1_sign-up-sign-in`) → paste into `.env` as `ENTRA_USER_FLOW`
+   - **Identity providers:** Email accounts → **Email with password**
+     (not OTP, not magic link; matches RealmPal's existing password UX)
+   - **User attributes to collect:** **Email Address only**. Skip display
+     name, given name, and surname; IGN is collected in-app
+   - **Page layout:** default is fine
+4. Once created, copy the flow name from the top of the page → paste into
+   `.env` as `ENTRA_USER_FLOW`
 
 ### Step 7: Collect Portal Values for .env
 
-Add these to `.env`:
+Add these to `.env` (placeholders only; never paste real values into docs):
 
 ```bash
 # Entra External ID (CIAM)
 ENTRA_TENANT_ID=your-tenant-id
 ENTRA_WEB_CLIENT_ID=your-spa-client-id
-ENTRA_WEB_CLIENT_SECRET=your-spa-client-secret
 ENTRA_API_CLIENT_ID=your-api-client-id
-AUTH_JWKS_URL=https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0/.well-known/openid-configuration/jwks
+AUTH_JWKS_URL=https://[tenant-id].ciamlogin.com/[tenant-id]/discovery/v2.0/keys
 AUTH_ISSUER=https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0
 AUTH_AUDIENCE=your-api-client-id
-ENTRA_USER_FLOW=B2C_1_sign-up-sign-in
+ENTRA_USER_FLOW=sign-up-sign-in
 ```
 
-**Do NOT code the Entra integration yet.** Paste portal values here first and confirm they work with a test token fetch.
+No `ENTRA_WEB_CLIENT_SECRET`: the SPA registration is a public client (PKCE via
+MSAL), see Step 3.
+
+**Portal setup complete when** `Settings().auth_configured` is `True` and
+`ENTRA_USER_FLOW` is set. Next work is code: MSAL SPA sign-in against this
+user, then swap local email+password for Entra-issued tokens.
 
 ---
 
@@ -482,4 +524,99 @@ If something breaks in production:
 - **Entra issues?** Known bug with Google SSO + silent renewal — use email OTP only for MVP
 - **Performance issues?** Scale Container App to 2–3 replicas and increase CPU/memory
 - **After MVP:** Set up CI/CD pipeline to auto-deploy on git push to `master`
+
+---
+
+## History
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 3 Steps 5-6
+
+Original Step 5 walked through adding Google as an identity provider and
+recommended email OTP. Step 6 collected email + given name + surname and
+selected "Email Accounts (OTP only)". Step 7 still showed the wrong JWKS
+path under `/v2.0/.well-known/.../jwks` and a B2C-style
+`ENTRA_USER_FLOW=B2C_1_sign-up-sign-in` example.
+
+**Superseded because:** product decision on Sep 13 was email with password
+(no OTP, no magic link), email address only (IGN stays in-app), and Google
+deferred. Live `.well-known` response already fixed the JWKS path in Step 4;
+Step 7 was aligned to match. "Do NOT code yet" replaced with "portal done,
+code integration next" once values landed in `.env`.
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 3 Step 4
+
+Original text pointed at "Token configuration" in the app registration and
+guessed the JWKS URL would live under
+`https://[tenant-id].ciamlogin.com/[tenant-id]/v2.0/.well-known/openid-configuration/jwks`.
+
+**Superseded because:** the real `.well-known/openid-configuration`
+response (fetched live) put `jwks_uri` at
+`https://[tenant-id].ciamlogin.com/[tenant-id]/discovery/v2.0/keys`
+instead, a different path shape than a workforce tenant's JWKS URL.
+`.env.example` already had this correct path; only this guide's draft
+guessed wrong. Also worth recording: the tenant ID itself was misread
+from a screenshot twice in the same session (transcribed as `dc3cb10a...`
+when the real value was `dc3eb10a...`), tiny portal text makes
+`c`/`e`/`0`/`O`/`1`/`l` easy to confuse. Copy IDs via the portal's copy
+icon, never retype them by hand.
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 3 Steps 2-3
+
+Original text for both app registrations:
+
+- Step 2 (API): "**Supported account types:** Accounts in any identity
+  provider or organizational directory (for multi-tenant scenarios)"
+- Step 3 (SPA): "**Supported account types:** Same as API (multi-tenant)",
+  "**Redirect URI:** Web → `http://localhost:3000/auth/callback`", plus a
+  4th sub-step: "Click **Certificates & secrets** → New client secret → 6
+  month expiration → paste as `ENTRA_WEB_CLIENT_SECRET`"
+
+**Superseded because:** a real screenshot of the "Register an application"
+page for a CIAM external tenant showed the actual dropdown options
+("Single tenant only - RealmPal" / "Multiple Entra ID tenants" / "Any
+Entra ID Tenant + Personal Microsoft accounts" / "Personal accounts
+only"), none of which match the old B2C-era wording above. For External ID
+customer sign-in, "Single tenant only" is correct: user-flow sign-ins
+(email, OTP, Google, etc.) all present to the app as sign-ins into this one
+tenant, "multi-tenant" and "personal accounts" are for a different scenario
+(other companies' own Entra tenants). Also corrected: the SPA redirect
+platform must be "Single-page application (SPA)", not "Web", and a SPA is
+a public client so it must not have a client secret at all (PKCE via MSAL
+instead); the old Step 3.4 client-secret instructions were removed rather
+than just corrected, since no code path ever consumed
+`ENTRA_WEB_CLIENT_SECRET`.
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 3 Step 1
+
+Original instructions assumed tenant creation happened inside the regular
+Azure Portal:
+
+1. Go to **[Azure Portal](https://portal.azure.com)**
+2. Search for **"Azure AD B2C"** (or **"Entra External ID"** in newer portal)
+3. Click **"Create new external identity customer tenant"**
+   - **Organization name:** RealmPal Production
+   - **Country/Region:** United States
+   - **Domain name:** realmpal-prod (or similar; must be globally unique)
+4. Wait ~5 minutes for provisioning
+5. Once created, you'll be redirected to the new tenant
+
+**Superseded because:** Azure AD B2C stopped being available to purchase
+for new customers on May 1, 2025, and that search result no longer exists
+in the Azure Portal for a subscription without an existing B2C tenant.
+
+### Until Sep 13, 2026 (same day, second revision) - PRIORITY 3 Step 1
+
+The immediate replacement text claimed external tenant creation "cannot
+be done from `portal.azure.com` at all anymore" and required the separate
+Microsoft Entra admin center (`entra.microsoft.com`), per Microsoft Learn's
+`tenant-configurations` page ("You can't create external tenants via the
+Azure portal, which supports creation of workforce tenants only").
+
+**Superseded because:** a real screenshot from inside the Azure Portal
+showed the actual "Create a tenant" blade for an external/CIAM tenant,
+reachable from the Default Directory's Entra ID → Overview → "Manage
+tenants" → "Create" → "External" flow (URL:
+`CreateDirectoryBlade/tenantType=ciam`), contradicting the Learn docs.
+Ground truth from the live portal wins; corrected steps are in the current
+PRIORITY 3 Step 1 above.
 

@@ -637,6 +637,51 @@ def _on_equip_text(item: ItemProfile) -> str:
     return ""
 
 
+def infer_item_base_stat(item: ItemProfile) -> Optional[str]:
+    """The stat an item's own On Equip line favors, e.g. '+20 ATT' -> Attack.
+
+    Used when a player asks for enchant/build advice on a named item without
+    naming a stat ("what enchants on Cackling Straitjacket" implies Attack
+    because that item's own base bonus is +20 Attack). Returns None on no
+    bonus or a tie between two stats | the caller should not guess further.
+    """
+    on_equip = _on_equip_text(item)
+    if not on_equip:
+        return None
+    # Not _bonus_value: its plausibility cap is tuned for T7 combat rings
+    # (+11 max), but a robe/weapon's own On Equip bonus is often +16-30.
+    scored: dict[str, int] = {}
+    for stat, pat in _BONUS_PAT.items():
+        hits = [int(n) for n in pat.findall(on_equip)]
+        if hits:
+            scored[stat] = max(hits)
+    if not scored:
+        return None
+    best_value = max(scored.values())
+    ties = [stat for stat, value in scored.items() if value == best_value]
+    return ties[0] if len(ties) == 1 else None
+
+
+def infer_class_primary_stat(payload: Optional[dict]) -> Optional[str]:
+    """Which 8/8 stat most of a class's abilities scale with.
+
+    Used for a whole-build ask with no stat named ("best kensei build"):
+    enchant recommendations still need one stat to focus on, and DPS builds
+    overwhelmingly chase whichever stat the class's own abilities scale
+    with, same as the single-item inference above.
+    """
+    abilities = list((payload or {}).get("abilities") or [])
+    counts: dict[str, int] = {}
+    for ability in abilities:
+        for stat in (ability.get("scales") or {}):
+            counts[stat] = counts.get(stat, 0) + 1
+    if not counts:
+        return None
+    top = max(counts.values())
+    ties = [stat for stat, count in counts.items() if count == top]
+    return ties[0] if len(ties) == 1 else None
+
+
 def _is_limited_ring(name: str, row: dict | None = None, item: ItemProfile | None = None) -> bool:
     blob = f"{name} {(row or {}).get('rowText') or ''} {(row or {}).get('bonus') or ''}"
     if _LE_CLONE.search(name) or _LE_CLONE.search(blob):

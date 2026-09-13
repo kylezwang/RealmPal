@@ -29,6 +29,7 @@ import {
   mergeQuestArt,
   questShift,
   stripWikiTitle,
+  syncQuestWindow,
   type DailyQuestState,
   type QuestArt,
 } from "@/lib/quests";
@@ -158,9 +159,26 @@ export function ChatInterface() {
     setSpeechSupported(!!SpeechRecognitionCtor);
   }, []);
 
+  // Ref, not a refreshUsage dependency: hydrateQuestArt sets questArt after
+  // refreshUsage's own effect runs, and refreshUsage feeds that same
+  // effect's dependency array, so depending on questArt directly would
+  // re-create refreshUsage -> re-run the effect -> re-hydrate art -> loop.
+  const questArtRef = useRef<QuestArt | undefined>(questArt);
+  useEffect(() => {
+    questArtRef.current = questArt;
+  }, [questArt]);
+
   const refreshUsage = useCallback(async () => {
     try {
-      setUsage(await fetchChatUsage());
+      const fresh = await fetchChatUsage();
+      setUsage(fresh);
+      // Only clear today's quest checkmarks (and the bonus they unlock)
+      // once the caller's actual quota timer rolls over, not at a
+      // UTC-midnight calendar flip, which can land hours off from it.
+      if (syncQuestWindow(fresh.resets_in_seconds ?? 0)) {
+        setDailyQuests(getDailyQuestState(questArtRef.current));
+        setQuestBonusClaimed(false);
+      }
     } catch {
       // Keep the last known count (or the guest default) so the
       // counter does not vanish when the API is briefly unreachable.
@@ -300,6 +318,9 @@ export function ChatInterface() {
 
   // Persist after the stream settles, and again when dungeon cards / item
   // sprites attach, so reopening a chat keeps the same styling.
+  // Do NOT re-order sessions; only update the message content and keep the
+  // original position in the sidebar. Sessions move to the top only when a
+  // new message is actually sent, not on every render.
   useEffect(() => {
     if (persistPausedRef.current || messages.length === 0 || isStreaming) return;
     const id = activeSessionId ?? crypto.randomUUID();
@@ -312,14 +333,49 @@ export function ChatInterface() {
         id,
         title: existing?.title ?? deriveTitle(messages),
         messages,
-        updatedAt: Date.now(),
+        updatedAt: existing?.updatedAt ?? Date.now(),
       };
-      const next = [updated, ...prev.filter((s) => s.id !== id)];
+      // Update in place to keep its current position; don't move to top.
+      // But .map() only ever transforms existing elements | if this session
+      // doesn't exist yet (brand new chat, e.g. started from a quest or a
+      // sidebar quick-suggestion rather than the composer), it must be
+      // inserted instead or it silently never appears in the sidebar.
+      const next = existing
+        ? prev.map((s) => (s.id === id ? updated : s))
+        : [updated, ...prev];
       saveSessions(next, owner);
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, isStreaming]);
+
+  // Move to top only when a new message is added (message count increases).
+  // Track the previous message count to detect when a message was added.
+  const prevMessageCountRef = useRef(messages.length);
+  useEffect(() => {
+    const currentCount = messages.length;
+    const prevCount = prevMessageCountRef.current;
+    prevMessageCountRef.current = currentCount;
+
+    if (currentCount <= prevCount || !activeSessionId) return;
+
+    // A new message was added; move this session to the top and update timestamp.
+    setSessions((prev) => {
+      const updated = prev.map((s) => {
+        if (s.id === activeSessionId) {
+          return { ...s, updatedAt: Date.now() };
+        }
+        return s;
+      });
+      // Re-sort to move this session to the top.
+      const withReorder = [
+        updated.find((s) => s.id === activeSessionId)!,
+        ...updated.filter((s) => s.id !== activeSessionId),
+      ];
+      saveSessions(withReorder, historyOwnerRef.current);
+      return withReorder;
+    });
+  }, [messages.length, activeSessionId]);
 
   // After send, pin the user's just-sent message to the top of the transcript
   // so the reply can grow below without yanking the viewport to the bottom.
@@ -718,9 +774,10 @@ export function ChatInterface() {
             id,
             title: existing?.title ?? deriveTitle(updated),
             messages: updated,
-            updatedAt: Date.now(),
+            updatedAt: existing?.updatedAt ?? Date.now(),
           };
-          const next = [session, ...sessionsPrev.filter((s) => s.id !== id)];
+          // Keep the session in its current position; don't move to top.
+          const next = sessionsPrev.map((s) => (s.id === id ? session : s));
           saveSessions(next, historyOwnerRef.current);
           return next;
         });

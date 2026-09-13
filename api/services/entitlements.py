@@ -167,6 +167,26 @@ async def get_status(email: str, settings: Settings) -> Optional[str]:
     return await asyncio.to_thread(_read)
 
 
+async def get_stripe_customer_id(email: str, settings: Settings) -> Optional[str]:
+    """Stripe customer ID for this email, or None if no row / never had one.
+
+    Used to open a Stripe Customer Portal session so a paid user can cancel
+    or update their payment method themselves instead of emailing support.
+    """
+    email = _normalize(email)
+    if not email:
+        return None
+
+    def _read() -> Optional[str]:
+        conn = _connection(settings.entitlements_db_path)
+        row = conn.execute(
+            "SELECT stripe_customer_id FROM entitlements WHERE email = ?", (email,)
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
+    return await asyncio.to_thread(_read)
+
+
 async def is_active(email: str, settings: Settings) -> bool:
     """
     True only if this email has a row here with an active/trialing status.

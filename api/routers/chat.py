@@ -45,6 +45,7 @@ from ..services.ingestion import ingest_player
 from ..services.player_lookup import PLAYER_CACHE_PREFIX, get_or_scrape_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
+from ..services.enchanting import is_enchant_query
 from ..services.item_aliases import is_set_visualize_query
 from ..services.player_lookup import extract_player_ign
 from ..services.skin_visualizer import is_skin_visualize_query, outfit_history_from_messages
@@ -267,7 +268,7 @@ def _checkout_url_for(
             extra["customer_email"] = email
         session = stripe.checkout.Session.create(
             mode="subscription",
-            payment_method_types=["card"],
+            payment_method_types=["card", "link"],
             line_items=[{"price": settings.stripe_price_id, "quantity": 1}],
             success_url=f"{settings.app_url}?upgraded=true&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=settings.app_url,
@@ -448,14 +449,23 @@ async def claim_daily_quests(
     user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
     authorization: str | None = Header(default=None),
 ) -> dict:
-    """Grant +1 message after today's quests. Free and paid. Once per UTC day."""
+    """Grant +1 message after today's quests. Free and paid.
+
+    Idempotent per rolling quota window (free/guest) or per claim-to-claim
+    day (paid, feeds the monthly Claude pool). See daily_quests.py.
+    """
     quota = quota_for(user, request, settings)
     paid = bool(user and user.email and await entitlements.is_active(user.email, settings))
     if not paid:
         paid = await _has_legacy_paid_token(authorization, settings)
     subject = _quest_subject(user, quota)
+    # Sync the claim/bonus lifetime to the caller's actual quota reset so a
+    # UTC-midnight calendar flip can't grant (or drop) a bonus out of step
+    # with the quota it boosts. Paid claims feed a monthly pool instead, so
+    # they don't need the live quota TTL.
+    quota_ttl = 0 if paid else await peek_ttl(redis, quota)
     granted = await daily_quests.claim_daily_bonus(
-        redis, subject, settings, paid=paid
+        redis, subject, settings, paid=paid, quota_ttl_seconds=quota_ttl
     )
     bonus = (
         await daily_quests.peek_paid_bonus(redis, subject, settings)
@@ -613,12 +623,16 @@ async def chat_stream(
             bool(extract_player_ign(query_text, history=user_history))
             and not this_class
         )
+        # "What enchants on QOT" has no class/stat, so it isn't buildish |
+        # gate on the same is_enchant_query the enchantment specialist uses.
+        enchant_only = is_enchant_query(query_text) and not buildish
         # Specialists already inject the right chunk. Extra wiki RAG pads
         # the bill and, if we glue on the previous user turn, mixes topics
         # (player lookup + Bard attack → off-class bows).
         if (
             dungeon_only
             or player_only
+            or enchant_only
             or is_skin_visualize_query(query_text, history=outfit_history)
             or is_set_visualize_query(query_text)
         ):
@@ -661,7 +675,10 @@ async def chat_stream(
             history=history_texts,
         )
         if build_ctx:
-            if player_only:
+            if player_only or enchant_only:
+                # Enchant briefs cite RealmEye's own /wiki/enchanting URL
+                # inline; stamping the RealmShark leaderboard citation on
+                # top would misattribute the source.
                 context = (
                     f"{context}\n\n---\n\n{build_ctx}" if context else build_ctx
                 )

@@ -97,6 +97,13 @@ function utcDateStamp(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function daysBetween(a: string, b: string): number {
+  const t1 = Date.parse(`${a}T00:00:00Z`);
+  const t2 = Date.parse(`${b}T00:00:00Z`);
+  if (!Number.isFinite(t1) || !Number.isFinite(t2)) return 0;
+  return Math.abs(t2 - t1) / 86_400_000;
+}
+
 function dailySeed(stamp = utcDateStamp()): number {
   let seed = 0;
   for (let i = 0; i < stamp.length; i++) seed = (seed * 31 + stamp.charCodeAt(i)) >>> 0;
@@ -252,9 +259,17 @@ function readProgress(): StoredProgress {
     const raw = readScopedOrLegacy(STORAGE_KEY);
     if (!raw) return { date: today, done: [], claimed: false };
     const parsed = JSON.parse(raw) as StoredProgress;
-    if (parsed.date !== today) return { date: today, done: [], claimed: false };
+    // The real reset trigger is syncQuestWindow, tied to the caller's
+    // actual (rolling) message-quota timer, the same one the paywall
+    // shows. A UTC-midnight calendar flip can land hours before or after
+    // that timer resets, so it must not clear the "quests done" credit on
+    // its own. This is only a safety net for when syncQuestWindow never
+    // ran (e.g. usage stayed unreachable for a couple of days).
+    if (!parsed.date || daysBetween(parsed.date, today) >= 2) {
+      return { date: today, done: [], claimed: false };
+    }
     return {
-      date: today,
+      date: parsed.date,
       done: Array.isArray(parsed.done) ? parsed.done : [],
       claimed: Boolean(parsed.claimed),
     };
@@ -269,6 +284,52 @@ function writeProgress(progress: StoredProgress): void {
   } catch {
     // Private mode / storage disabled — progress just won't persist.
   }
+}
+
+const WINDOW_KEY = "realm_pal_quest_window";
+
+function readLastResetsInSeconds(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = readScopedOrLegacy(WINDOW_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { resetsInSeconds?: number };
+    const value = Number(parsed.resetsInSeconds);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastResetsInSeconds(value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      scopedKey(WINDOW_KEY),
+      JSON.stringify({ resetsInSeconds: value }),
+    );
+  } catch {
+    // Private mode / storage disabled.
+  }
+}
+
+/**
+ * Call whenever fresh `/chat/usage` data loads. `resetsInSeconds` only ever
+ * counts down within one quota window; an increase means the window just
+ * rolled over for real. That is the only moment quest progress (and the
+ * bonus credit it unlocks) should clear locally, matching the same fix
+ * applied server-side in `daily_quests.claim_daily_bonus`. Returns true if
+ * a rollover was detected and progress was cleared.
+ */
+export function syncQuestWindow(resetsInSeconds: number): boolean {
+  if (typeof window === "undefined") return false;
+  const last = readLastResetsInSeconds();
+  writeLastResetsInSeconds(resetsInSeconds);
+  if (last == null || resetsInSeconds <= last) return false;
+  const progress = readProgress();
+  if (progress.done.length === 0 && !progress.claimed) return false;
+  writeProgress({ date: utcDateStamp(), done: [], claimed: false });
+  return true;
 }
 
 export function getDailyQuestState(art?: QuestArt): DailyQuestState[] {

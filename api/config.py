@@ -98,9 +98,10 @@ class Settings(BaseSettings):
     pii_hash_secret: str = ""
 
     # Daily ceiling for paid accounts. Abuse fuse, not expected use.
-    paid_message_limit: int = 200
-    # Claude replies included in the $7 plan. Stored answers do not count.
-    paid_claude_included: int = 90
+    paid_message_limit: int = 50
+    # Claude replies included in the $7 plan (~$2.50 at ~$0.0365/reply).
+    # Stored answers do not count. Old default was 90.
+    paid_claude_included: int = 68
     # Price of one Claude reply after the included pool.
     claude_overage_usd: float = 0.08
 
