@@ -300,7 +300,23 @@ Related, smaller fix already shipped same night: `web/lib/api.ts`'s
 `postAuth` (sign-in/register) had no client-side timeout, so if the
 backend queued for minutes behind that same lock, the UI just spun
 forever instead of showing an error. Added a 20s `AbortController` timeout
-with a clear retryable message.
+with a clear retryable message. Same gap found and fixed in
+`fetchPlayer`/`fetchDungeon`/`fetchItem` (45s allowance, scrape-backed so
+slower than auth) via a shared `fetchWithTimeout` helper.
+
+**Confirmed same night, not yet applied**: `/health` (pure static JSON,
+zero I/O) took 37s to respond while warming was mid-run. Ruled out a
+Python-side blocking bug in the scraper (retries use `asyncio.sleep`, page
+extraction runs as JS via `page.evaluate()`, not synchronous Python
+parsing). Real cause is almost certainly the Container App's CPU
+allocation, `rg-realmpal` → `realmpal-api` is on 0.5 vCPU / 1 GiB
+(Azure's small default), too little to run headless Chromium and
+FastAPI's event loop at once without one starving the other. Next action:
+bump to 1.0 vCPU / 2 GiB via Containers → Edit and deploy (roughly doubles
+compute cost while the replica is running, a few dollars/month at this
+traffic level). Also consider bumping min replicas to 2 at the same time
+so warming and live traffic aren't sharing the only replica, holding off
+on that until CPU/memory alone is tested first.
 
 ### Pre-existing ESLint errors (`react-hooks/set-state-in-effect`)
 
