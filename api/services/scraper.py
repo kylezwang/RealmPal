@@ -1641,7 +1641,21 @@ async def _open_outfit_page(page: Page, class_id: Optional[int] = None, skin_id:
         url = f"{_OUTFIT_PAGE}/{class_id}/{skin_id or 0}//"
     else:
         url = _OUTFIT_PAGE
-    await _goto_with_retry(page, url, ready_selector=".chooser-table, #class", timeout=20_000)
+    # `.chooser-table` (previously part of this OR selector) has a
+    # permanent zero-height bounding box on RealmEye's live markup - it's a
+    # CSS-collapsed container, not a transient loading state (confirmed via
+    # a live DOM inspection Sep 14: width 685px, height 0px, immediately and
+    # indefinitely). Playwright's default `visible` wait requires a
+    # non-empty box, so `wait_for_selector(".chooser-table, #class")`
+    # deterministically locked onto whichever of the two matched first in
+    # DOM order (`.chooser-table`) and then timed out waiting forever for
+    # an element that will never satisfy "visible". `#class` (the "Choose
+    # a class" button) is a real, always-visible element and is sufficient
+    # on its own - it exists on both URL variants this function uses. The
+    # actual data-readiness check already happens next via
+    # `_OUTFIT_SCRIPTS_READY_JS`, this selector wait only needs to confirm
+    # we're past Cloudflare's interstitial onto the real page.
+    await _goto_with_retry(page, url, ready_selector="#class", timeout=20_000)
     await page.wait_for_function(_OUTFIT_SCRIPTS_READY_JS, timeout=15_000)
 
 
