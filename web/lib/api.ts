@@ -354,16 +354,34 @@ export interface AuthSession {
   ign?: string | null;
 }
 
+/** Sign-in/register can't be allowed to spin forever on a slow or
+ * unresponsive backend (e.g. a shared scrape lock queuing behind
+ * background warming) - fail with a clear, retryable error instead. */
+const AUTH_TIMEOUT_MS = 20_000;
+
 async function postAuth(
   path: string,
   body: Record<string, string>,
   persist = true,
 ): Promise<AuthSession> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("That's taking longer than expected. Please try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(typeof data.detail === "string" ? data.detail : "Could not sign in");

@@ -270,6 +270,38 @@ Magic-link is fallback only; email+password is primary. Can defer.
 
 Section titles (Your IGN, Chats, Suggested), slightly larger font, lighter text.
 
+### Live scrapes queue behind specialist warming (single Chromium semaphore)
+
+Found Sep 13 in production: a player/pet lookup took 43s because it queued
+behind a chain of specialist-warming scrapes (UmiEnjoyers BIS for all 19
+classes, hub pages, etc.) via `api/services/scraper.py`'s
+`_PW_SEM = asyncio.Semaphore(1)`. That's not an arbitrary limit, the
+comment above it says parallel Chromium launches crash the driver (almost
+certainly a `/dev/shm` constraint with more than one Chromium process in
+one container), so just bumping the semaphore's count is not a safe
+one-line fix, it needs real testing (e.g. `--disable-dev-shm-usage`,
+larger container memory, or genuinely separate low-weight browser
+contexts) before trusting it in production.
+
+Compounding factor tonight specifically: ~8 container redeploys in a row
+each restart the process, killing specialist warming's in-progress task
+before its multi-minute queue finishes, so it resumes from scratch each
+time rather than ever completing cleanly. Should settle down once
+redeploys stop for the night (wiki data has a 7-day TTL once fully warmed).
+
+Real fix, for whenever there's time to test it properly: give live/
+interactive scrape requests priority over background warming for the
+semaphore (e.g. a small queue that lets an interactive request cut ahead
+of a pending warming scrape, or pause warming entirely while a live
+request is waiting), so a user-facing lookup never queues behind a bulk
+wiki refresh.
+
+Related, smaller fix already shipped same night: `web/lib/api.ts`'s
+`postAuth` (sign-in/register) had no client-side timeout, so if the
+backend queued for minutes behind that same lock, the UI just spun
+forever instead of showing an error. Added a 20s `AbortController` timeout
+with a clear retryable message.
+
 ### Pre-existing ESLint errors (`react-hooks/set-state-in-effect`)
 
 Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not caused by that session's changes (confirmed via `git diff --stat`). Not a build blocker (`next build` doesn't gate on ESLint in this Next.js version), but should get fixed: `components/chat/SpriteZoom.tsx` (2 instances), `components/chat/SkinPortrait.tsx`, `components/chat/PlayerCard.tsx`, `components/player/PlayerCard.tsx`. Each is a `setState` call directly in a `useEffect` body instead of a callback/derived-state pattern.
