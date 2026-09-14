@@ -50,8 +50,12 @@ _NICKNAMES = {
 _GUIDE_RE = re.compile(
     r"(?:"
     r"guide\s+to\s+complete|"
-    r"guide\s+to\s+(?:beat|clear|finish)|"
-    r"how\s+(?:do\s+i|to)\s+(?:complete|beat|clear|finish)|"
+    r"guide\s+to\s+(?:beat|clear|finish|do|run|solo)|"
+    # "do" must be included: "how to do moonlight village" is the single most
+    # common phrasing for this and was previously falling through to generic
+    # RAG (found live Sep 14 - see BACKLOG.md), since only
+    # complete/beat/clear/finish were recognized as guide-request verbs.
+    r"how\s+(?:do\s+i|to)\s+(?:complete|beat|clear|finish|do|run|solo)|"
     r"walkthrough\s+(?:for|of)|"
     r"(?:dungeon\s+)?guide\s+(?:for|to)"
     r")\s+(.+?)\s*$",

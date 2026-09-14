@@ -3,8 +3,30 @@ from api.services.dungeon_guide import (
     _SOURCE_SPRITE_FALLBACK,
     _focus_text,
     _merge_media,
+    extract_dungeon_query,
     portal_for_dungeon,
 )
+
+
+def test_extract_dungeon_query_recognizes_how_to_do_phrasing():
+    """Regression: "how to do X" was previously invisible to the dungeon
+    specialist because _GUIDE_RE only recognized complete/beat/clear/finish
+    as guide-request verbs, not "do" - found live Sep 14 asking "How to do
+    moonlight village?" and getting a generic "I don't have dungeon guide
+    data" reply instead of the real specialist firing."""
+    assert extract_dungeon_query("How to do moonlight village?") == "moonlight village"
+    assert extract_dungeon_query("how do i do the shatters") == "the shatters"
+
+
+def test_extract_dungeon_query_recognizes_run_and_solo_phrasing():
+    assert extract_dungeon_query("guide to run oryx sanctuary") == "oryx sanctuary"
+    assert extract_dungeon_query("how to solo lost halls") == "lost halls"
+
+
+def test_extract_dungeon_query_still_recognizes_original_verbs():
+    assert extract_dungeon_query("how to beat the shatters") == "the shatters"
+    assert extract_dungeon_query("how do i complete moonlight village") == "moonlight village"
+    assert extract_dungeon_query("guide to clear wine cellar") == "wine cellar"
 
 
 def test_shatters_guide_uses_real_portal_not_ice():
