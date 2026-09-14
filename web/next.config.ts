@@ -16,6 +16,11 @@ import path from "path";
 const repoRoot = path.resolve(__dirname, "..");
 
 const nextConfig: NextConfig = {
+  // Azure Static Web Apps' hybrid Next.js hosting has a 250 MB app-size
+  // limit; `standalone` traces only the deps each route actually needs
+  // into `.next/standalone` instead of shipping the full `node_modules`.
+  // No effect on `next dev` or plain `next start` locally.
+  output: "standalone",
   outputFileTracingRoot: repoRoot,
   turbopack: {
     root: repoRoot,

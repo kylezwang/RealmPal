@@ -2,45 +2,39 @@
 
 Default is $0: included Claude replies only. A paying user can raise the
 cap (Cursor-style) so extra replies bill at CLAUDE_OVERAGE_USD.
+
+Shares the `entitlements` table/backend (api/services/entitlements.py,
+api/services/db.py) rather than a table of its own - one row per email
+either way, no reason to split it.
 """
 from __future__ import annotations
 
-import asyncio
-import sqlite3
 import time
-from pathlib import Path
 from typing import Optional
 
 from ..config import Settings
+from . import db, entitlements
 
 ALLOWED_CAPS_USD = (0.0, 20.0, 50.0, 100.0)
 PRESET_CAPS_USD = (20.0, 50.0, 100.0)
 MAX_SPEND_CAP_USD = 200.0
 
-_write_lock = asyncio.Lock()
 _ready: set[str] = set()
 
 
-def _connection(db_path: str) -> sqlite3.Connection:
-    from . import entitlements
-
-    return entitlements._connection(db_path)
-
-
-def _ensure_column(db_path: str) -> None:
-    resolved = str(Path(db_path).resolve())
-    if resolved in _ready:
+async def _ensure_column(settings: Settings) -> None:
+    key = settings.database_url.strip() or settings.entitlements_db_path
+    if key in _ready:
         return
-    conn = _connection(db_path)
-    cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(entitlements)").fetchall()
-    }
-    if "spend_cap_cents" not in cols:
-        conn.execute(
-            "ALTER TABLE entitlements ADD COLUMN spend_cap_cents INTEGER NOT NULL DEFAULT 0"
-        )
-    _ready.add(resolved)
+    # The base table lives in entitlements.py - make sure it exists before
+    # altering it (tests hit this store directly without going through
+    # entitlements first).
+    await entitlements.init_db(settings)
+    await db.add_column_if_missing(
+        settings, settings.entitlements_db_path,
+        "entitlements", "spend_cap_cents", "INTEGER NOT NULL DEFAULT 0",
+    )
+    _ready.add(key)
 
 
 def _normalize(email: str) -> str:
@@ -52,16 +46,12 @@ async def get_spend_cap_usd(email: str, settings: Settings) -> float:
     if not email:
         return 0.0
 
-    def _read() -> int:
-        _ensure_column(settings.entitlements_db_path)
-        conn = _connection(settings.entitlements_db_path)
-        row = conn.execute(
-            "SELECT spend_cap_cents FROM entitlements WHERE email = ?",
-            (email,),
-        ).fetchone()
-        return int(row[0]) if row else 0
-
-    cents = await asyncio.to_thread(_read)
+    await _ensure_column(settings)
+    row = await db.fetchone(
+        settings, settings.entitlements_db_path,
+        "SELECT spend_cap_cents FROM entitlements WHERE email = ?", (email,),
+    )
+    cents = int(row[0]) if row else 0
     return max(0.0, cents / 100.0)
 
 
@@ -74,16 +64,12 @@ async def set_spend_cap_usd(
     value = max(0.0, min(float(spend_cap_usd), MAX_SPEND_CAP_USD))
     cents = int(round(value * 100))
 
-    def _write() -> None:
-        _ensure_column(settings.entitlements_db_path)
-        conn = _connection(settings.entitlements_db_path)
-        conn.execute(
-            "UPDATE entitlements SET spend_cap_cents = ?, updated_at = ? WHERE email = ?",
-            (cents, int(time.time()), email),
-        )
-
-    async with _write_lock:
-        await asyncio.to_thread(_write)
+    await _ensure_column(settings)
+    await db.execute(
+        settings, settings.entitlements_db_path,
+        "UPDATE entitlements SET spend_cap_cents = ?, updated_at = ? WHERE email = ?",
+        (cents, int(time.time()), email),
+    )
     return cents / 100.0
 
 
@@ -92,12 +78,8 @@ async def customer_id(email: str, settings: Settings) -> Optional[str]:
     if not email:
         return None
 
-    def _read() -> Optional[str]:
-        conn = _connection(settings.entitlements_db_path)
-        row = conn.execute(
-            "SELECT stripe_customer_id FROM entitlements WHERE email = ?",
-            (email,),
-        ).fetchone()
-        return row[0] if row and row[0] else None
-
-    return await asyncio.to_thread(_read)
+    row = await db.fetchone(
+        settings, settings.entitlements_db_path,
+        "SELECT stripe_customer_id FROM entitlements WHERE email = ?", (email,),
+    )
+    return row[0] if row and row[0] else None

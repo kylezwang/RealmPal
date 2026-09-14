@@ -45,6 +45,13 @@ _NO_KEY_COMMANDS = frozenset(
     }
 )
 
+# Async generators. `match` is a key glob (needs the prefix so the scan
+# only sees this deployment's keys instead of every deployment sharing the
+# Redis instance); the keys yielded back need the prefix stripped again so
+# callers see the same names they'd see on an unnamespaced client, matching
+# every other command in this wrapper.
+_KEY_ITERATOR_COMMANDS = frozenset({"scan_iter"})
+
 
 class NamespacedRedis:
     """
@@ -74,6 +81,16 @@ class NamespacedRedis:
         """The namespaced form of `name`, for callers that need it directly."""
         return f"{self._prefix}{name}"
 
+    async def _strip_prefix(self, keys: Any) -> Any:
+        """Undo `key()` on every item an iterator command yields back."""
+        prefix = self._prefix
+        prefix_bytes = prefix.encode()
+        async for raw in keys:
+            if isinstance(raw, bytes):
+                yield raw[len(prefix_bytes):] if raw.startswith(prefix_bytes) else raw
+            else:
+                yield raw[len(prefix):] if raw.startswith(prefix) else raw
+
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
@@ -94,6 +111,15 @@ class NamespacedRedis:
                 return attr(*(self.key(k) for k in keys), **kwargs)
 
             return call_with_all_prefixed
+
+        if name in _KEY_ITERATOR_COMMANDS:
+            def call_with_prefixed_match(*args: Any, **kwargs: Any) -> Any:
+                match = kwargs.get("match")
+                if match is not None:
+                    kwargs["match"] = self.key(match)
+                return self._strip_prefix(attr(*args, **kwargs))
+
+            return call_with_prefixed_match
 
         if callable(attr):
             raise AttributeError(
