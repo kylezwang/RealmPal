@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { registerAccount, requestSignInLink, signInWithPassword, startOAuth } from "@/lib/api";
+import { entraConfigured, signInWithEntra } from "@/lib/msal";
 import { SWORD_SPRITE, SIGNIN_HERO_IMAGE } from "@/lib/sprites";
 
 type Mode = "signin" | "register";
@@ -392,6 +393,14 @@ export default function SignInPage() {
     setOauthLoading(true);
     setOauthError(null);
     try {
+      // "Microsoft" here means our own Entra External ID (CIAM) tenant's
+      // hosted sign-up/sign-in page, not "sign in with your personal
+      // Microsoft account" - see web/lib/msal.ts. Google stays on the old
+      // stub (deferred, known silent-renewal bug).
+      if (provider === "microsoft" && entraConfigured()) {
+        await signInWithEntra(); // redirects the browser; never resolves
+        return;
+      }
       await startOAuth(provider);
     } catch (err) {
       setOauthError(err instanceof Error ? err.message : "Something went wrong");

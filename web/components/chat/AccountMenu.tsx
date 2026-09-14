@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PlayerProfile } from "@/lib/api";
 import { AUTH_CHANGED_EVENT, clearAuthToken, decodeAuthEmail, decodeAuthIgn } from "@/lib/api";
+import { signOutOfEntra } from "@/lib/msal";
 import { BillingModal } from "./BillingModal";
 import { GuestAvatar } from "./GuestAvatar";
 
@@ -164,6 +165,7 @@ export function AccountMenu({
 
   function handleLogout() {
     clearAuthToken();
+    void signOutOfEntra();
     setEmail(null);
     setIgn(null);
     setOpen(false);

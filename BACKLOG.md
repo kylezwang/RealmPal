@@ -13,10 +13,10 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. Entra External ID - **portal setup done** (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
-2. Foundry - **blocked**, see Blocked section below. Don't retry deployment until billing clears.
+1. Entra External ID - **MSAL sign-in built** (Sep 13) on `feature/entra-auth` (branched off `master`, `dev` untouched). Next: manually test the real redirect round-trip with real `.env.local` values, build IGN collection for a first-time Entra sign-up, then merge.
+2. Launch on a direct `ANTHROPIC_API_KEY` now (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
 3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
-4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
+4. Container Apps + Key Vault for the actual Azure deploy, once Entra sign-in is merged.
 
 **Enchantment specialist is done** (wiring + implied-stat inference + tests, Sep 13). See `CHANGELOG.md` [2026.09.13] for detail.
 
@@ -25,6 +25,13 @@ Resume order when context is fresh:
 **Production branch is set up** (Sep 13): `master` is production (protected: PR required, no force-push/delete, enforced for admins too), `dev` is the normal working branch with no protection. `master` was fast-forwarded to `dev`'s tip so it's not stale anymore. Promote a deploy by opening a PR `dev` → `master` and merging it, there's no more direct-push path.
 
 ## History
+### Until Sep 13, 2026 (later same day, third revision)
+Resume order was:
+1. Entra External ID - portal setup done (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
+2. Foundry - blocked, see Blocked section below. Don't retry deployment until billing clears.
+3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
+4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
+
 ### Until Sep 13, 2026 (later same day)
 Resume order was:
 1. Entra External ID - portal values collected (Sep 13). Next: MSAL SPA + swap local email+password for Entra tokens.
@@ -51,20 +58,27 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 
 ## Next Up
 
-### Entra External ID — portal done, code integration next
+### Entra External ID — portal done, MSAL sign-in built on a side branch, not merged yet
 
-**Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true.
+**Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true, and already tried first (before the local session JWT) in `api/dependencies.py`'s `get_optional_user` - no backend changes were needed for any of this.
 
-**Still to build:**
-1. Frontend MSAL (PKCE) against the SPA client + user flow on `ciamlogin.com`
-2. Wire Sign in / Create account to Entra instead of (or alongside) local SQLite email+password
-3. Keep IGN collection in-app after first Entra sign-up
-4. Defer Google (silent-renewal bug); add later if wanted
+**Built on `feature/entra-auth` (branched off `master`, Sep 13), not merged into `dev` or `master` yet:**
+1. `web/lib/msal.ts`: MSAL (PKCE) `PublicClientApplication` against the SPA client + `ciamlogin.com` authority + user flow. Lazy singleton, only touches `window` client-side, no-ops if `NEXT_PUBLIC_ENTRA_*` env vars are unset
+2. `web/app/auth/callback/page.tsx`: handles the redirect back from Entra, stores the Entra access token under the same `AUTH_TOKEN_KEY` the local session JWT uses (so every existing `authHeaders()` call site needs zero changes)
+3. `web/app/auth/signin/page.tsx`: "Continue with Microsoft" now triggers a real `loginRedirect()` when Entra is configured, instead of always hitting the old 501 stub. Google is untouched (deferred, silent-renewal bug)
+4. `AccountMenu.tsx`: sign-out also clears the MSAL session, but only if MSAL actually has a cached account (a local email+password user signing out never touches Entra at all)
+5. `web/.env.local.example`: documents the `NEXT_PUBLIC_ENTRA_*` values needed (same non-secret IDs already in the root `.env`, just re-exposed for the browser bundle)
+
+**Still to build before merging:**
+1. **Manual test against the real tenant**: fill in `web/.env.local` with the real (non-secret) tenant ID / SPA client ID / API scope, run `npm run dev`, click "Continue with Microsoft", confirm the redirect round-trip and that `/chat` calls succeed with the Entra token
+2. **IGN collection after first Entra sign-up**: the user flow only collects email, so a brand-new Entra account has no IGN and `decodeAuthIgn()` correctly returns `null` for it (no crash), but there's no UI yet prompting for one and no backend endpoint to attach it to that Entra `sub`. Local email+password's `registerAccount` collects IGN inline; Entra's hosted page can't, so this needs its own small flow post-redirect
+3. Defer Google (silent-renewal bug); add later if wanted
 
 **Findings kept:**
 - Two app registrations (API + SPA), not one
 - Authority: `ciamlogin.com` (not `login.microsoftonline.com`) for CIAM
 - No SPA client secret (public client + PKCE)
+- `@azure/msal-browser` 5.21.0's `CacheOptions` no longer has `storeAuthStateInCookie` (that was an IE11-era option); only `cacheLocation` and `cacheRetentionDays` remain
 
 #### History
 ##### Until Sep 13, 2026 - Entra External ID
