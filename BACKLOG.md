@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/13/26
+Last updated: 9/14/26 (12:21 AM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -13,7 +13,24 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
+1. **CRITICAL, not yet fixed - embeddings backend unreachable in production, silently breaking all RAG** (found Sep 14, ~12:15 AM, during a live post-deploy smoke test). `api/services/embeddings.py`'s `EMBEDDING_BACKEND` env var defaults to `"ollama"`, pointing at `OLLAMA_URL=http://localhost:11434` - there is no Ollama server anywhere on the Container App, so every embedding call fails with `httpx`'s generic `All connection attempts failed`. This is NOT a narrow/contained issue - it breaks:
+   - `retrieve_context` (`api/routers/chat.py` ~line 647): every non-specialist chat question answers with `context = ""` (caught by the broad `except Exception` at line 660, logged as "RAG context retrieval failed, answering without retrieved context"), i.e. **every chat reply that isn't a dungeon/player/enchant-only specialist turn runs with zero retrieved wiki context**, silently, no error surfaced to the user.
+   - `ingest_player` (`api/routers/players.py` line 57, `api/routers/chat.py` line 601): every player-profile scrape logs "Could not ingest player profile into RAG store" and never writes to Qdrant - **note this corrects an earlier same-day (Sep 13) CHANGELOG.md note that called this "unrelated and non-fatal by design" after ruling out client-recreation as the cause; that part was right (client is `@lru_cache`'d, not recreated per request) but the conclusion was incomplete - it stopped one layer too shallow and didn't catch that the embeddings call itself (needed before the Qdrant write) was the actual dead end.**
+   - Reproduced live Sep 14: asked "How to do moonlight village?" and "Battle for the Nexus" (a dungeon slug already confirmed cached in Redis per the same night's warm log) and got "I don't have dungeon guide data... in the context provided" for both - strongly suggests dungeon-guide retrieval also leans on this same embeddings path (likely a semantic match from the freeform dungeon name to a wiki slug), not just the generic RAG block.
+   - **Root cause confirmed, fix path decided (Sep 14): the Qdrant Cloud collection was seeded using Ollama's `nomic-embed-text` embeddings** (confirmed with the user directly - `EMBEDDING_BACKEND` was left at its default when `python -m api.scripts.seed_wiki` (39 hubs) and `seed_dps` (36 builds) were run locally in Sep 13's session). Flipping just the Container App's `EMBEDDING_BACKEND` to `voyage` would run production queries in `voyage-3-lite`'s vector space against Ollama-embedded vectors - not just broken, but silently *wrong* (would return semantically nonsensical matches instead of an obvious error). Cannot fix by env var alone.
+   - **Exact next steps (picking up here):**
+     1. User signs up for a Voyage AI API key at voyageai.com (in progress as of Sep 14, ~12:20 AM - this is the literal next action).
+     2. Set `EMBEDDING_BACKEND=voyage` and `VOYAGE_API_KEY=<key>` in the local `.env` temporarily (just for re-seeding).
+     3. Re-run `python -m api.scripts.seed_wiki` and `python -m api.scripts.seed_dps` locally (same `QDRANT_URL`/`QDRANT_API_KEY` as before, pointing at the same Qdrant Cloud cluster/collection) so the collection's vectors are rewritten in Voyage's embedding space, replacing the Ollama ones.
+     4. Set the same `EMBEDDING_BACKEND=voyage` + `VOYAGE_API_KEY` as Container App environment variables (Portal: Container Apps -> `realmpal-api` -> Containers -> Edit and deploy -> Environment variables tab -> Add), which creates a new revision.
+     5. Smoke test: ask a dungeon question (e.g. "how to do moonlight village") and a build question, confirm the reply actually cites real context and doesn't say "I don't have ... in the context provided". Check the log stream for "RAG context retrieval failed" / "Could not ingest ... into RAG store" - both should disappear.
+   - Also worth deciding while there: is there other Qdrant-backed content beyond wiki hubs + DPS loadouts (e.g. live-ingested player profiles, item data) that also needs a one-time re-embed, or that self-heals since it's ingested fresh on every live scrape? Check `api/services/ingestion.py` for every `qdrant.upsert` call site before assuming the two seed scripts are the complete list.
+2. **Fixed Sep 14 (~12:20 AM): Claude's generic wiki-referral citations were triggering doomed item scrapes.** `web/lib/itemLookup.ts`'s `extractItemNames()` treated *any* `[text](.../wiki/...)` markdown link as a real item/dungeon name, including Claude's own fallback text like `[RealmEye wiki dungeon page](.../wiki/realmeye-wiki-dungeon-page)` when it lacked real context (itself a symptom of bug #1 above - Claude falls back to this phrasing more often when it has no retrieved context to cite from). This fired a frontend `fetchItem()` for a name that could never exist, and the backend then burned 15-30s of the single shared Playwright semaphore (see #4 below) trying and retrying a scrape of a URL that was never real, worsening contention for every concurrent user. Filtered out generic referral words (`wiki`/`page`/`guide`/`directly`/`article`) since no real item/dungeon/set name contains them. Committed `9ceb1de` on `dev`, PR'd to `master`: https://github.com/kylezwang/RealmPal/pull/9 (not yet merged as of Sep 14, ~12:21 AM).
+3. **Azure Static Web App for `web/` is live and confirmed working end to end** (Sep 13 night into Sep 14): deployed, `NEXT_PUBLIC_API_URL` wired via GitHub secret, `EXTRA_CORS_ORIGINS` wired on the API, "Failed to fetch" on sign-in/register fixed, and a real account (`Turbine`) successfully registered/signed-in/chatted against the live site (confirmed via Container App logs, not just a screenshot). See CHANGELOG.md `[2026.09.13]` for full technical detail. What's left from the original plan below: nothing blocking, this item is done.
+4. **Diagnosed, not yet fixed - CPU/semaphore contention (`_PW_SEM = asyncio.Semaphore(1)` in `api/services/scraper.py`) causes slow-to-the-point-of-looking-broken pet/dungeon/skin lookups.** Reconfirmed live Sep 14: a fresh pet lookup after a redeploy took 16-40+ seconds while specialist warming was mid-run competing for the same single-Chromium-page semaphore; the sidebar correctly said "No pet found yet" the whole time (this is accurate loading state, not a display bug - confirmed by checking `PetCompanion.tsx`/`ChatInterface.tsx`'s `loadPlayer`/`setPlayerProfile` wiring, no bug found there), and the pet displayed correctly the moment warming finished (`Specialist stores warmed` logged) and the semaphore freed up. Every redeploy interrupts the warm queue's dungeon-guide pass before it reaches all 179 slugs (171/179 cached as of the last full pass, Sep 13 night), so back-to-back redeploys in one session compound this. Action still pending (Azure Portal: Container Apps -> `realmpal-api` -> Scale and revisions -> Edit and deploy -> Container tab -> CPU and Memory): bump from 0.5 vCPU / 1 GiB to 1.0 vCPU / 2 GiB, then avoid unnecessary redeploys until one warm pass runs to completion uninterrupted.
+5. **Also observed Sep 14, not yet fixed - every chat message unconditionally scrapes+ingests the signed-in user's own IGN profile**, even for messages with nothing to do with the player (`api/routers/chat.py`, `if body.ign:` block, ~line 588 - "Player profiles change constantly, scrape on lookup" comment explains the *intent* but this fires on every uncached message regardless of whether the message needs it, e.g. a pure "how to do X dungeon" question). Confirmed in the same Sep 14 logs: asking about Moonlight Village still triggered a 14s `Scraping player profile {'username': 'Turbine'}` call. This directly adds to item #4's semaphore contention. Worth reconsidering: only scrape when `player_only`/`buildish` is true for *this* message (the router already computes these flags for the RAG-skip logic right below it), not unconditionally whenever `body.ign` is set.
+6. **Not yet investigated - skin/outfit visualizer scraper bug, independent of CPU contention.** `scrape_outfit_catalog()`'s `https://www.realmeye.com/top-characters-with-outfit` fetch fails the same way every time it was tried Sep 13-14, warm or not: `locator(".chooser-table, #class")` resolves to 2 elements (ambiguous - "Proceeding with the first one" logged), then still times out waiting 20s x 2 retries. This isn't slowness, it's a real scrape-target bug (RealmEye likely changed that page's markup) that fully breaks the "what does skin X look like with clothing Y" feature - confirmed via a live "Vampire Slayer Archer with Large/Small Crown cloth" request returning blank skin/clothing/accessory boxes and a 404 from `/skins/render`. Needs the actual page inspected (view-source or a Playwright trace) to find the right selector, not just retried.
+7. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
    frontend hosting existed yet, only the API backend is deployed. Chose
    Azure Static Web Apps over Vercel (Sep 13, decided to stay fully on
    Azure for the portfolio story) and over a second Container App (simpler
@@ -29,19 +46,37 @@ Resume order when context is fresh:
    Container App's Application URL, and update the API's `app_url` setting
    (`Settings.cors_allowed_origins`) to the Static Web App's URL so CORS
    isn't stuck on `localhost:3000`.
-2. **Key Vault**: move the env vars pasted into the Container App (JWT
+
+   **Done as of Sep 14 - see item 3 above.** Kept here (not deleted) per
+   `doc-history.mdc` since this was the original plan text, not just a
+   status update.
+8. **Key Vault**: move the env vars pasted into the Container App (JWT
    secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
    references instead of plaintext. Priority 5 in the deploy guide.
-3. **Production secrets review**: the deployed Container App's log stream
+9. **Production secrets review**: the deployed Container App's log stream
    shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
    warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
    both explicitly and rotate `JWT_SECRET` off its local-dev value before
    real launch.
-4. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
-5. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
-6. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+10. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
+11. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
+12. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
 
 ## History
+### Until Sep 14, 2026, 12:21 AM (this revision)
+Resume order was, in this order: (1) Azure Static Web App for `web/` in
+Static mode, (2) Key Vault, (3) Production secrets review, (4) Stripe live
+mode, (5) Entra External ID, (6) Launch on `ANTHROPIC_API_KEY`. Superseded
+because a live post-deploy smoke test the same night found the embeddings
+backend was broken in production (item 1 above, the most severe finding of
+the night - silently blind RAG on every chat reply), a real frontend bug
+causing doomed scrapes (item 2, fixed same session), and confirmed the
+Static Web App item was actually already done. Items 4-6 (CPU contention,
+unconditional IGN scrape, skin visualizer bug) are newly-found detail
+underneath the CPU-contention item that already existed in the Sep 13
+CHANGELOG.md "Internal" section ("Diagnosed: live scrapes queue behind
+specialist warming in production") but hadn't been copied into BACKLOG.md's
+forward-looking resume list yet.
 ### Until Sep 13, 2026 (later same day, second revision)
 Resume order was:
 1. Container Apps Step 2 onward: registry created and the API image is built + pushed; Qdrant Cloud also done. Still need: the Azure Managed Redis instance (Priority 4 Step 1.7 in `docs/DEPLOYMENT_GUIDE.md`), then the Container Apps Environment + Container App itself (Step 2 onward, same doc).
