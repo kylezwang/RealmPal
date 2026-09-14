@@ -13,14 +13,22 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. **Azure Static Web App for `web/`**: no frontend hosting existed yet, only
-   the API backend is deployed. Chose Azure Static Web Apps over Vercel
-   (Sep 13, decided to stay fully on Azure for the portfolio story) and over
-   a second Container App (simpler free tier + built-in GitHub CI vs.
-   hand-rolling ingress/scaling for a second container). Once live: set its
-   `NEXT_PUBLIC_API_URL` to the Container App's Application URL, and update
-   the API's `app_url` setting (`Settings.cors_allowed_origins`) to the
-   Static Web App's URL so CORS isn't stuck on `localhost:3000`.
+1. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
+   frontend hosting existed yet, only the API backend is deployed. Chose
+   Azure Static Web Apps over Vercel (Sep 13, decided to stay fully on
+   Azure for the portfolio story) and over a second Container App (simpler
+   free tier + built-in GitHub CI vs. hand-rolling ingress/scaling for a
+   second container). Almost went with Hybrid (SSR) mode to match the app's
+   `output: "standalone"` config, but checking *why* a live server was
+   needed at all turned up that it wasn't - `web/app/api/chat/route.ts` was
+   a dead-code proxy nothing called (the frontend already streams chat
+   straight from the browser to the Container App), deleted it and switched
+   to `output: "export"` (Sep 13, see Done below), so this deploys as a
+   plain static site now, not the still-preview-labeled Hybrid Next.js
+   hosting. Once live: set its `NEXT_PUBLIC_API_URL`/`API_URL` to the
+   Container App's Application URL, and update the API's `app_url` setting
+   (`Settings.cors_allowed_origins`) to the Static Web App's URL so CORS
+   isn't stuck on `localhost:3000`.
 2. **Key Vault**: move the env vars pasted into the Container App (JWT
    secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
    references instead of plaintext. Priority 5 in the deploy guide.
@@ -94,6 +102,8 @@ build cache and two unrelated old images, back to a healthy ~12 GB free.
 **Production branch is set up** (Sep 13): `master` is production (protected: PR required, no force-push/delete, enforced for admins too), `dev` is the normal working branch with no protection. `master` was fast-forwarded to `dev`'s tip so it's not stale anymore. Promote a deploy by opening a PR `dev` → `master` and merging it, there's no more direct-push path.
 
 **Azure infra provisioned and the API is fully live** (Sep 13): Azure Managed Redis (`realmpal-cache`), Azure Database for PostgreSQL Flexible Server (`realmpal-db`), and the Container Apps Environment + Container App (`realmpal-api`) all created in `rg-realmpal`, East US 2. Took 7 revisions to get clean: a missing `ANTHROPIC_API_KEY` (crashed on startup with a clear pydantic error), `scan_iter` not being classified in `api/redis_namespace.py` (a real code bug, raised in every namespaced deployment since local dev's default namespace is empty and never exercised this path until `DEPLOYMENT_NAMESPACE=prod` was actually set), then four straight `DATABASE_URL` connection-string issues in a row (password's `@` breaking DSN parsing, missing firewall rule for the Container App's outbound IP, missing `:5432/realmpal?sslmode=require` suffix, and the `realmpal` database itself never having been created). `/health` returns `200`, Postgres/Redis/Qdrant all connect clean, specialist warming is scraping RealmEye and populating stores in the background. See `CHANGELOG.md` [2026.09.13] for full technical detail on each bug.
+
+**`web/` simplified to a pure static export before its first deploy** (Sep 13): found and deleted two dead-code server dependencies (`app/api/chat/route.ts` proxy, `/api/sprite` rewrite) that were the only reason `output: "standalone"` (hybrid hosting) looked necessary; the frontend already calls the Container App directly for everything, including chat streaming. Switched to `output: "export"`. See `CHANGELOG.md` [2026.09.13] for detail.
 
 ## History
 ### Until Sep 13, 2026 (later same day, fifth revision)
@@ -259,6 +269,10 @@ Magic-link is fallback only; email+password is primary. Can defer.
 ### Sidebar polish
 
 Section titles (Your IGN, Chats, Suggested), slightly larger font, lighter text.
+
+### Pre-existing ESLint errors (`react-hooks/set-state-in-effect`)
+
+Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not caused by that session's changes (confirmed via `git diff --stat`). Not a build blocker (`next build` doesn't gate on ESLint in this Next.js version), but should get fixed: `components/chat/SpriteZoom.tsx` (2 instances), `components/chat/SkinPortrait.tsx`, `components/chat/PlayerCard.tsx`, `components/player/PlayerCard.tsx`. Each is a `setState` call directly in a `useEffect` body instead of a callback/derived-state pattern.
 
 ---
 
