@@ -201,6 +201,25 @@ def test_cors_only_includes_the_configured_app_url_in_production():
     assert settings.cors_allowed_origins == ["https://realmpal.example.com"]
 
 
+def test_cors_includes_extra_origins_alongside_app_url():
+    from api.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        anthropic_api_key="test-key-not-real",
+        jwt_secret="test-jwt-secret",
+        pii_hash_secret="test-pii-secret",
+        app_url="https://realmpal.com",
+        extra_cors_origins="https://www.realmpal.com, https://thankful-mushroom-0951bfb0f.3.azurestaticapps.net",
+        debug=False,
+    )
+    assert settings.cors_allowed_origins == [
+        "https://realmpal.com",
+        "https://www.realmpal.com",
+        "https://thankful-mushroom-0951bfb0f.3.azurestaticapps.net",
+    ]
+
+
 def test_cors_adds_localhost_only_in_debug():
     from api.config import Settings
 

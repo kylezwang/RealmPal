@@ -192,6 +192,12 @@ class Settings(BaseSettings):
     # App
     app_url: str = "http://localhost:3000"
     api_url: str = "http://localhost:8000"
+    # Comma-separated extra origins CORS should also accept, on top of
+    # `app_url`. For a hosting/domain cutover (e.g. the *.azurestaticapps.net
+    # URL while a custom domain's DNS/TLS is still propagating, or both the
+    # apex and `www` custom domains at once). `app_url` stays the single
+    # canonical URL used for redirects, magic links, and Stripe return URLs.
+    extra_cors_origins: str = ""
     debug: bool = False
     # Comma-separated IGNs that skip chat + lookup quotas while DEBUG=true.
     # Local testing only — ignored in any non-debug process.
@@ -292,12 +298,17 @@ class Settings(BaseSettings):
         """
         Origins the API answers CORS preflights for.
 
-        `app_url` is the only origin in production. `localhost:3000` is
-        added only in debug — it used to be hardcoded unconditionally, which
-        meant a deployed API would accept credentialed requests from anyone
-        running the frontend locally against it.
+        `app_url` plus any `extra_cors_origins` are the only origins in
+        production. `localhost:3000` is added only in debug — it used to be
+        hardcoded unconditionally, which meant a deployed API would accept
+        credentialed requests from anyone running the frontend locally
+        against it.
         """
         origins = [self.app_url]
+        for extra in self.extra_cors_origins.split(","):
+            extra = extra.strip()
+            if extra and extra not in origins:
+                origins.append(extra)
         if self.debug and "http://localhost:3000" not in origins:
             origins.append("http://localhost:3000")
         return origins
