@@ -309,22 +309,160 @@ user, then swap local email+password for Entra-issued tokens.
 ### Step 1: Create Container Registry
 
 1. Go to **[Azure Portal](https://portal.azure.com)**
-2. Search for **"Container registries"** (top search)
-3. Click **"Create"**
-   - **Resource group:** realmpal-prod (create if needed)
-   - **Registry name:** realmpalacr (must be globally unique, lowercase)
-   - **Region:** East US 2
-   - **SKU:** Basic (sufficient for small deployments)
-4. Click **"Create"**
-5. Once deployed, go to the resource
-6. Copy and save the **Login server** (e.g., `realmpalacr.azurecr.io`)
+2. Search for **"Container registries"** (top search bar)
+3. Click **"+ Create"**
+4. **Basics tab:**
+   - **Subscription:** your subscription
+   - **Resource group:** click **"Create new"** → type `rg-realmpal` → **"OK"**
+     (a fresh group, not the pre-existing `rg-certio` that an old, non-working
+     Foundry resource lives in)
+   - **Registry name:** `realmpalacr` (must be globally unique across all of Azure,
+     lowercase letters/numbers only; if taken, try `realmpalacr01` or similar)
+   - **Location:** East US 2
+   - **SKU:** Basic (cheapest tier, fine for a single small API image)
+5. Click **"Review + create"**, then **"Create"** once validation passes
+6. Wait ~30 seconds for deployment, then click **"Go to resource"**
+7. On the registry's **Overview** page, copy the **Login server** value
+   (looks like `realmpalacr.azurecr.io`) — save it, needed for every step
+   after this
+8. Click **"Access keys"** (left sidebar) → toggle **"Admin user"** to
+   **Enabled** → copy the **Username** and one of the two **Password**
+   values. Needed so Container Apps can pull the image without a separate
+   managed-identity setup (fine for a single-registry, single-app setup
+   like this one)
+
+### Step 1.5: Build & Push the API Image
+
+Container Apps needs an actual image sitting in the registry before Step 3
+below can point at it. `api/Dockerfile` builds the FastAPI backend on top
+of `mcr.microsoft.com/playwright/python`, which ships Chromium/Firefox/
+WebKit and all their OS-level deps preinstalled (the scraper needs a real
+browser). That base image is large (~5 GB built), so this step needs
+meaningful free disk space and time on a first run; do not use `--no-cache`
+on later rebuilds or every layer pulls fresh again.
+
+1. From the repo root (not `api/`, the Dockerfile's build context is the
+   whole repo so `uvicorn api.main:app` resolves the same package path it
+   uses locally):
+   ```
+   docker build -f api/Dockerfile -t realmpalacr.azurecr.io/realmpal-api:latest .
+   ```
+2. Log in to the registry (run this yourself in your own terminal, not
+   through an assistant, so the password never ends up in any transcript):
+   ```
+   docker login realmpalacr.azurecr.io -u <Username from Step 1 Access keys> -p <Password from Step 1 Access keys>
+   ```
+3. Push the image:
+   ```
+   docker push realmpalacr.azurecr.io/realmpal-api:latest
+   ```
+4. Every time you ship a code change later, rebuild with a new tag (don't
+   reuse `:latest` once this is live, so you can roll back):
+   ```
+   docker build -f api/Dockerfile -t realmpalacr.azurecr.io/realmpal-api:v1.0.1 .
+   docker push realmpalacr.azurecr.io/realmpal-api:v1.0.1
+   ```
+   Then update the Container App's revision to that tag (Container App →
+   **Application** → **Containers** → **Edit and deploy** → change **Image
+   tag**).
+
+### Step 1.6: Qdrant Cloud (vector search)
+
+Locally, Qdrant runs as its own docker-compose service (`http://qdrant:
+6333`), that hostname doesn't exist once the API is the only container
+running in Azure. Qdrant has no Azure-managed offering; since this
+collection only ever holds public wiki scrapes (no user data, see
+`PRIORITY 7` below), Qdrant Cloud's free tier is the simplest fix, one
+less thing to run yourself.
+
+1. Go to **[https://cloud.qdrant.io](https://cloud.qdrant.io)** and sign
+   up / log in (email, Google, or GitHub)
+2. Click **"Create Cluster"** (sometimes labeled **"+ New Cluster"**)
+3. Choose the **Free tier** (1 GB, no card required)
+4. **Cluster name:** `realmpal`
+5. **Region:** the AWS or GCP region closest to your Azure region (Qdrant
+   Cloud runs on AWS/GCP, not Azure, there is no cross-cloud pairing to
+   get exactly right, just pick the nearest one to East US 2, e.g. AWS
+   `us-east-1`)
+6. Click **"Create"**, wait ~1-2 minutes for provisioning
+7. Once ready, open the cluster → copy the **Cluster URL** (looks like
+   `https://xxxxxxxx-xxxx-xxxx.us-east-1-0.aws.cloud.qdrant.io:6333`)
+8. Click **"API Keys"** (left sidebar within the cluster) → **"Create API
+   Key"** → copy it immediately, it is only shown once
+9. Set in the Container App's environment variables (Step 4 below):
+   ```
+   QDRANT_URL=<the Cluster URL from step 7>
+   QDRANT_API_KEY=<the API key from step 8>
+   ```
+10. The collection itself starts empty (the API only creates it if
+    missing at startup, it doesn't populate it, see the docstring in
+    `api/services/ingestion.py`). Seed it once against the new cluster
+    from your own machine, with `QDRANT_URL`/`QDRANT_API_KEY` from steps
+    7-8 set in your local `.env` temporarily:
+    ```
+    api\.venv\Scripts\python.exe -m api.scripts.seed_wiki
+    api\.venv\Scripts\python.exe -m api.scripts.seed_dps
+    ```
+    (Redis's specialist stores, by contrast, don't need this - `api/main.
+    py`'s startup check warms those automatically the first time the app
+    boots against an empty Redis.)
+
+### Step 1.7: Azure Managed Redis
+
+Locally, Redis is a docker-compose service too (`redis://redis:6379`),
+same problem as Qdrant. Redis holds message quotas, quest state, and
+session cache, not billing-critical data, but it does need to survive
+restarts and handle concurrent access safely, so it gets an actual managed
+service rather than the SQLite-style "run it as a Container App" shortcut.
+
+1. Go to **[Azure Portal](https://portal.azure.com)**
+2. Search for **"Azure Cache for Redis"** (top search bar) - this search
+   term still works, it lands on a chooser screen with both options
+3. Click **"+ Create"**
+4. On the **"Choose a Redis service for your workload"** screen, pick
+   **"Azure Managed Redis (Recommended)"**, not the "Azure Cache for
+   Redis" tile next to it - that one shows its own banner saying new
+   creation requests are blocked starting **October 1, 2026** and it's
+   fully retired **September 30, 2028**. No reason to provision something
+   that can't be recreated in a few weeks
+5. **Basics tab:**
+   - **Subscription:** your subscription
+   - **Resource group:** `rg-realmpal`
+   - **Cache name:** `realmpal-cache` (globally unique, becomes
+     `realmpal-cache.<region>.redis.azure.net`)
+   - **Location:** East US 2
+   - **Pricing tier:** **Memory Optimized**, smallest SKU offered (Azure's
+     own guidance: Memory Optimized's lower memory-to-vCPU ratio "provides
+     a lower price point... an excellent choice for development and
+     testing environments" - Balanced is tuned for production throughput
+     this app doesn't need yet)
+   - **High availability:** disable it if offered as a toggle - this data
+     isn't billing-critical, and disabling HA on the smallest SKU roughly
+     halves the cost
+6. Click **"Review + create"**, then **"Create"**
+7. Wait for provisioning (Redis caches are slower than most resources to
+   come up, this is normal, not stuck)
+8. Once deployed, go to the resource → **"Authentication"** or **"Access
+   keys"** (left sidebar, exact label varies by portal version) → copy the
+   **Primary** key or connection string
+9. Set in the Container App's environment variables (Step 4 below). Azure
+   Managed Redis uses a different hostname suffix than the old service and
+   still requires TLS:
+   ```
+   REDIS_URL=rediss://:<primary-key>@realmpal-cache.<region>.redis.azure.net:6380/0
+   ```
+   Note the double `s` in `rediss://`, that is what tells the Python Redis
+   client to use TLS; a single `redis://` on port 6380 will fail the
+   handshake. Copy the exact hostname from the resource's Overview page
+   rather than guessing the `<region>` suffix.
 
 ### Step 2: Create Container Apps Environment
 
 1. Search for **"Container Apps"** (top search)
 2. Click **"Create container app"**
 3. Fill in:
-   - **Resource group:** realmpal-prod
+   - **Resource group:** rg-realmpal (the same one from Step 1, so the
+     registry and the app live together)
    - **Container app name:** realmpal-api
    - **Region:** East US 2
    - **Container Apps environment:** Click "Create new"
@@ -337,7 +475,9 @@ user, then swap local email+password for Entra-issued tokens.
 1. **Container details:**
    - **Image source:** Azure Container Registry
    - **Registry:** realmpalacr
-   - **Image:** realmpal-api (will be pushed later)
+   - **Image:** realmpal-api (pushed in Step 1.5 above; if it's not in the
+     dropdown yet, the push hasn't finished or Azure's UI cached the empty
+     registry list, refresh the page)
    - **Image tag:** latest
    - **CPU/Memory:** 0.5 CPU, 1 GB RAM (scale up if needed later)
 2. Click **"Next: Bindings"**
@@ -348,13 +488,24 @@ user, then swap local email+password for Entra-issued tokens.
 2. Add variables from your `.env`:
    ```
    JWT_SECRET=your-value
-   STRIPE_KEY=your-key
+   STRIPE_SECRET_KEY=your-key
+   STRIPE_PRICE_ID=your-price-id
+   DATABASE_URL=postgresql://realmpaladmin:<password>@realmpal-db.postgres.database.azure.com:5432/realmpal?sslmode=require
+   QDRANT_URL=your-qdrant-cloud-cluster-url
+   QDRANT_API_KEY=your-qdrant-cloud-api-key
+   REDIS_URL=rediss://:<primary-key>@realmpal-cache.<region>.redis.azure.net:6380/0
    FOUNDRY_RESOURCE=realmpal-foundry (after Foundry is deployed)
    FOUNDRY_BASE_URL=https://realmpal-foundry.services.ai.azure.com/
    DEPLOYMENT_NAMESPACE=prod
    DEBUG=false
    ```
-3. **IMPORTANT:** Move sensitive values to Key Vault (see next section) — do NOT paste raw API keys here
+   `DATABASE_URL`, `QDRANT_URL`/`QDRANT_API_KEY`, and `REDIS_URL` replace
+   the docker-compose service hostnames (`redis://redis:6379`,
+   `http://qdrant:6333`) used locally - those hostnames don't exist once
+   this container is the only thing running. See Priority 6 (Postgres),
+   the Qdrant Cloud setup, and the Azure Cache for Redis setup for where
+   each of those three values comes from.
+3. **IMPORTANT:** Move sensitive values to Key Vault (see next section) - do NOT paste raw API keys here
 
 ### Step 5: Configure Ingress & Scaling
 
@@ -434,47 +585,89 @@ user, then swap local email+password for Entra-issued tokens.
 
 ## PRIORITY 6: Azure Database for PostgreSQL
 
-**Status:** Replaces SQLite in production. Only deploy AFTER Foundry is working.
+**Status:** DONE (Sep 13, 2026) at the code level - `api/services/db.py` now
+supports both SQLite (local dev/tests, `DATABASE_URL` unset) and Postgres
+(`DATABASE_URL` set) behind one interface; `accounts.py`, `entitlements.py`,
+`uploads.py`, `billing_prefs.py` all run on either backend unchanged. What's
+left here is provisioning the actual Azure resource and pointing the
+Container App's `DATABASE_URL` at it.
 
-### Step 1: Create PostgreSQL Server
+No manual schema/migration step needed: each store creates its own tables
+on first use (same as the SQLite path always did), so Step 3 below is just
+"create an empty database", not "run migration scripts."
+
+### Step 1: Create the PostgreSQL Server
 
 1. Go to **[Azure Portal](https://portal.azure.com)**
-2. Search for **"Azure Database for PostgreSQL servers"**
-3. Click **"Create"** → **"Single server"** (simpler for MVP)
-   - **Resource group:** realmpal-prod
-   - **Server name:** realmpal-db (globally unique)
-   - **Region:** East US 2
-   - **Version:** 13 or 14
-   - **Admin username:** dbadmin
-   - **Password:** Generate a strong password → save to Key Vault
-4. Click **"Create"** (takes ~5 minutes)
+2. Search for **"Azure Database for PostgreSQL flexible servers"** (top
+   search bar) - "Single Server" is retired, only "Flexible Server" shows
+   up now
+3. Click **"+ Create"**
+4. **Basics tab:**
+   - **Subscription:** your subscription
+   - **Resource group:** `rg-realmpal` (same group as everything else)
+   - **Server name:** `realmpal-db` (globally unique; becomes
+     `realmpal-db.postgres.database.azure.com`)
+   - **Region:** East US 2 (match the Container App's region)
+   - **PostgreSQL version:** latest offered (17 or 18)
+   - **Workload type:** Development (Burstable tier, cheapest; switch to
+     Production later if traffic justifies it)
+5. Click **"Configure server"** under Compute + storage:
+   - **Compute tier:** Burstable
+   - **Compute size:** B1ms (1 vCore, 2 GiB) - smallest that isn't the
+     absolute minimum B1ms is already the practical floor for a real app
+   - **Storage:** 32 GiB, autogrow enabled
+   - **Backup retention:** 7 days is fine
+   - Click **"Save"**
+6. **Authentication:** PostgreSQL authentication only
+   - **Admin username:** `realmpaladmin` (not `postgres` or `admin`,
+     reserved/blocked names)
+   - **Password:** generate a strong one, save it somewhere durable (Key
+     Vault once Priority 5 above is done; a password manager in the
+     meantime), not just in your head
+7. Click **"Next: Networking"**
 
-### Step 2: Configure Firewall
+### Step 2: Networking
 
-1. Once deployed, go to the resource
-2. Click **"Connection security"** (left sidebar)
-3. Click **"Add current client IP"** (to allow local dev access)
-4. **For Container App:** Also add the subnet of your Container Apps environment:
-   - You may need to contact Azure Support for the exact subnet range, OR
-   - Check the Container App's **Networking** settings for the managed identity subnet
+1. **Connectivity method:** Public access (selected by default) - private
+   access via VNet is more isolated but needs VNet peering with the
+   Container Apps environment, more setup than this project needs yet
+2. Check **"Allow public access from any Azure service within Azure to
+   this server"** - this is what lets the Container App reach it without
+   VNet integration
+3. Under **Firewall rules**, click **"Add current client IP address"** so
+   you (locally) can also connect directly to run one-off checks
+4. Click **"Review + create"**, then **"Create"** once validation passes
+5. Wait ~5-10 minutes for provisioning, then click **"Go to resource"**
 
-### Step 3: Create Databases
+### Step 3: Create the Database
 
-1. Using `psql` or Azure Data Studio:
-   ```sql
-   CREATE DATABASE realmpal;
-   CREATE TABLE accounts (...); -- From api/services/accounts.py
-   CREATE TABLE entitlements (...); -- From api/services/entitlements.py
-   ```
-2. Run migration scripts to initialize schema
+Azure creates a default `postgres` database, but keep the app in its own:
 
-### Step 4: Update .env
+1. On the server's Overview page, note the **Server name** (the full
+   `realmpal-db.postgres.database.azure.com` hostname)
+2. Left sidebar → **"Databases"** → **"+ Add"**
+3. **Name:** `realmpal` → **"Save"**
 
-```bash
-# PostgreSQL
-DATABASE_URL=postgresql://dbadmin:your-password@realmpal-db.postgres.database.azure.com:5432/realmpal
-# Store password in Key Vault, not .env
+No table creation needed here - `api/services/db.py` runs `CREATE TABLE IF
+NOT EXISTS` for each store the first time the app touches it, same as it
+already does locally against SQLite.
+
+### Step 4: Set DATABASE_URL
+
+Add this to the Container App's environment variables (Priority 4, Step 4)
+once the Container App exists, and to your own `.env` only if you want to
+point local dev at this same server temporarily (normally leave it unset
+locally so you keep using SQLite):
+
 ```
+DATABASE_URL=postgresql://realmpaladmin:<password>@realmpal-db.postgres.database.azure.com:5432/realmpal?sslmode=require
+```
+
+`sslmode=require` matters: Azure Database for PostgreSQL rejects
+unencrypted connections by default, and asyncpg (the driver
+`api/services/db.py` uses) needs that query param, not a separate flag, to
+know to negotiate TLS.
 
 ---
 
@@ -528,6 +721,55 @@ If something breaks in production:
 ---
 
 ## History
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 4 Step 1.7 (Redis)
+
+Original text told the reader to create an **"Azure Cache for Redis"**
+resource directly (Basic C0 tier, ~$16/mo, hostname
+`<name>.redis.cache.windows.net`).
+
+**Superseded because:** when actually clicking through **"+ Create"** in
+the portal (Sep 13, later), Azure now shows a chooser screen first with a
+banner: Azure Cache for Redis blocks new creation requests starting
+**October 1, 2026** (18 days out from that day) and fully retires
+**September 30, 2028**, recommending **Azure Managed Redis** instead. Not
+worth provisioning a resource that can't be recreated in a few weeks for a
+project meant to show current cloud practice. Switched the pick to Azure
+Managed Redis's Memory Optimized tier (Microsoft's own guidance calls that
+tier the cheaper dev/test fit; Balanced is tuned for production
+throughput this app doesn't need) and updated the hostname suffix and
+connection string accordingly.
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 6 (Postgres)
+
+Original text said "Only deploy AFTER Foundry is working," told the reader
+to create a **"Single server"** tier (`az` UI: "Azure Database for
+PostgreSQL servers" → Create → Single server), and to manually run
+`CREATE TABLE accounts (...)` / `CREATE TABLE entitlements (...)` SQL
+against the new database as a migration step.
+
+**Superseded because:** (1) product decision on Sep 13 was to do the
+Postgres migration immediately rather than work around SQLite's
+concurrent-write limits with a mounted volume + single replica, so this
+no longer waits on Foundry. (2) Azure retired the "Single Server" tier;
+the portal only offers "Flexible Server" now. (3) `api/services/db.py`
+was written the same day to run its own `CREATE TABLE IF NOT EXISTS` /
+`ALTER TABLE ... ADD COLUMN` against whichever backend `DATABASE_URL`
+points at, the same way it always did against SQLite - so there is no
+manual schema/migration step at all, just point `DATABASE_URL` at an
+empty database.
+
+### Until Sep 13, 2026 (later same day) - PRIORITY 4 Step 1
+
+Original text said to name the resource group `realmpal-resource` when
+creating the Container Registry.
+
+**Superseded because:** when actually creating it in the portal, the user
+named it `rg-realmpal` instead (matching the `rg-` prefix convention and
+avoiding confusion with the older, non-working Foundry resource sitting in
+`rg-certio`). Every later step in this guide (Container Apps, Key Vault,
+Postgres) should use `rg-realmpal`, not `realmpal-resource` or
+`realmpal-prod`.
 
 ### Until Sep 13, 2026 (later same day) - PRIORITY 3 Steps 5-6
 
