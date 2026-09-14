@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import { useSearchParams, useRouter } from "next/navigation";
 import { setAuthToken } from "@/lib/api";
@@ -12,7 +12,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
  * User arrives here from the email link after paying.
  * Exchanges the magic link token for a JWT and redirects to home.
  */
-export default function VerifyPage() {
+function VerifyContent() {
   const params = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
@@ -79,5 +79,25 @@ export default function VerifyPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// `useSearchParams()` opts the page into client-side rendering for the part
+// of the tree that reads it; Next.js requires that part wrapped in its own
+// `Suspense` boundary so static prerendering can still emit a shell for the
+// rest, otherwise `next build` fails outright (caught trying to deploy this
+// page to Azure Static Web Apps, which runs `next build` in CI same as
+// local - this was a real deploy blocker, not just a dev-time warning).
+export default function VerifyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center">
+          <div className="w-8 h-8 border-2 border-[#404040] border-t-white rounded-full animate-spin" />
+        </div>
+      }
+    >
+      <VerifyContent />
+    </Suspense>
   );
 }

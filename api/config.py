@@ -135,11 +135,20 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_id: str = ""
 
+    # Durable store backend (api/services/db.py) for entitlements, accounts,
+    # uploads, and billing prefs. Empty: SQLite files under data/, good for
+    # local dev and tests, no infra dependency. Set to a `postgresql://...`
+    # DSN (e.g. Azure Database for PostgreSQL) in any deployment with more
+    # than one Container Apps replica - SQLite on a shared volume is not
+    # safe with concurrent writers. Until Sep 13, 2026 this was planned as
+    # "SQLite on a mounted volume until billing lands, then Postgres" (see
+    # BACKLOG.md history); billing landed that day, so this is that move.
+    database_url: str = ""
+
     # Durable entitlement store (api/services/entitlements.py). Stripe
     # webhooks write here; the chat path reads it instead of trusting a
     # magic-link JWT's `paid` claim for its whole lifetime with no way to
-    # revoke it early. SQLite until billing volume justifies Postgres, per
-    # the target-platform note at the top of BACKLOG.md.
+    # revoke it early. Path used only for the SQLite backend above.
     entitlements_db_path: str = "data/entitlements.db"
 
     # Local email+password accounts (api/services/accounts.py). Separate

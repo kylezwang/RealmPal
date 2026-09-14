@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   qdrant:
     image: qdrant/qdrant:v1.13.0
@@ -21,13 +19,29 @@ services:
     volumes:
       - redis_data:/data
 
-  api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+  # Optional: only needed if DATABASE_URL is set below. Local dev defaults
+  # to SQLite (DATABASE_URL empty), so this sits unused unless you opt in
+  # to test the Postgres path that production (Azure Database for
+  # PostgreSQL) actually uses. See api/services/db.py.
+  postgres:
+    image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=realmpal
+      - POSTGRES_PASSWORD=realmpal
+      - POSTGRES_DB=realmpal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - FOUNDRY_RESOURCE=${FOUNDRY_RESOURCE:-}
@@ -37,6 +51,10 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379
+      # Empty by default (SQLite). Uncomment to test against the local
+      # postgres service above instead:
+      # - DATABASE_URL=postgresql://realmpal:realmpal@postgres:5432/realmpal
+      - DATABASE_URL=${DATABASE_URL:-}
       - EMBEDDING_BACKEND=${EMBEDDING_BACKEND:-ollama}
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
@@ -69,4 +87,5 @@ services:
 volumes:
   qdrant_data:
   redis_data:
+  postgres_data:
   # ollama_data:

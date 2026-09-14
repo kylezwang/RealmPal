@@ -158,6 +158,29 @@ async def test_list_commands_are_prefixed(redis_client):
     assert await redis_client.llen("feedback:log") == 0
 
 
+async def test_scan_iter_only_sees_this_namespace_and_strips_the_prefix(redis_client):
+    """
+    Regression: scan_iter wasn't classified at all, so any caller (e.g. the
+    specialist DPS-loadout count) raised AttributeError in every namespaced
+    deployment. It also can't be a plain single-key command: `match` is a
+    glob that needs the prefix applied, and unlike get/set the keys come
+    back *from* Redis, so they need the prefix stripped again on the way
+    out or a caller that re-uses one (e.g. `client.delete(key)`) would
+    double-prefix it.
+    """
+    client = namespaced(redis_client, "prod:")
+    await client.set("loadout:one", "1")
+    await client.set("loadout:two", "2")
+    await redis_client.set("staging:loadout:three", "3")
+
+    seen = sorted([key async for key in client.scan_iter(match="loadout:*", count=100)])
+    assert seen == ["loadout:one", "loadout:two"]
+
+    # The stripped keys work as-is against the namespaced client again.
+    await client.delete(*seen)
+    assert await redis_client.exists("prod:loadout:one", "prod:loadout:two") == 0
+
+
 async def test_connection_commands_pass_through(redis_client):
     client = namespaced(redis_client, "prod:")
     assert await client.ping() is True

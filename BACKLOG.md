@@ -13,18 +13,117 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. Entra External ID - **portal setup done** (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
-2. Foundry - **blocked**, see Blocked section below. Don't retry deployment until billing clears.
-3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
-4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
+1. **Azure Static Web App for `web/`**: no frontend hosting existed yet, only
+   the API backend is deployed. Chose Azure Static Web Apps over Vercel
+   (Sep 13, decided to stay fully on Azure for the portfolio story) and over
+   a second Container App (simpler free tier + built-in GitHub CI vs.
+   hand-rolling ingress/scaling for a second container). Once live: set its
+   `NEXT_PUBLIC_API_URL` to the Container App's Application URL, and update
+   the API's `app_url` setting (`Settings.cors_allowed_origins`) to the
+   Static Web App's URL so CORS isn't stuck on `localhost:3000`.
+2. **Key Vault**: move the env vars pasted into the Container App (JWT
+   secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
+   references instead of plaintext. Priority 5 in the deploy guide.
+3. **Production secrets review**: the deployed Container App's log stream
+   shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
+   warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
+   both explicitly and rotate `JWT_SECRET` off its local-dev value before
+   real launch.
+4. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
+5. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
+6. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+
+## History
+### Until Sep 13, 2026 (later same day, second revision)
+Resume order was:
+1. Container Apps Step 2 onward: registry created and the API image is built + pushed; Qdrant Cloud also done. Still need: the Azure Managed Redis instance (Priority 4 Step 1.7 in `docs/DEPLOYMENT_GUIDE.md`), then the Container Apps Environment + Container App itself (Step 2 onward, same doc).
+2. Provision the real Postgres server: code side done; Azure resource itself not created yet. `docs/DEPLOYMENT_GUIDE.md` Priority 6, before or alongside item 1's Container App env vars since `DATABASE_URL` needs a real value before that container can boot clean.
+3. Key Vault, Stripe live mode, Entra External ID, `ANTHROPIC_API_KEY` launch: unchanged, see current list above.
+
+**Superseded because:** Redis, the real Postgres server, and the Container
+App itself all got provisioned and deployed in this same session (Sep 13,
+later) - including hitting and fixing a real startup crash
+(`ANTHROPIC_API_KEY` missing from the Container App's env vars) and a real
+code bug (`scan_iter` unclassified in `api/redis_namespace.py`, raised in
+every namespaced deployment; see `CHANGELOG.md` [2026.09.13] for detail).
+That surfaced there was no plan yet for where the Next.js frontend itself
+would live, which became its own resume-order item ahead of Key Vault.
+
+**Qdrant Cloud is provisioned and seeded** (Sep 13): free-tier cluster `realmpal`
+created (AWS us-east-1). `QDRANT_URL`/`QDRANT_API_KEY` written into `.env`.
+Seeded with `python -m api.scripts.seed_wiki` (39 hubs) and `seed_dps` (36
+RealmShark builds). Verified the real runtime path against it directly
+(`ensure_collection`, `get_collections`, `query_points` with a live vector
+search all confirmed working), not just that the seed scripts exited clean.
+Known low-priority gap: local `qdrant-client` (1.13.0) is several minor
+versions behind the cloud server (1.19.1) - only breaks the single-collection
+`get_collection()` detail call, which nothing in the app actually uses
+(everything goes through `get_collections`/`query_points`/`upsert`, all
+confirmed fine), so not blocking, but worth bumping the pinned version
+eventually so a future code path doesn't hit the same pydantic parsing gap.
+
+**Postgres migration is done at the code level** (Sep 13): decided to do this
+now instead of the SQLite-on-a-mounted-volume workaround (see the target-
+platform note above, which said "until billing lands" - billing landed
+Sep 13). `api/services/db.py` is a new shared backend behind one interface:
+SQLite when `DATABASE_URL` is unset (local dev/tests, unchanged), Postgres
+(asyncpg) when it's set. `accounts.py`, `entitlements.py`, `uploads.py`,
+`billing_prefs.py` all run on either backend with no per-backend branching
+at their call sites - `?` placeholders get rewritten to `$1, $2, ...` for
+Postgres under the hood. Verified against a real local Postgres container
+(all 4 stores: create/verify/lookup, upsert/RETURNING, column migration,
+BYTEA blob round-trip). All 353 existing backend tests still pass unchanged
+against the SQLite default. The actual Azure resource still needs
+provisioning, see resume order item 2 above.
+
+**`api/Dockerfile` created and the API image built + pushed** (Sep 13): there
+was no Dockerfile at all before this (docker-compose referenced one that
+didn't exist). Built on `mcr.microsoft.com/playwright/python` so Chromium +
+every OS-level dep the scraper needs ships in the image. Registry created as
+`realmpalacr` in a fresh `rg-realmpal` resource group (not the old, broken-
+Foundry `rg-certio`). Also found and fixed local disk at 0.43 GB free
+(Docker's storage went read-only mid-build) - cleared Temp, pruned Docker's
+build cache and two unrelated old images, back to a healthy ~12 GB free.
 
 **Enchantment specialist is done** (wiring + implied-stat inference + tests, Sep 13). See `CHANGELOG.md` [2026.09.13] for detail.
 
 **Stripe checkout → webhook → entitlement audit is done** (Sep 13): found and fixed a real bug (guest checkout emails only in `customer_details.email` were silently dropped) and shipped a self-service Stripe Customer Portal link. See `CHANGELOG.md` [2026.09.13] for detail.
 
+**Stripe test mode fully verified working end to end** (Sep 13): `STRIPE_SECRET_KEY` and `STRIPE_PRICE_ID` in `.env` had never actually been filled in, both were still the literal `.env.example` placeholder text (`sk_test_...` / `price_...`), which `stripe_configured` correctly refused to treat as real. Real test secret key pasted in by hand; `api/scripts/ensure_stripe_price.py` auto-created the "RealmPal Pro" $7/mo test-mode price and wrote `STRIPE_PRICE_ID`. Confirmed via a real Checkout (test card `4242 4242 4242 4242`) that entitlement activation and the Customer Portal button both work. **Still test mode only**, see item 4 above for what live mode needs.
+
 **Production branch is set up** (Sep 13): `master` is production (protected: PR required, no force-push/delete, enforced for admins too), `dev` is the normal working branch with no protection. `master` was fast-forwarded to `dev`'s tip so it's not stale anymore. Promote a deploy by opening a PR `dev` → `master` and merging it, there's no more direct-push path.
 
+**Azure infra provisioned and the API is fully live** (Sep 13): Azure Managed Redis (`realmpal-cache`), Azure Database for PostgreSQL Flexible Server (`realmpal-db`), and the Container Apps Environment + Container App (`realmpal-api`) all created in `rg-realmpal`, East US 2. Took 7 revisions to get clean: a missing `ANTHROPIC_API_KEY` (crashed on startup with a clear pydantic error), `scan_iter` not being classified in `api/redis_namespace.py` (a real code bug, raised in every namespaced deployment since local dev's default namespace is empty and never exercised this path until `DEPLOYMENT_NAMESPACE=prod` was actually set), then four straight `DATABASE_URL` connection-string issues in a row (password's `@` breaking DSN parsing, missing firewall rule for the Container App's outbound IP, missing `:5432/realmpal?sslmode=require` suffix, and the `realmpal` database itself never having been created). `/health` returns `200`, Postgres/Redis/Qdrant all connect clean, specialist warming is scraping RealmEye and populating stores in the background. See `CHANGELOG.md` [2026.09.13] for full technical detail on each bug.
+
 ## History
+### Until Sep 13, 2026 (later same day, fifth revision)
+Resume order was: (1) Container Apps + Key Vault for the actual Azure
+deploy, exact portal steps already in `docs/DEPLOYMENT_GUIDE.md` Priority
+4/5; (2) Stripe live mode repeat-setup before real launch; (3) Entra
+External ID MSAL sign-in, deprioritized after a "failed fetch" error in
+manual testing; (4) launch on a direct `ANTHROPIC_API_KEY`, swap to
+Foundry once the Azure billing review clears.
+
+**Superseded because:** starting the actual Container Apps click-through
+(Sep 13, later) surfaced two real gaps this resume order didn't account
+for - no `Dockerfile` existed at all, and there was no plan for where
+Redis/Qdrant/SQLite live once the API isn't running via docker-compose
+anymore. Those turned into their own resume-order items above.
+
+### Until Sep 13, 2026 (later same day, fourth revision)
+Resume order was:
+1. Entra External ID - MSAL sign-in built (Sep 13) on `feature/entra-auth` (branched off `master`, `dev` untouched). Next: manually test the real redirect round-trip with real `.env.local` values, build IGN collection for a first-time Entra sign-up, then merge.
+2. Launch on a direct `ANTHROPIC_API_KEY` now (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
+4. Container Apps + Key Vault for the actual Azure deploy, once Entra sign-in is merged.
+
+### Until Sep 13, 2026 (later same day, third revision)
+Resume order was:
+1. Entra External ID - portal setup done (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
+2. Foundry - blocked, see Blocked section below. Don't retry deployment until billing clears.
+3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
+4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
+
 ### Until Sep 13, 2026 (later same day)
 Resume order was:
 1. Entra External ID - portal values collected (Sep 13). Next: MSAL SPA + swap local email+password for Entra tokens.
@@ -51,20 +150,27 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 
 ## Next Up
 
-### Entra External ID — portal done, code integration next
+### Entra External ID — portal done, MSAL sign-in built on a side branch, not merged yet
 
-**Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true.
+**Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true, and already tried first (before the local session JWT) in `api/dependencies.py`'s `get_optional_user` - no backend changes were needed for any of this.
 
-**Still to build:**
-1. Frontend MSAL (PKCE) against the SPA client + user flow on `ciamlogin.com`
-2. Wire Sign in / Create account to Entra instead of (or alongside) local SQLite email+password
-3. Keep IGN collection in-app after first Entra sign-up
-4. Defer Google (silent-renewal bug); add later if wanted
+**Built on `feature/entra-auth` (branched off `master`, Sep 13), not merged into `dev` or `master` yet:**
+1. `web/lib/msal.ts`: MSAL (PKCE) `PublicClientApplication` against the SPA client + `ciamlogin.com` authority + user flow. Lazy singleton, only touches `window` client-side, no-ops if `NEXT_PUBLIC_ENTRA_*` env vars are unset
+2. `web/app/auth/callback/page.tsx`: handles the redirect back from Entra, stores the Entra access token under the same `AUTH_TOKEN_KEY` the local session JWT uses (so every existing `authHeaders()` call site needs zero changes)
+3. `web/app/auth/signin/page.tsx`: "Continue with Microsoft" now triggers a real `loginRedirect()` when Entra is configured, instead of always hitting the old 501 stub. Google is untouched (deferred, silent-renewal bug)
+4. `AccountMenu.tsx`: sign-out also clears the MSAL session, but only if MSAL actually has a cached account (a local email+password user signing out never touches Entra at all)
+5. `web/.env.local.example`: documents the `NEXT_PUBLIC_ENTRA_*` values needed (same non-secret IDs already in the root `.env`, just re-exposed for the browser bundle)
+
+**Still to build before merging:**
+1. **Manual test against the real tenant**: fill in `web/.env.local` with the real (non-secret) tenant ID / SPA client ID / API scope, run `npm run dev`, click "Continue with Microsoft", confirm the redirect round-trip and that `/chat` calls succeed with the Entra token
+2. **IGN collection after first Entra sign-up**: the user flow only collects email, so a brand-new Entra account has no IGN and `decodeAuthIgn()` correctly returns `null` for it (no crash), but there's no UI yet prompting for one and no backend endpoint to attach it to that Entra `sub`. Local email+password's `registerAccount` collects IGN inline; Entra's hosted page can't, so this needs its own small flow post-redirect
+3. Defer Google (silent-renewal bug); add later if wanted
 
 **Findings kept:**
 - Two app registrations (API + SPA), not one
 - Authority: `ciamlogin.com` (not `login.microsoftonline.com`) for CIAM
 - No SPA client secret (public client + PKCE)
+- `@azure/msal-browser` 5.21.0's `CacheOptions` no longer has `storeAuthStateInCookie` (that was an IE11-era option); only `cacheLocation` and `cacheRetentionDays` remain
 
 #### History
 ##### Until Sep 13, 2026 - Entra External ID
@@ -197,6 +303,7 @@ Section titles (Your IGN, Chats, Suggested), slightly larger font, lighter text.
 - Google SSO silent renewal bug in Entra (12–24h after first sign-in). Decision pending.
 - Infrastructure lockdown pending (Redis/Qdrant credentials, docker-compose → Container Apps)
 - Prompt-injection defense weak (regex denylist; should be stronger)
+- Entra MSAL sign-in on `feature/entra-auth` (Sep 13) throws a "failed to fetch" error on the redirect callback when manually tested; not diagnosed yet, deprioritized behind Container Apps. Likely candidates whenever this gets picked back up: `knownAuthorities` mismatch, the JWKS/token endpoint not actually reachable at the `ciamlogin.com` path MSAL is calling, or a redirect URI that doesn't exactly match what's registered on the SPA app
 
 ---
 
