@@ -27,6 +27,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Each daily quest now shows today's dungeon portal, an eyeball for player lookup, or a shiny item, all the same size.",
       "Quest icons stay visible when a dungeon name is long.",
       "Sign in and registration no longer spin forever if the server is slow. You'll see a clear message and can just try again.",
+      "Looking up a player, item, or dungeon now shows a clear message instead of spinning forever if it's taking too long.",
       "Dungeon portals show up again after you refresh daily quests.",
       "The Shatters quest now shows the real dungeon portal, not the ice portal inside it.",
       "Hardmode Shatters again uses the purple Source dome as its portal.",

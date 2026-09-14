@@ -5,6 +5,28 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/** Wrap fetch with a timeout - a slow or unresponsive backend (e.g. a
+ * scrape queued behind other work) must not leave the UI waiting forever
+ * with no feedback. Throws a clear, retryable error instead of hanging. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("That's taking longer than expected. Please try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export interface EquipmentItem {
   name: string;
   /** Full multi-line tooltip text exactly as RealmEye shows it on hover. */
@@ -354,9 +376,6 @@ export interface AuthSession {
   ign?: string | null;
 }
 
-/** Sign-in/register can't be allowed to spin forever on a slow or
- * unresponsive backend (e.g. a shared scrape lock queuing behind
- * background warming) - fail with a clear, retryable error instead. */
 const AUTH_TIMEOUT_MS = 20_000;
 
 async function postAuth(
@@ -364,24 +383,15 @@ async function postAuth(
   body: Record<string, string>,
   persist = true,
 ): Promise<AuthSession> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchWithTimeout(
+    `${API_URL}${path}`,
+    {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error("That's taking longer than expected. Please try again.");
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
+    },
+    AUTH_TIMEOUT_MS,
+  );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(typeof data.detail === "string" ? data.detail : "Could not sign in");
@@ -433,15 +443,22 @@ export async function requestSignInLink(email: string): Promise<void> {
   }
 }
 
+// Scrape-backed, not a pure DB read | a cache miss means a live RealmEye
+// fetch, slower than auth calls. Generous, but must still fail visibly
+// rather than leave the sidebar's pet selector (or an item/dungeon card)
+// waiting forever. Shared by fetchPlayer/fetchDungeon/fetchItem below.
+const SCRAPE_LOOKUP_TIMEOUT_MS = 45_000;
+
 export async function fetchPlayer(username: string): Promise<PlayerProfile> {
   // Redis (server-side, TTL'd) is the source of truth for caching | the
   // browser's own HTTP cache must be bypassed, otherwise looking up the
   // same player twice in one session can silently replay a stale response
   // (missing fields from a since-updated API, or a since-changed profile).
-  const res = await fetch(`${API_URL}/players/${encodeURIComponent(username)}`, {
-    cache: "no-store",
-    headers: authHeaders(),
-  });
+  const res = await fetchWithTimeout(
+    `${API_URL}/players/${encodeURIComponent(username)}`,
+    { cache: "no-store", headers: authHeaders() },
+    SCRAPE_LOOKUP_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Player '${username}' not found`);
@@ -475,10 +492,11 @@ export interface DungeonGuide {
 }
 
 export async function fetchDungeon(name: string): Promise<DungeonGuide> {
-  const res = await fetch(`${API_URL}/dungeons/${encodeURIComponent(name)}`, {
-    cache: "no-store",
-    headers: authHeaders(),
-  });
+  const res = await fetchWithTimeout(
+    `${API_URL}/dungeons/${encodeURIComponent(name)}`,
+    { cache: "no-store", headers: authHeaders() },
+    SCRAPE_LOOKUP_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Dungeon '${name}' not found`);
@@ -488,10 +506,11 @@ export async function fetchDungeon(name: string): Promise<DungeonGuide> {
 
 export async function fetchItem(name: string, className?: string): Promise<ItemProfile> {
   const params = className ? `?class_name=${encodeURIComponent(className)}` : "";
-  const res = await fetch(`${API_URL}/items/${encodeURIComponent(name)}${params}`, {
-    cache: "no-store",
-    headers: authHeaders(),
-  });
+  const res = await fetchWithTimeout(
+    `${API_URL}/items/${encodeURIComponent(name)}${params}`,
+    { cache: "no-store", headers: authHeaders() },
+    SCRAPE_LOOKUP_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Item '${name}' not found`);
