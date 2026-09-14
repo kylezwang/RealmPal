@@ -16,11 +16,15 @@ import path from "path";
 const repoRoot = path.resolve(__dirname, "..");
 
 const nextConfig: NextConfig = {
-  // Azure Static Web Apps' hybrid Next.js hosting has a 250 MB app-size
-  // limit; `standalone` traces only the deps each route actually needs
-  // into `.next/standalone` instead of shipping the full `node_modules`.
-  // No effect on `next dev` or plain `next start` locally.
-  output: "standalone",
+  // Static export: every fetch already goes straight from the browser to
+  // the FastAPI backend (`web/lib/api.ts`'s `API_URL`, including chat
+  // streaming at `/chat/stream`), so there's no Next.js server-side work
+  // left to justify hybrid/SSR hosting. `output: "export"` is the fully
+  // stable Next.js feature (unlike Azure Static Web Apps' hybrid Next.js
+  // support, still labeled preview), and removes any risk of the app's
+  // most latency-sensitive feature (chat token streaming) running through
+  // an unproven serverless layer for zero benefit.
+  output: "export",
   outputFileTracingRoot: repoRoot,
   turbopack: {
     root: repoRoot,
@@ -33,18 +37,11 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "www.umienjoyers.com" },
       { protocol: "https", hostname: "umienjoyers.com" },
     ],
-    // Sprites are pixel art | disable default blur/optimization
-    unoptimized: false,
-  },
-  // Proxy /api/sprite to backend sprite resolver
-  async rewrites() {
-    const apiUrl = process.env.API_URL ?? "http://localhost:8001";
-    return [
-      {
-        source: "/api/sprite",
-        destination: `${apiUrl}/sprite`,
-      },
-    ];
+    // Next/Image's optimization API needs a live server, which a static
+    // export doesn't have; `unoptimized` serves the original remote URL
+    // as-is instead (these are small pixel-art wiki icons already sized
+    // at the source, no visible difference).
+    unoptimized: true,
   },
 };
 
