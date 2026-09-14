@@ -48,3 +48,16 @@ Rule of thumb: same question for every user (build, dungeon how-to, drops, best 
 Recorded chat costs (10 traces) average **$0.0365**/msg. The eight build-style rows average **$0.041**. Stored hits are ~$0.
 
 **HMS fact to keep:** after the purple dome (the Source) on the clear to Nox (2nd boss), drag all 4 branches/flames to the center. “Wings” is regular The Shatters, not Hardmode.
+
+## History
+
+### Until Sep 14, 2026 (production trace added below)
+The table above was the full base-case set as of Sep 13. Row added below
+from a real Sep 14 production session, found while reviewing live logs
+after the skin-visualizer scraper fix.
+
+## Production trace, Sep 14, 2026
+
+| Prompt sequence | In / out | Cost | Notes |
+|---|---|---|---|
+| "What does Vampire Slayer Archer look like with Large/small Crown cloth?" then "Sorry I mean Mini Royal Crossbowman Archer" | 11,083/100, then 11,031/62 | $0.0116 + $0.0113 = **$0.0229** | The first message correctly hit the `kind: "skin"` stored path (code composite, no model). The follow-up correction ("Sorry I mean X", no cloth/dye/clothing/accessory keyword) fell through to two real `claude-haiku-4-5` calls with irrelevant RAG context (`query: "Archer quivers ability scaling"`) instead of re-rendering the same outfit with a corrected skin name. Root cause: `is_skin_visualize_query()` requires `_mentions_outfit_piece()` (cloth/dye/clothing/accessory) before treating a message as an outfit follow-up, and separately `_extract_outfit_from_text()`'s catch-all fallback stuffed the entire raw sentence into the `clothing` field instead of extracting the actual skin name. Fixed same day: see `CHANGELOG.md` `[2026.09.14]`, added a correction-phrase recognizer (`sorry i mean` / `i meant` / `actually` / `no i mean`) that bypasses the outfit-piece requirement and strips the correction cue before extraction. |

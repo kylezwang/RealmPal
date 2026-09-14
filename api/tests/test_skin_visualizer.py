@@ -146,6 +146,62 @@ def test_set_visualize_not_skin_query():
     assert not is_skin_visualize_query(msg)
 
 
+def test_followup_correction_with_no_cloth_keyword_is_skin_query():
+    """Regression: correcting just the skin name ("Sorry I mean X") mentions
+    no cloth/dye/clothing/accessory keyword at all, so this previously fell
+    through to a real (paid) Claude call with irrelevant RAG context instead
+    of the free skin-composite path. Found live Sep 14 - see
+    docs/chat-quality-benchmarks.md's Sep 14 production trace."""
+    history = [
+        "What does Vampire Slayer Archer look like with Large and small Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown cloth|Small Crown cloth]",
+    ]
+    msg = "Sorry I mean Mini Royal Crossbowman Archer"
+    assert is_skin_visualize_query(msg, history=history)
+
+
+def test_followup_correction_extracts_clean_skin_name_and_keeps_prior_dyes():
+    history = [
+        "What does Vampire Slayer Archer look like with Large and small Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown cloth|Small Crown cloth]",
+    ]
+    msg = "Sorry I mean Mini Royal Crossbowman Archer"
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Mini Royal Crossbowman"
+    # Prior clothing/accessory carry over - the user only corrected the name.
+    assert query.clothing == "Large Crown cloth"
+    assert query.accessory == "Small Crown cloth"
+
+
+def test_i_meant_correction_is_skin_query():
+    history = [
+        "What does Vampire Slayer Archer look like with Large Crown cloth?",
+        "[skin:Archer|Vampire Slayer|Large Crown cloth|]",
+    ]
+    msg = "I meant Kings Bowman Archer"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.skin_name == "Kings Bowman"
+
+
+def test_bare_name_without_outfit_history_is_not_a_skin_query():
+    """A bare name with no history and no visualizer/skin keyword at all
+    should not be misclassified - only correction-cue phrasing or an
+    explicit skin/outfit keyword should trigger this path."""
+    assert not is_skin_visualize_query("Mini Royal Crossbowman Archer")
+
+
+def test_correction_cue_does_not_corrupt_extraction_without_history():
+    """_extract_outfit_from_text on its own (no history merge) should not
+    stuff the correction phrase or the whole sentence into `clothing`."""
+    query = extract_outfit_query("Sorry I mean Mini Royal Crossbowman Archer")
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Mini Royal Crossbowman"
+    assert query.clothing is None
+    assert query.accessory is None
+
+
 @pytest.mark.asyncio
 async def test_compose_skin_stored_reply_includes_token(redis_client, anon_settings):
     catalog = {
