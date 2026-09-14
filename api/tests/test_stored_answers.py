@@ -15,6 +15,7 @@ from api.services.rate_limit import peek, quota_for
 from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
 from api.services.stored_answers import (
     _compose_guide_brief,
+    _shiny_divine_flags,
     _shiny_divine_item_name,
     _strip_item_card_hooks,
     _strip_wiki_chrome,
@@ -145,6 +146,52 @@ async def test_shiny_divine_item_never_hits_the_llm(
     assert calls == []
     assert "[loadout shiny divine]" in text
     assert "[item:Crown]" in text
+
+
+def test_shiny_alone_extracts_the_item_and_strips_look_like():
+    """Regression: shiny and divine are independent visual flags in-game (an
+    item can be shiny without being divine, or vice versa), but this used to
+    require both words together, so a plain "shiny X" fell through to a real
+    Claude call with no way to actually render anything. Found live Sep 14
+    with "What does shiny snake eye ring look like?"."""
+    assert (
+        _shiny_divine_item_name("What does shiny snake eye ring look like?")
+        == "snake eye ring"
+    )
+    assert _shiny_divine_flags("What does shiny snake eye ring look like?") == (
+        True,
+        False,
+    )
+
+
+def test_divine_alone_extracts_the_item():
+    assert _shiny_divine_item_name("What does divine Crown look like") == "Crown"
+    assert _shiny_divine_flags("What does divine Crown look like") == (False, True)
+
+
+async def test_shiny_alone_item_never_hits_the_llm_and_renders_shiny_only(
+    stream_app, redis_client, anon_settings
+):
+    client, calls = stream_app
+    await write_cached_item(
+        redis_client,
+        ItemProfile(name="Snake Eye Ring", drop_locations=["Snake Pit"]),
+        anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "What does shiny snake eye ring look like?",
+                "session_id": "s-shiny-only",
+            },
+        )
+        assert response.status_code == 200
+        text = await _read_sse_text(response)
+    assert calls == []
+    assert "[loadout shiny]" in text
+    assert "[loadout shiny divine]" not in text
+    assert "[item:Snake Eye Ring]" in text
 
 
 async def test_drop_question_never_hits_the_llm(stream_app, redis_client, anon_settings):

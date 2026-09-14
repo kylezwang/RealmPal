@@ -68,9 +68,26 @@ _SHINY_DIVINE_ITEM = re.compile(
     r"(?:"
     r"(?:show|see|visualize)\s+(?:me\s+)?(?:a\s+)?"
     r")?"
-    r"(?:a\s+)?(?:shiny\s+divine|divine\s+shiny)\s+(.+?)\s*$",
+    # shiny and divine are independent visual flags in-game (a single item
+    # can be either, both, or neither) - matching either alone, not just the
+    # combo, and stripping a trailing "look(s) like ...?" so "what does
+    # shiny X look like" (found live Sep 14, no "divine") still extracts a
+    # clean name instead of swallowing "look like?" into it or, before this
+    # fix, not matching at all and falling through to a real Claude call
+    # that has no way to actually render anything.
+    r"(?:a\s+)?(?:shiny\s+divine|divine\s+shiny|shiny|divine)\s+"
+    r"(.+?)"
+    r"(?:\s+looks?\s+like\b.*)?$",
     re.I,
 )
+_SHINY_WORD = re.compile(r"\bshiny\b", re.I)
+_DIVINE_WORD = re.compile(r"\bdivine\b", re.I)
+
+
+def _shiny_divine_flags(message: str) -> tuple[bool, bool]:
+    """Which of the two independent visual flags this message names."""
+    text = message or ""
+    return bool(_SHINY_WORD.search(text)), bool(_DIVINE_WORD.search(text))
 
 _EARLY = re.compile(
     r"\b(early[\s-]?game|beginner|new\s+player|starter)\b.+\b(items?|gear|loadout|equips?)\b"
@@ -294,8 +311,10 @@ async def _shiny_divine_reply(
             title = name
     else:
         title = item.name
+    shiny, divine = _shiny_divine_flags(message)
+    flags = " ".join(flag for flag, on in (("shiny", shiny), ("divine", divine)) if on)
     return StoredReply(
-        text=f"[loadout shiny divine]\n[item:{title}]",
+        text=f"[loadout {flags}]\n[item:{title}]",
         kind="shiny",
         key=f"item:profile:v3:{title.lower()}",
     )
