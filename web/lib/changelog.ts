@@ -3,6 +3,15 @@ export interface ChangelogEntry {
   version: string;
   /** Human date shown in the UI, e.g. "Sep 13, 2026". */
   date: string;
+  /**
+   * When this entry actually shipped, ISO 8601 with offset. Powers the
+   * "What's new" modal's expanded timeline view (real ship time next to
+   * the version badge, so same-day releases like "-2"/"-3" read in order).
+   * Backfilled from the git commit that last touched each entry below;
+   * never hand-wave a time for a new entry, pull it from `git log` once
+   * the change is actually committed.
+   */
+  timestamp?: string;
   /** Short, plain-language, user-facing bullets. See .cursor/rules/changelog.mdc. */
   items: string[];
 }
@@ -16,6 +25,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "2026.09.15",
     date: "Sep 15, 2026",
+    timestamp: "2026-09-15T10:49:50-07:00",
     items: [
       "On phones, sidebar suggestion prompts start hidden, and that hide or show choice is remembered next time.",
       "The menu now has a New chat button above your chat list.",
@@ -26,6 +36,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "2026.09.14-2",
     date: "Sep 14, 2026",
+    timestamp: "2026-09-14T23:15:37-07:00",
     items: [
       "Phones now show the chat first, with a full-screen menu behind a button in the top left.",
       "The message box stays on screen above the Safari toolbar, so you no longer have to scroll to type.",
@@ -34,6 +45,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "2026.09.14",
     date: "Sep 14, 2026",
+    timestamp: "2026-09-14T22:37:35-07:00",
     items: [
       "Chat answers are grounded in real wiki data again, across every kind of question.",
       "Dungeon guides and the skin/outfit visualizer are back to full strength after a rough patch.",
@@ -54,6 +66,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "2026.09.13",
     date: "Sep 13, 2026",
+    timestamp: "2026-09-13T16:49:30-07:00",
     items: [
       "Pro gets more chat included every month, plus an optional pay-as-you-go option so you're never stuck waiting.",
       "Checkout now offers Link, so returning Stripe customers can pay without retyping their card.",
