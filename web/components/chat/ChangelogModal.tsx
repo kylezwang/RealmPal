@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CHANGELOG, markChangelogSeen, type ChangelogEntry } from "@/lib/changelog";
 
 interface Props {
@@ -8,29 +8,106 @@ interface Props {
 
 const PREVIEW_COUNT = 3;
 
-function EntryList({ entry, items }: { entry: ChangelogEntry; items: string[] }) {
+/** "10:49 AM PT" from an ISO timestamp. Pacific to match the rest of the
+ * app's time references (e.g. the daily reset time). */
+function formatEntryTime(iso: string): string {
+  try {
+    const formatted = new Date(iso).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "America/Los_Angeles",
+    });
+    return `${formatted} PT`;
+  } catch {
+    return "";
+  }
+}
+
+/** Groups already-sorted (newest-first) entries by their display date, so
+ * same-day releases (e.g. "-2") sit under one date marker in the timeline. */
+function groupByDate(entries: ChangelogEntry[]): { date: string; entries: ChangelogEntry[] }[] {
+  const groups: { date: string; entries: ChangelogEntry[] }[] = [];
+  for (const entry of entries) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === entry.date) {
+      last.entries.push(entry);
+    } else {
+      groups.push({ date: entry.date, entries: [entry] });
+    }
+  }
+  return groups;
+}
+
+function ItemBullets({ items }: { items: string[] }) {
+  return (
+    <ul className="space-y-1.5">
+      {items.map((item) => (
+        <li key={item} className="flex gap-2 text-sm text-[#a3a3a3] leading-relaxed">
+          <span className="text-[#ececec]" aria-hidden="true">
+            •
+          </span>
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Collapsed (initial popup) view: just the latest entry's date + first few items. */
+function PreviewView({ entry, items }: { entry: ChangelogEntry; items: string[] }) {
   return (
     <div>
       <p className="text-xs font-medium uppercase tracking-wide text-[#737373] mb-1.5">
         {entry.date}
       </p>
-      <ul className="space-y-1.5">
-        {items.map((item) => (
-          <li key={item} className="flex gap-2 text-sm text-[#a3a3a3] leading-relaxed">
-            <span className="text-[#ececec]" aria-hidden="true">
-              •
-            </span>
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
+      <ItemBullets items={items} />
+    </div>
+  );
+}
+
+/** Expanded view: a real timeline, one marker per calendar day, with a
+ * version badge (+ real ship time, when known) for each release under it. */
+function TimelineView({ entries }: { entries: ChangelogEntry[] }) {
+  const groups = useMemo(() => groupByDate(entries), [entries]);
+  return (
+    <div className="relative space-y-6 border-l border-[#333333] pl-4">
+      {groups.map((group) => (
+        <div key={group.date} className="relative">
+          <span
+            className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-white ring-4 ring-[#1e1e1e]"
+            aria-hidden="true"
+          />
+          <p className="text-sm font-semibold text-[#ececec] mb-3">{group.date}</p>
+          <div className="space-y-4">
+            {group.entries.map((entry, i) => (
+              <div
+                key={entry.version}
+                className={i > 0 ? "border-t border-[#2a2a2a] pt-4" : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="rounded border border-[#333333] bg-[#262626] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#737373]">
+                    {entry.version}
+                  </span>
+                  {entry.timestamp && (
+                    <span className="text-[10px] text-[#525252]">
+                      {formatEntryTime(entry.timestamp)}
+                    </span>
+                  )}
+                </div>
+                <ItemBullets items={entry.items} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 /**
  * "What's new" popup. Lists recent user-facing updates, newest first.
- * Starts collapsed; "See more" reveals the rest.
+ * Starts collapsed at a fixed width; "See more" expands into a wider,
+ * timestamped timeline of every release grouped by day.
  */
 export function ChangelogModal({ onClose }: Props) {
   const [expanded, setExpanded] = useState(false);
@@ -63,7 +140,11 @@ export function ChangelogModal({ onClose }: Props) {
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative z-10 w-full max-w-sm max-h-[80vh] overflow-y-auto rounded-2xl border border-[#404040] bg-[#1e1e1e] p-6 shadow-2xl animate-fade-in">
+      <div
+        className={`relative z-10 w-full max-h-[80vh] overflow-y-auto rounded-2xl border border-[#404040] bg-[#1e1e1e] p-6 shadow-2xl animate-fade-in transition-[max-width] duration-200 ${
+          expanded ? "max-w-lg sm:max-w-2xl" : "max-w-sm"
+        }`}
+      >
         <button
           type="button"
           onClick={onClose}
@@ -78,18 +159,11 @@ export function ChangelogModal({ onClose }: Props) {
         </h2>
         <p className="text-sm text-[#737373] mb-5">Recent updates, newest first.</p>
 
-        <div className="space-y-5">
-          {latest && (
-            <EntryList
-              entry={latest}
-              items={expanded ? latest.items : previewItems}
-            />
-          )}
-          {expanded &&
-            CHANGELOG.slice(1).map((entry) => (
-              <EntryList key={entry.version} entry={entry} items={entry.items} />
-            ))}
-        </div>
+        {expanded ? (
+          <TimelineView entries={CHANGELOG} />
+        ) : (
+          latest && <PreviewView entry={latest} items={previewItems} />
+        )}
 
         {hasMore && !expanded && (
           <button

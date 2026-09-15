@@ -449,7 +449,7 @@ export async function requestSignInLink(email: string): Promise<void> {
 // rather than leave the sidebar's pet selector (or an item/dungeon card)
 // waiting forever. Shared by fetchPlayer/fetchDungeon/fetchItem below.
 const SCRAPE_LOOKUP_TIMEOUT_MS = 45_000;
-const PET_LOOKUP_TIMEOUT_MS = 10_000;
+const PET_LOOKUP_TIMEOUT_MS = 20_000;
 export const PET_NOT_FOUND_MESSAGE = "Sorry, I wasn't able to find a pet. Please try again later.";
 
 /** Sidebar IGN field only | Pet Yard tab, not the full profile scrape. */

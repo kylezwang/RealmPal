@@ -140,7 +140,6 @@ export function ChatSidebar({
             </svg>
           </button>
         </div>
-        {ignError && <p className="text-[11px] text-red-400 mt-1">{ignError}</p>}
       </form>
 
       <PetCompanion profile={playerProfile} loading={isLoadingPlayer} lookupError={ignError} />
