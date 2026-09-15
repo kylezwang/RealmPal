@@ -132,6 +132,16 @@ export function extractItemNames(content: string): string[] {
     const key = name.toLowerCase();
     if (!name || seen.has(key)) return;
     if (/\/|realmeye\.com|umienjoyers\.com|^https?:/i.test(name)) return;
+    // Claude sometimes falls back to a generic "check the wiki page
+    // directly" style link (e.g. `[RealmEye wiki dungeon page](.../wiki/...)`)
+    // when it lacks real context. The wiki-link regex above can't tell that
+    // apart from a real item/dungeon citation since both just point at
+    // `/wiki/<slug>` - but no real item, dungeon, or set name ever contains
+    // these generic referral words, so filter them out here instead. Without
+    // this, the UI fires a doomed fetchItem() for a name that will never
+    // exist, and the backend burns 15-30s of scraper time (shared by every
+    // concurrent user) trying to scrape a URL that was never a real page.
+    if (/\b(?:wiki|page|guide|directly|article)\b/i.test(name)) return;
     seen.add(key);
     names.push(name);
   };

@@ -161,6 +161,18 @@ _SKIN_TOKEN = re.compile(
     r"\[skin:([^|\]]+)\|([^|\]]*)\|([^|\]]*)\|([^|\]]*)\]", re.I
 )
 _LEADING_SIZE = re.compile(r"^(?:large|small)\s+", re.I)
+# A user correcting just the class/skin name mid-conversation ("Sorry I mean
+# X", "I meant X") mentions no cloth/dye/clothing/accessory keyword at all,
+# so it previously fell through both is_skin_visualize_query() (which
+# required _mentions_outfit_piece) and _extract_outfit_from_text()'s
+# fallback (whose catch-all then stuffed the *entire* raw sentence into the
+# clothing field, since nothing else matched). Found live Sep 14 - see
+# docs/chat-quality-benchmarks.md's Sep 14 production trace.
+_CORRECTION_CUE = re.compile(
+    r"^\s*(?:sorry,?\s+i\s+mean|i\s+meant|actually,?\s+i\s+mean|no,?\s+i\s+mean|"
+    r"meant\s+to\s+say|my\s+mistake,?\s+i\s+mean)\b\s*",
+    re.I,
+)
 
 
 @dataclass
@@ -203,6 +215,10 @@ def is_skin_visualize_query(message: str, history: Optional[list[str]] = None) -
     if history and _history_has_outfit(history) and not _UNRELATED_SKIN.search(text):
         if _is_slot_swap(text):
             return True
+        if _CORRECTION_CUE.search(text):
+            candidate = _extract_outfit_from_text(text)
+            if candidate.skin_name or candidate.class_name:
+                return True
         if _mentions_outfit_piece(text) and (
             _OUTFIT_FOLLOWUP.search(text)
             or _FOLLOWUP_INTENT.search(text)
@@ -437,6 +453,7 @@ def _parse_cloth_accessory(
 
 def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) -> OutfitQuery:
     text = (message or "").strip()
+    text = _CORRECTION_CUE.sub("", text).strip()
     see = _SEE_WITH.search(text)
     if see:
         clothing, accessory, other = _parse_cloth_accessory(see.group(1).strip())
@@ -477,7 +494,15 @@ def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) ->
             other_slot=other,
         )
 
-    clothing, accessory, other = _parse_cloth_accessory(text)
+    # Only attempt cloth/dye extraction when the text actually hints at one -
+    # _parse_cloth_accessory's own catch-all (its last-resort branch) treats
+    # ANY leftover text as a clothing dye name when nothing more specific
+    # matches, which corrupts a bare name-only message (e.g. a class/skin
+    # correction with no cloth/dye keyword at all) by stuffing the entire
+    # sentence into `clothing` and leaving nothing for skin_name below.
+    clothing, accessory, other = (
+        _parse_cloth_accessory(text) if _mentions_outfit_piece(text) else (None, None, None)
+    )
     with_m = _WITH_CLAUSE.search(text)
     rest = text
     if with_m:
@@ -581,6 +606,10 @@ def _is_outfit_followup(
     history: Optional[list[str]],
 ) -> bool:
     if _OUTFIT_FOLLOWUP.search(message or "") or _is_slot_swap(message or ""):
+        return True
+    if _CORRECTION_CUE.search(message or "") and (
+        current.skin_name or current.class_name
+    ):
         return True
     if not history or not _history_has_outfit(history):
         return False

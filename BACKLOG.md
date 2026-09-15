@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/13/26
+Last updated: 9/14/26 (10:15 AM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -13,7 +13,8 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 
 Resume order when context is fresh:
 
-1. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
+1. **Not yet fixed - every chat message unconditionally scrapes+ingests the signed-in user's own IGN profile**, even for messages with nothing to do with the player (`api/routers/chat.py`, `if body.ign:` block, ~line 588 - "Player profiles change constantly, scrape on lookup" comment explains the *intent* but this fires on every uncached message regardless of whether the message needs it, e.g. a pure "how to do X dungeon" question). Confirmed Sep 14: asking about Moonlight Village still triggered a 14s `Scraping player profile {'username': 'Turbine'}` call. This adds unnecessary load to the shared Playwright semaphore. Worth reconsidering: only scrape when `player_only`/`buildish` is true for *this* message (the router already computes these flags for the RAG-skip logic right below it), not unconditionally whenever `body.ign` is set.
+2. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
    frontend hosting existed yet, only the API backend is deployed. Chose
    Azure Static Web Apps over Vercel (Sep 13, decided to stay fully on
    Azure for the portfolio story) and over a second Container App (simpler
@@ -29,19 +30,57 @@ Resume order when context is fresh:
    Container App's Application URL, and update the API's `app_url` setting
    (`Settings.cors_allowed_origins`) to the Static Web App's URL so CORS
    isn't stuck on `localhost:3000`.
-2. **Key Vault**: move the env vars pasted into the Container App (JWT
+
+   **Done as of Sep 14 - see CHANGELOG.md `[2026.09.13]`.** Kept here (not
+   deleted) per `doc-history.mdc` since this was the original plan text,
+   not just a status update.
+3. **Key Vault**: move the env vars pasted into the Container App (JWT
    secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
    references instead of plaintext. Priority 5 in the deploy guide.
-3. **Production secrets review**: the deployed Container App's log stream
+4. **Production secrets review**: the deployed Container App's log stream
    shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
    warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
    both explicitly and rotate `JWT_SECRET` off its local-dev value before
    real launch.
-4. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
-5. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
-6. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+5. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
+6. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
+7. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
 
 ## History
+### Until Sep 14, 2026, 10:15 AM (this revision)
+Resume order's top items were, in this order: (1) embeddings backend
+unreachable in production (CRITICAL, silently breaking all RAG), (2) a
+frontend bug causing doomed item scrapes (already fixed same day), (3) Azure
+Static Web App status confirmation, (4) CPU/semaphore contention causing
+slow pet/dungeon/skin lookups, (5) unconditional IGN profile scrape on every
+message, (6) skin/outfit visualizer scraper bug, (7) the original Static Web
+App plan text. Superseded because all of items 1-4 and 6 got fixed and
+deployed in this same session (Sep 14 morning): the embeddings backend was
+switched to Voyage AI and both Qdrant collections re-seeded end to end; what
+was diagnosed as "dungeon-guide retrieval leans on the same embeddings path"
+turned out to be **wrong** on closer inspection - `dungeon_guide.py` never
+touches Qdrant at all, the actual bug was a narrower regex gap
+(`_GUIDE_RE` not recognizing "how to **do** X" phrasing), fixed separately;
+the skin/outfit visualizer's selector bug was root-caused via live DOM
+inspection (`.chooser-table` has a permanent zero-height box) and fixed; the
+Container App was bumped to 1.0 vCPU/2 GiB. Full technical detail for all of
+these moved to `CHANGELOG.md` `[2026.09.14]` per `development-workflow.mdc`.
+Item 5 (unconditional IGN scrape) is carried forward unchanged, still not
+fixed, now item 1 in the current list above.
+### Until Sep 14, 2026, 12:21 AM (earlier same day)
+Resume order was, in this order: (1) Azure Static Web App for `web/` in
+Static mode, (2) Key Vault, (3) Production secrets review, (4) Stripe live
+mode, (5) Entra External ID, (6) Launch on `ANTHROPIC_API_KEY`. Superseded
+because a live post-deploy smoke test the same night found the embeddings
+backend was broken in production (item 1 above, the most severe finding of
+the night - silently blind RAG on every chat reply), a real frontend bug
+causing doomed scrapes (item 2, fixed same session), and confirmed the
+Static Web App item was actually already done. Items 4-6 (CPU contention,
+unconditional IGN scrape, skin visualizer bug) are newly-found detail
+underneath the CPU-contention item that already existed in the Sep 13
+CHANGELOG.md "Internal" section ("Diagnosed: live scrapes queue behind
+specialist warming in production") but hadn't been copied into BACKLOG.md's
+forward-looking resume list yet.
 ### Until Sep 13, 2026 (later same day, second revision)
 Resume order was:
 1. Container Apps Step 2 onward: registry created and the API image is built + pushed; Qdrant Cloud also done. Still need: the Azure Managed Redis instance (Priority 4 Step 1.7 in `docs/DEPLOYMENT_GUIDE.md`), then the Container Apps Environment + Container App itself (Step 2 onward, same doc).

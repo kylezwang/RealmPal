@@ -27,7 +27,7 @@ from ..models.player import PlayerProfile
 from ..models.item import ItemProfile
 from ..models.build import AbilityScalingEdge, StatScalingGraph
 from .chunks import split_guide
-from .embeddings import embed_texts
+from .embeddings import VECTOR_SIZE, embed_texts
 from .scraper import scrape_wiki_page
 from .realmshark import (
     REALMSHARK_PAGE,
@@ -38,8 +38,12 @@ from .realmshark import (
     graph_from_builds,
     loadouts_from_rows,
 )
-
-VECTOR_SIZE = 768  # nomic-embed-text / voyage-3-lite dimension
+# VECTOR_SIZE now lives in embeddings.py, re-exported via the import above,
+# since it depends on which embedding backend is active (768 for Ollama's
+# nomic-embed-text, 1024 for Voyage's voyage-4-lite) - see that module's
+# docstring. Duplicating it here as a second hardcoded constant is exactly
+# what caused the stale "voyage-3-lite is also 768 dims" assumption that
+# was never actually true.
 
 
 def collection() -> str:

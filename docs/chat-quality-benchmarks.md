@@ -48,3 +48,40 @@ Rule of thumb: same question for every user (build, dungeon how-to, drops, best 
 Recorded chat costs (10 traces) average **$0.0365**/msg. The eight build-style rows average **$0.041**. Stored hits are ~$0.
 
 **HMS fact to keep:** after the purple dome (the Source) on the clear to Nox (2nd boss), drag all 4 branches/flames to the center. “Wings” is regular The Shatters, not Hardmode.
+
+## History
+
+### Until Sep 14, 2026 (production trace added below)
+The table above was the full base-case set as of Sep 13. Row added below
+from a real Sep 14 production session, found while reviewing live logs
+after the skin-visualizer scraper fix.
+
+## Quota/meter depletion policy, confirmed Sep 14, 2026
+
+Verified against live test runs (not just reading the code) that stored
+answers (no Claude call) deplete quota differently by account type, and
+that this is intentional, not a bug:
+
+| Account type | Stored answer | Real Claude call |
+|---|---|---|
+| Anonymous (no account) | **Depletes** the daily 3-message quota - intentional, funnels guests to sign in | Depletes |
+| Free (signed in) | Does not deplete | Depletes |
+| Paid | Does not deplete the Claude included-reply meter | Depletes |
+
+Logic: `api/routers/chat.py`'s `chat_stream()`, the `if stored:` block only
+calls `_enforce_quota()` when `quota.is_anonymous` is true (resolved in
+`api/services/rate_limit.py`'s `quota_for()` - anonymous only when there is
+no verified user at all). `consume_claude_reply()` is only called in the
+non-stored branch below, so it never runs for a stored hit regardless of
+account type.
+
+Tests (all passing as of Sep 14): `test_drop_question_never_hits_the_llm`
+(anonymous depletes, `peek() == 1`), `test_signed_in_stored_answer_skips_daily_quota`
+(free does not, `peek() == 0`), `test_paid_stored_hit_does_not_increment_claude_meter`
+(paid meter untouched, `used == 0`) - all in `api/tests/test_stored_answers.py`.
+
+## Production trace, Sep 14, 2026
+
+| Prompt sequence | In / out | Cost | Notes |
+|---|---|---|---|
+| "What does Vampire Slayer Archer look like with Large/small Crown cloth?" then "Sorry I mean Mini Royal Crossbowman Archer" | 11,083/100, then 11,031/62 | $0.0116 + $0.0113 = **$0.0229** | The first message correctly hit the `kind: "skin"` stored path (code composite, no model). The follow-up correction ("Sorry I mean X", no cloth/dye/clothing/accessory keyword) fell through to two real `claude-haiku-4-5` calls with irrelevant RAG context (`query: "Archer quivers ability scaling"`) instead of re-rendering the same outfit with a corrected skin name. Root cause: `is_skin_visualize_query()` requires `_mentions_outfit_piece()` (cloth/dye/clothing/accessory) before treating a message as an outfit follow-up, and separately `_extract_outfit_from_text()`'s catch-all fallback stuffed the entire raw sentence into the `clothing` field instead of extracting the actual skin name. Fixed same day: see `CHANGELOG.md` `[2026.09.14]`, added a correction-phrase recognizer (`sorry i mean` / `i meant` / `actually` / `no i mean`) that bypasses the outfit-piece requirement and strips the correction cue before extraction. |

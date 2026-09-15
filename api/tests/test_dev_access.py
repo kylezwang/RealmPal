@@ -18,13 +18,27 @@ def _settings(tmp_path, *, debug: bool) -> Settings:
     )
 
 
-async def test_turbine_is_unlimited_only_while_debug(tmp_path):
+async def test_turbine_is_unlimited_regardless_of_debug(tmp_path):
+    """Regression: until Sep 14, 2026 this also required DEBUG=true, which
+    meant unlocking it in production dragged in DEBUG's other side effects
+    (public /docs, muted secret-rotation warnings - see
+    Settings.debug_unlimited_ign_set). Naming an IGN is now sufficient on its
+    own, in any environment."""
     user = AuthenticatedUser(
         subject="player@example.com",
         email="player@example.com",
         claims={"email": "player@example.com", "ign": "Turbine"},
     )
     assert await is_debug_unlimited(user, _settings(tmp_path, debug=True)) is True
+    assert await is_debug_unlimited(user, _settings(tmp_path, debug=False)) is True
+
+
+async def test_unnamed_ign_stays_metered_even_with_debug_off(tmp_path):
+    user = AuthenticatedUser(
+        subject="nobody@example.com",
+        email="nobody@example.com",
+        claims={"email": "nobody@example.com", "ign": "SomeoneElse"},
+    )
     assert await is_debug_unlimited(user, _settings(tmp_path, debug=False)) is False
 
 
