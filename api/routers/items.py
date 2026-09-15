@@ -21,7 +21,12 @@ from ..services.scraper import scrape_item, ScraperError
 from ..services.ingestion import ingest_item
 from ..services.validation import sanitize_lookup_name
 from ..services.class_gear import class_can_wear_item
-from ..services.wiki_scaling import read_cached_item, write_cached_item
+from ..services.wiki_scaling import (
+    is_item_marked_missing,
+    mark_item_missing,
+    read_cached_item,
+    write_cached_item,
+)
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -78,6 +83,17 @@ async def get_item(
             "Item nickname resolve failed; trying the typed name"
         )
 
+    # Some real, correctly-named items (a fresh RealmShark leaderboard entry,
+    # e.g. Rift Rippers) genuinely have no RealmEye wiki page yet. Without
+    # this, every lookup paid a full two-attempt Playwright timeout (~30s)
+    # even though the previous lookup already learned the page doesn't
+    # exist. Checked (and charged no lookup quota) before the scrape below;
+    # short TTL means it starts resolving again once RealmEye publishes it.
+    if await is_item_marked_missing(redis, lookup):
+        raise HTTPException(
+            status_code=404, detail=f"{lookup} has no RealmEye wiki page yet"
+        )
+
     await consume_lookup_quota(request, settings, redis, user)
 
     try:
@@ -87,8 +103,11 @@ async def get_item(
             try:
                 item = await scrape_item(name)
             except ScraperError:
+                await mark_item_missing(redis, lookup, settings.missing_item_ttl_seconds)
+                await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
                 raise HTTPException(status_code=404, detail=str(e)) from e
         else:
+            await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
             raise HTTPException(status_code=404, detail=str(e)) from e
 
     try:

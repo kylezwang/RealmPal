@@ -125,11 +125,21 @@ async def enforce_lookup_rate_limit(
 
 async def require_user(
     user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthenticatedUser:
-    """The verified caller, or 401. Use on anything that must not be anonymous."""
-    if not settings.auth_configured:
-        raise HTTPException(status_code=503, detail="Authentication is not configured")
+    """The verified caller, or 401. Use on anything that must not be anonymous.
+
+    Unused anywhere yet as of Sep 14, 2026 until chat_sessions.py's router
+    became the first caller - previously gated on `settings.auth_configured`
+    first, which only reflects whether Entra JWKS verification is set up
+    (see Settings.auth_configured). The app actually launched on the local
+    email+password JWT path instead (Entra deprioritized, see BACKLOG.md),
+    which `get_optional_user` already verifies independently of Entra - so
+    that gate 503'd on every request in the deployment's actual auth
+    configuration, for a check `get_optional_user` already makes redundant
+    (it returns None, not a valid user, when neither method is configured
+    or the token doesn't verify). Dropped the gate; `user is None` alone is
+    the correct and complete "not signed in" signal either way.
+    """
     if user is None:
         raise HTTPException(
             status_code=401,

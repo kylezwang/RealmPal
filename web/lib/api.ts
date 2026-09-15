@@ -3,7 +3,7 @@
  * All streaming logic is here | components just consume async iterables.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 /** Wrap fetch with a timeout - a slow or unresponsive backend (e.g. a
  * scrape queued behind other work) must not leave the UI waiting forever

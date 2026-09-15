@@ -366,6 +366,29 @@ async def write_cached_item(
         await redis.setex(f"{ITEM_CACHE_PREFIX}:{key}", ttl, payload)
 
 
+MISSING_ITEM_PREFIX = "item:missing:v1"
+
+
+async def mark_item_missing(redis: aioredis.Redis, name: str, ttl: int) -> None:
+    """Remember that `name` has no RealmEye wiki page right now.
+
+    Some real, correctly-named items (a fresh RealmShark leaderboard entry)
+    genuinely have no wiki page yet, and every lookup for one used to pay a
+    full two-attempt Playwright timeout (~30s) with nothing cached to skip
+    it next time. Short TTL so the item starts resolving on its own once
+    RealmEye actually publishes the page - see Settings.missing_item_ttl_seconds.
+    """
+    for key in item_name_keys(name):
+        await redis.setex(f"{MISSING_ITEM_PREFIX}:{key}", ttl, "1")
+
+
+async def is_item_marked_missing(redis: aioredis.Redis, name: str) -> bool:
+    for key in item_name_keys(name):
+        if await redis.get(f"{MISSING_ITEM_PREFIX}:{key}"):
+            return True
+    return False
+
+
 async def _cached_item(redis: aioredis.Redis, name: str) -> Optional[ItemProfile]:
     return await read_cached_item(redis, name)
 

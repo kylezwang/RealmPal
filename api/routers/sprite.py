@@ -15,7 +15,12 @@ from ..config import Settings, get_settings
 from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..services.scraper import scrape_item, ScraperError
 from ..services.validation import sanitize_lookup_name
-from ..services.wiki_scaling import read_cached_item, write_cached_item
+from ..services.wiki_scaling import (
+    is_item_marked_missing,
+    mark_item_missing,
+    read_cached_item,
+    write_cached_item,
+)
 
 router = APIRouter(tags=["sprite"])
 
@@ -35,9 +40,17 @@ async def get_item_sprite(
 
     item = await read_cached_item(redis, name)
     if item is None or not item.sprite_url:
+        # See items.py's get_item for why this exists: a real item can have
+        # no RealmEye wiki page yet, and without this every sprite request
+        # for it re-pays the full scrape timeout instead of failing fast.
+        if await is_item_marked_missing(redis, name):
+            raise HTTPException(
+                status_code=404, detail=f"{name} has no RealmEye wiki page yet"
+            )
         try:
             item = await scrape_item(name)
         except ScraperError as e:
+            await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
             raise HTTPException(status_code=404, detail=str(e)) from e
         await write_cached_item(redis, item, settings.wiki_ttl_seconds, name)
 

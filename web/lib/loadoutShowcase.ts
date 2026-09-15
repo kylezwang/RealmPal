@@ -78,6 +78,15 @@ export function extractNamedSetItems(prompt: string): string[] {
         .replace(/\s+/g, " "),
     )
     .filter((name) => name.length >= 3 && name.length <= 60);
+  // A real set names 2+ items. `\bwith\s+...` matches any trailing "with
+  // <phrase>" in the message, not just an item list - so an ordinary
+  // question that happens to use "with" (e.g. "Is it insane with the
+  // awakened enchantment?") returned a one-item "set" here. That bogus
+  // single name then got speculatively fetched as a real item lookup by
+  // the caller, guaranteeing a 404. Mirrors the same fix applied to the
+  // backend's extract_set_item_names (api/services/item_aliases.py) -
+  // found live Sep 14 for the identical message on both sides.
+  if (names.length < 2) return [];
   return names.slice(0, SET_SLOT_COUNT);
 }
 
