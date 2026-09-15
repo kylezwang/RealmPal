@@ -145,9 +145,23 @@ def _normalize_row(row: list[str], heading: str) -> Optional[dict]:
         return None
     if not eligible and not effects:
         return None
+    if not eligible:
+        # RealmEye's Awakened Enchantments table has no Eligible/slot column
+        # at all (unlike Basic/Unique) - the section intro says these "only
+        # specific item(s) can roll", e.g. Infernal Anger is exclusive to
+        # Berserker's Breastplate, not "any heavy armor". Defaulting the
+        # missing cell to ALL made every awakened enchant look generically
+        # eligible for any weapon/armor/ability/ring. Found live Sep 14:
+        # Infernal Anger recommended for a generic Attack Kensei build that
+        # has nothing to do with Berserker's Breastplate. Use a marker
+        # _eligible_ok() never treats as slot-generic instead, so awakened
+        # rows only surface via roll_matches()'s item-name-mentioned
+        # fallback (the one item they're honestly for), never a blanket
+        # stat/slot match.
+        eligible = "AWAKENED_ITEM_LOCKED" if "awakened" in (heading or "").lower() else "ALL"
     return {
         "name": name,
-        "eligible": eligible or "ALL",
+        "eligible": eligible,
         "effects": effects,
         "labels": labels,
         "incompatible": incompatible,
@@ -242,8 +256,19 @@ async def warm_enchanting_store(
     return {"stored": 1 if rolls else 0, "rolls": rolls}
 
 
+_KNOWN_ELIGIBLE_TOKENS = frozenset(
+    {"ALL", "WEAPON", "ABILITY", "ARMOR", "RING", "WEAPONRING", "ABILITYRING", "ARMORRING"}
+)
+
+
 def _eligible_ok(eligible: str, slot: Optional[str]) -> bool:
     token = (eligible or "ALL").replace(" ", "").upper()
+    if token not in _KNOWN_ELIGIBLE_TOKENS:
+        # AWAKENED_ITEM_LOCKED (see _normalize_row) or anything else outside
+        # the real slot vocabulary is never a generic match, even when the
+        # caller doesn't know the slot yet - unlike a real slot code, "no
+        # slot known" must not default to "fine everywhere" here.
+        return False
     if not slot or token == "ALL":
         return True
     return slot.upper() in token
@@ -442,6 +467,10 @@ async def retrieve_enchanting_brief(
         "ENCHANTMENT AGENT — RealmEye /wiki/enchanting tables. "
         "Copy numbers from this chunk only. One unique enchant per item; "
         "single-stat flats cannot stack with another single-stat flat. "
+        "Awakened enchants (e.g. Infernal Anger, Hellfire Edge) each only "
+        "roll on one or a few specific named items, never a whole slot - "
+        "don't recommend one unless the table row or item context here "
+        "names this exact item as eligible for it. "
         f"Source: {store.get('url') or SOURCE_URL}"
     ]
     if item_name:

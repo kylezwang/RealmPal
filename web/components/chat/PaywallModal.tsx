@@ -370,6 +370,28 @@ export function PaywallModal({
     onClose();
   }
 
+  function handleBackdropClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (isPricing) {
+      leavePricing();
+      return;
+    }
+    if (isLast || isReminder) {
+      onClose();
+      return;
+    }
+    // Steps 0/1 are the value-prop carousel (video demo slides, no form
+    // inputs to protect) - clicking the dimmed backdrop advances or goes
+    // back, Stories-style, instead of doing nothing. Left half of the
+    // backdrop goes back, right half goes next.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickedRightHalf = e.clientX - rect.left > rect.width / 2;
+    if (clickedRightHalf) {
+      goNext();
+    } else {
+      goBack();
+    }
+  }
+
   return (
     <>
     <div
@@ -380,9 +402,7 @@ export function PaywallModal({
     >
       <div
         className="absolute inset-0 bg-black/30"
-        onClick={
-          isPricing ? leavePricing : isLast || isReminder ? onClose : undefined
-        }
+        onClick={handleBackdropClick}
         aria-hidden="true"
       />
 

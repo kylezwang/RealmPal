@@ -217,6 +217,13 @@ _SET_INTENT = re.compile(
 _SHINY = re.compile(r"\b(?:all\s+)?shiny\b", re.I)
 _DIVINE = re.compile(r"\b(?:all\s+)?divine\b", re.I)
 _WITH_ITEMS = re.compile(r"\bwith\s+([\s\S]+?)(?:[.!?]|$)", re.I)
+# "Full shiny divine A, B, C, and D" names a four-slot set without ever
+# saying "with" - see extract_set_item_names' fallback below.
+_AFTER_SHINY_DIVINE = re.compile(
+    r"\b(?:all\s+)?(?:shiny\s+divine|divine\s+shiny|shiny|divine)\b\s+(.+?)(?:[.!?]|$)",
+    re.I,
+)
+_LOOK_LIKE_TAIL = re.compile(r"\s+looks?\s+like\b.*$", re.I)
 _NAME_SPLIT = re.compile(r",\s*(?:and\s+)?|\s+and\s+", re.I)
 _SHINY_DIVINE_WORDS = re.compile(r"\b(?:all\s+)?(?:shiny|divine)\b", re.I)
 _LEADING_AND = re.compile(r"^(?:and|&)\s+", re.I)
@@ -440,16 +447,34 @@ def resolve_against_catalog(
 
 
 def extract_set_item_names(prompt: str) -> list[str]:
-    match = _WITH_ITEMS.search(prompt or "")
-    if not match:
+    text = prompt or ""
+    match = _WITH_ITEMS.search(text)
+    candidate = match.group(1) if match else None
+    if candidate is None:
+        # Regression, found live Sep 14: "Full shiny divine enforcer,
+        # ballistic star, straitjacket, and lean" has no "with", so this
+        # returned [] and stored_answers._shiny_divine_item_name's
+        # single-item guard (`if extract_set_item_names(...): return None`)
+        # never tripped - the whole comma list got treated as ONE item name
+        # and sent to a doomed wiki scrape (guaranteed 404/timeout, and the
+        # frontend's item card spun forever waiting on it). Only take this
+        # branch when it actually splits into 2+ real names below - a
+        # single name here (e.g. "shiny Crown") is
+        # stored_answers._shiny_divine_item_name's job, not this function's.
+        after = _AFTER_SHINY_DIVINE.search(text)
+        candidate = after.group(1) if after else None
+    if candidate is None:
         return []
+    candidate = _LOOK_LIKE_TAIL.sub("", candidate)
     names: list[str] = []
-    for part in _NAME_SPLIT.split(match.group(1)):
+    for part in _NAME_SPLIT.split(candidate):
         cleaned = _SHINY_DIVINE_WORDS.sub("", part)
         cleaned = _LEADING_AND.sub("", cleaned).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
         if 3 <= len(cleaned) <= 60:
             names.append(cleaned)
+    if match is None and len(names) < 2:
+        return []
     return names[:SET_SLOT_COUNT]
 
 

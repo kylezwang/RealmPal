@@ -79,6 +79,58 @@ def test_infer_class_primary_stat_none_on_tie_or_empty():
     assert wiki_scaling.infer_class_primary_stat(tied) is None
 
 
+def test_awakened_row_without_eligible_cell_is_never_slot_generic():
+    """Regression: RealmEye's Awakened Enchantments table has no
+    Eligible/slot column at all (each one only rolls on one or a few named
+    items, e.g. Infernal Anger is exclusive to Berserker's Breastplate).
+    _normalize_row used to default the missing cell to ALL, so it looked
+    generically eligible for any weapon/armor/ability/ring. Found live
+    Sep 14: recommended for a generic Attack Kensei build."""
+    row = [
+        "Infernal Anger",
+        "Gain 6 Attack and take 5% less damage.",
+        "AWAKENEDATTACKSINGLESTATDURABILITYDAMAGERESISTANCE",
+        "AWAKENEDATTACKSINGLESTATDURABILITYDAMAGERESISTANCE",
+    ]
+    parsed = enchanting._normalize_row(row, "Awakened Enchantments")
+    assert parsed is not None
+    assert parsed["eligible"] != "ALL"
+    # Never a generic match, even when the caller doesn't know the slot yet.
+    assert enchanting._eligible_ok(parsed["eligible"], None) is False
+    assert enchanting._eligible_ok(parsed["eligible"], "armor") is False
+    assert enchanting._eligible_ok(parsed["eligible"], "weapon") is False
+
+
+def test_basic_enchant_row_missing_eligible_cell_still_defaults_to_all():
+    """Only Awakened rows get the item-locked treatment - a stray row from
+    a normal table missing its eligible cell keeps the old ALL default."""
+    row = ["Attack Bonus", "+1 ATT"]
+    parsed = enchanting._normalize_row(row, "Basic Enchantments")
+    assert parsed is not None
+    assert parsed["eligible"] == "ALL"
+
+
+def test_awakened_enchant_excluded_from_a_generic_attack_build_query():
+    rolls = [
+        {
+            "name": "Infernal Anger",
+            "eligible": "AWAKENED_ITEM_LOCKED",
+            "effects": "Gain 6 Attack and take 5% less damage.",
+            "category": "Awakened Enchantments",
+        },
+        {
+            "name": "Attack Bonus",
+            "eligible": "ALL",
+            "effects": "+1 ATT",
+            "category": "Basic Enchantments",
+        },
+    ]
+    matched = enchanting.filter_rolls(rolls, stat="Attack", slot="weapon")
+    names = [r["name"] for r in matched]
+    assert "Attack Bonus" in names
+    assert "Infernal Anger" not in names
+
+
 async def test_retrieve_enchanting_brief_infers_stat_from_item(
     redis_client, monkeypatch
 ):
