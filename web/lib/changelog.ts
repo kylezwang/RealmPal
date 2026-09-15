@@ -14,6 +14,14 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.14-2",
+    date: "Sep 14, 2026",
+    items: [
+      "Phones now show the chat first, with a full-screen menu behind a button in the top left.",
+      "The message box stays on screen above the Safari toolbar, so you no longer have to scroll to type.",
+    ],
+  },
+  {
     version: "2026.09.14",
     date: "Sep 14, 2026",
     items: [

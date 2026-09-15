@@ -173,7 +173,7 @@ export function AccountMenu({
   const primaryLabel = isSignedIn ? ign || email || "Account" : "Guest";
 
   return (
-    <div ref={containerRef} className="relative inline-flex w-full">
+    <div ref={containerRef} className={`relative inline-flex ${showLabel ? "w-full" : ""}`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

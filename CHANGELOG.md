@@ -76,6 +76,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
   - Tests: `api/tests/test_chat_sessions.py` (10 tests: roundtrip, overwrite, per-account isolation, delete, ordering, bulk sync, cap enforcement, unknown email, router-level scoping and merge)
 
 ### Changed
+- **Mobile web layout** (`web/components/chat/ChatInterface.tsx`, `web/components/chat/ChatSidebar.tsx`): phone browsers now use a Claude-style chat-first shell. The desktop account cluster (messages left / What's new / Quests / Sign in) no longer stretches across the top of the screen. A compact header exposes a top-left sidebar button; the existing sidebar (IGN, pet, chats, suggestions, quests, account) reopens as a full-screen overlay. The chat shell is `position: fixed` to `visualViewport` height (`--app-height` / `--app-offset`, `100svh` fallback) with `viewport-fit=cover` so the composer stays above Safari's bottom toolbar instead of sitting under it (`h-screen` / `100vh` previously included that chrome and forced a page scroll to reach the input).
 - **Container App CPU/memory bumped 0.5 vCPU/1 GiB → 1.0 vCPU/2 GiB**: the single shared Playwright semaphore (`_PW_SEM = asyncio.Semaphore(1)` in `api/services/scraper.py`) was causing 16-40+ second pet/dungeon/skin lookups whenever specialist warming ran concurrently with a live request, on top of just being CPU-starved for a Chromium workload. New revision deployed with both this and the embeddings env vars above.
 
 ### Known issues (carried forward, not yet fixed)

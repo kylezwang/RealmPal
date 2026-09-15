@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -21,6 +21,13 @@ export const metadata: Metadata = {
     description: "Your RotMG AI companion powered by Claude",
     siteName: "RealmPal",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1a1a1a",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
