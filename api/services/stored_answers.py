@@ -309,6 +309,18 @@ def _shiny_divine_item_name(message: str) -> Optional[str]:
     name = re.sub(r"[?.!]+$", "", name).strip(" \t-")
     if not name or len(name) > 80:
         return None
+    # Regression, found live Sep 14 (in-game playtest): "best shiny divine
+    # set for full dexterity huntress" strips "set" above and leaves "for
+    # full dexterity huntress" - no item was ever named, this is a build
+    # request ("a set FOR this class/stat"), not "an item literally named
+    # X". No real item name starts with a bare preposition/relative word,
+    # so treat one as a sign the real noun got consumed by the "set"/"item"
+    # strip and bail out here, letting this fall through to the general
+    # build-brief flow (realmshark.parse_query) that already understands
+    # "best build for a dex huntress" - instead of sending "for full
+    # dexterity huntress" to a doomed wiki scrape.
+    if re.match(r"^(?:for|on|to|that|which|who)\b", name, re.I):
+        return None
     return name
 
 

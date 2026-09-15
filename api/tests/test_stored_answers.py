@@ -208,6 +208,23 @@ def test_shiny_item_with_no_sentence_break_stops_at_the_auxiliary_verb():
     )
 
 
+def test_shiny_divine_set_request_with_no_named_item_is_not_treated_as_an_item():
+    """Regression: found live Sep 14 (in-game playtest) - "best shiny divine
+    set for full dexterity huntress" strips "set", leaving "for full
+    dexterity huntress" as the "item name." No item was ever named, this is
+    a build request (a set FOR this class), not "an item literally named
+    X" - and no real item name starts with a bare preposition/relative
+    word like "for". Must return None so this falls through to the general
+    build-brief flow instead of a doomed wiki scrape for "for full dexterity
+    huntress."."""
+    assert (
+        _shiny_divine_item_name("best shiny divine set for full dexteirty huntress")
+        is None
+    )
+    assert _shiny_divine_item_name("shiny divine set on a mystic") is None
+    assert _shiny_divine_item_name("shiny divine loadout for wizard") is None
+
+
 async def test_shiny_divine_reply_resolves_a_still_glued_run_on_via_the_catalog(
     redis_client, anon_settings
 ):
