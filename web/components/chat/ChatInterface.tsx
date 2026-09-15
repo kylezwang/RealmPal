@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
+import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS, SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -283,10 +283,21 @@ export function ChatInterface() {
       setIgnError(null);
     } else {
       const saved = loadSavedAccountProfile();
-      if (saved?.ign) {
-        setIgn(saved.ign);
-        setPlayerProfile(cachedPlayerProfile(saved));
-        void loadPlayer(saved.ign, { silent: true });
+      // The account's IGN is registered server-side at signup and is
+      // already embedded in every JWT this account gets issued (see
+      // api/routers/auth.py's create_jwt call) - it isn't tied to one
+      // browser's localStorage. Without this fallback, a browser that never
+      // ran the local "save the IGN before registering" flow in
+      // PaywallModal.tsx (a different browser/device, or an account created
+      // before this cache existed) found nothing in loadSavedAccountProfile
+      // and the sidebar just stayed blank forever with "No pet found yet.",
+      // even though the account has a real registered IGN the whole time.
+      // Found live Sep 14.
+      const accountIgn = saved?.ign || decodeAuthIgn();
+      if (accountIgn) {
+        setIgn(accountIgn);
+        setPlayerProfile(saved?.ign === accountIgn ? cachedPlayerProfile(saved) : null);
+        void loadPlayer(accountIgn, { silent: true });
       } else {
         setIgn("");
         setPlayerProfile(null);

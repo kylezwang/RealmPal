@@ -185,6 +185,27 @@ def test_shiny_item_followed_by_a_new_sentence_stops_at_the_period():
     )
 
 
+def test_shiny_item_with_no_sentence_break_stops_at_the_auxiliary_verb():
+    """Regression: found live Sep 14, same day as the test above but a
+    harder case - "Shiny divine snake eye ring is the awakened enchantment
+    good?" has no sentence-ending punctuation before the trailing "?" at
+    all, the item name and the question run on as one grammatical sentence.
+    The period/question-mark/"looks like" boundary from the fix above
+    wasn't enough on its own; a bare auxiliary verb (is/does/has/can/will/
+    should/would) is an equally valid stop point since no real item name
+    contains one as a whole word."""
+    assert (
+        _shiny_divine_item_name(
+            "Shiny divine snake eye ring is the awakened enchantment good?"
+        )
+        == "snake eye ring"
+    )
+    assert (
+        _shiny_divine_item_name("Shiny divine Ring of Decades does it look good")
+        == "Ring of Decades"
+    )
+
+
 async def test_enchant_question_about_a_ring_does_not_reuse_a_cached_build_brief(
     redis_client, anon_settings
 ):

@@ -25,6 +25,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Asking about an item's enchant right after a build question now gets a real answer instead of repeating the build.",
       "Follow-up questions about a completely different item no longer get answered with your last unrelated build.",
       "Signed-in chats now stay saved to your account, even if you're in a private/incognito window that later closes.",
+      "Your in-game name and pet companion now show up in the sidebar automatically after signing in, on any device.",
       "Your free daily messages now reset at the same time each day for everyone, instead of depending on when you first messaged.",
       "Tapping the sides of the upgrade screen now flips between slides, like a story.",
     ],

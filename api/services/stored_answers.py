@@ -86,7 +86,15 @@ _SHINY_DIVINE_ITEM = re.compile(
     # enchantment" as the "item name" - a second sentence asking a real
     # follow-up question got glued onto the item, guaranteeing a bogus
     # lookup instead of a clean single-word match.
-    r"(?=[.!?]|\s+looks?\s+like\b|$)",
+    #
+    # A punctuation/"look(s) like" boundary isn't enough on its own though -
+    # found live Sep 14 (again, same day, different phrasing): "Shiny divine
+    # snake eye ring is the awakened enchantment good?" has no sentence break
+    # at all before the trailing "?", the item name and the question run on
+    # as one grammatical sentence ("... ring IS ... good?"). No real item
+    # name contains a bare auxiliary/modal verb as a whole word, so treat
+    # one as an equally valid stop point.
+    r"(?=[.!?]|\s+looks?\s+like\b|\s+(?:is|does|has|can|will|should|would)\b|$)",
     re.I,
 )
 _SHINY_WORD = re.compile(r"\bshiny\b", re.I)
