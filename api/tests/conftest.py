@@ -51,6 +51,7 @@ def auth_settings(tmp_path) -> Settings:
         entitlements_db_path=str(tmp_path / "entitlements.db"),
         accounts_db_path=str(tmp_path / "accounts.db"),
         uploads_db_path=str(tmp_path / "uploads.db"),
+        chat_sessions_db_path=str(tmp_path / "chat_sessions.db"),
     )
 
 
@@ -65,6 +66,7 @@ def anon_settings(tmp_path) -> Settings:
         entitlements_db_path=str(tmp_path / "entitlements.db"),
         accounts_db_path=str(tmp_path / "accounts.db"),
         uploads_db_path=str(tmp_path / "uploads.db"),
+        chat_sessions_db_path=str(tmp_path / "chat_sessions.db"),
     )
 
 

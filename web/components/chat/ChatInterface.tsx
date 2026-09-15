@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
+import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS, SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -37,7 +37,16 @@ import { ChatOptionsModal } from "./ChatOptionsModal";
 import { SidebarAccount } from "./SidebarAccount";
 import { AccountMenu } from "./AccountMenu";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
-import { type ChatSession, loadSessions, saveSessions, deriveTitle, currentHistoryEmail } from "@/lib/chatHistory";
+import {
+  type ChatSession,
+  loadSessions,
+  saveSessions,
+  deriveTitle,
+  currentHistoryEmail,
+  pushSessionToServer,
+  removeSessionFromServer,
+  syncSessionsFromServer,
+} from "@/lib/chatHistory";
 import {
   cachedPlayerProfile,
   loadSavedAccountProfile,
@@ -274,16 +283,35 @@ export function ChatInterface() {
       setIgnError(null);
     } else {
       const saved = loadSavedAccountProfile();
-      if (saved?.ign) {
-        setIgn(saved.ign);
-        setPlayerProfile(cachedPlayerProfile(saved));
-        void loadPlayer(saved.ign, { silent: true });
+      // The account's IGN is registered server-side at signup and is
+      // already embedded in every JWT this account gets issued (see
+      // api/routers/auth.py's create_jwt call) - it isn't tied to one
+      // browser's localStorage. Without this fallback, a browser that never
+      // ran the local "save the IGN before registering" flow in
+      // PaywallModal.tsx (a different browser/device, or an account created
+      // before this cache existed) found nothing in loadSavedAccountProfile
+      // and the sidebar just stayed blank forever with "No pet found yet.",
+      // even though the account has a real registered IGN the whole time.
+      // Found live Sep 14.
+      const accountIgn = saved?.ign || decodeAuthIgn();
+      if (accountIgn) {
+        setIgn(accountIgn);
+        setPlayerProfile(saved?.ign === accountIgn ? cachedPlayerProfile(saved) : null);
+        void loadPlayer(accountIgn, { silent: true });
       } else {
         setIgn("");
         setPlayerProfile(null);
       }
     }
     setSessions(loadSessions(owner));
+    if (signedIn) {
+      // Local read above is the fast path (instant first paint); merge in
+      // whatever the account has server-side (other devices, or chats from
+      // an incognito session that has since been wiped) once it resolves.
+      void syncSessionsFromServer(owner).then((merged) => {
+        if (historyOwnerRef.current === owner) setSessions(merged);
+      });
+    }
     setDailyQuests(getDailyQuestState());
     setQuestBonusClaimed(hasClaimedDailyBonus());
     persistPausedRef.current = false;
@@ -344,6 +372,7 @@ export function ChatInterface() {
         ? prev.map((s) => (s.id === id ? updated : s))
         : [updated, ...prev];
       saveSessions(next, owner);
+      pushSessionToServer(updated, owner);
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -373,6 +402,7 @@ export function ChatInterface() {
         ...updated.filter((s) => s.id !== activeSessionId),
       ];
       saveSessions(withReorder, historyOwnerRef.current);
+      pushSessionToServer(withReorder[0], historyOwnerRef.current);
       return withReorder;
     });
   }, [messages.length, activeSessionId]);
@@ -748,6 +778,8 @@ export function ChatInterface() {
     setSessions((prev) => {
       const next = prev.map((s) => (s.id === id ? { ...s, title } : s));
       saveSessions(next, historyOwnerRef.current);
+      const renamed = next.find((s) => s.id === id);
+      if (renamed) pushSessionToServer(renamed, historyOwnerRef.current);
       return next;
     });
   }
@@ -758,6 +790,7 @@ export function ChatInterface() {
       saveSessions(next, historyOwnerRef.current);
       return next;
     });
+    removeSessionFromServer(id, historyOwnerRef.current);
     if (activeSessionId === id) goHome();
   }
 
@@ -779,6 +812,7 @@ export function ChatInterface() {
           // Keep the session in its current position; don't move to top.
           const next = sessionsPrev.map((s) => (s.id === id ? session : s));
           saveSessions(next, historyOwnerRef.current);
+          pushSessionToServer(session, historyOwnerRef.current);
           return next;
         });
       }

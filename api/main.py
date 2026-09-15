@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from .config import get_settings
-from .routers import auth, chat, players, payments, sprite, items, dungeons, skins, uploads
+from .routers import auth, chat, chat_sessions, players, payments, sprite, items, dungeons, skins, uploads
 
 # loguru's logger.info(msg, key=value) does NOT attach key/value as structured
 # fields | those kwargs are only used for str.format() substitution in the
@@ -264,6 +264,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(chat.router)
+    app.include_router(chat_sessions.router)
     app.include_router(players.router)
     app.include_router(payments.router)
     app.include_router(sprite.router)

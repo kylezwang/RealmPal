@@ -23,8 +23,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Full outfit and set requests load correctly instead of spinning forever.",
       "Enchanting advice no longer suggests rare enchants that only fit one specific item.",
       "Asking about an item's enchant right after a build question now gets a real answer instead of repeating the build.",
+      "Follow-up questions about a completely different item no longer get answered with your last unrelated build.",
+      "Signed-in chats now stay saved to your account, even if you're in a private/incognito window that later closes.",
+      "Your in-game name and pet companion now show up in the sidebar automatically after signing in, on any device.",
       "Your free daily messages now reset at the same time each day for everyone, instead of depending on when you first messaged.",
       "Tapping the sides of the upgrade screen now flips between slides, like a story.",
+      "Asking about an item in the same sentence as an unrelated follow-up question now correctly shows that item, instead of a broken result.",
     ],
   },
   {

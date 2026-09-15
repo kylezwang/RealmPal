@@ -16,12 +16,21 @@ from ..config import Settings, get_settings
 from ..dependencies import consume_lookup_quota, get_optional_user, get_redis, get_qdrant
 from ..identity import AuthenticatedUser
 from ..models.item import ItemProfile
-from ..services.item_aliases import resolve_item_query
+from ..services.item_aliases import (
+    MAX_PLAUSIBLE_ITEM_NAME_WORDS,
+    resolve_item_query,
+    resolve_item_query_with_trim,
+)
 from ..services.scraper import scrape_item, ScraperError
 from ..services.ingestion import ingest_item
 from ..services.validation import sanitize_lookup_name
 from ..services.class_gear import class_can_wear_item
-from ..services.wiki_scaling import read_cached_item, write_cached_item
+from ..services.wiki_scaling import (
+    is_item_marked_missing,
+    mark_item_missing,
+    read_cached_item,
+    write_cached_item,
+)
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -59,6 +68,7 @@ async def get_item(
         return await _with_wearable(redis, cached, class_name)
 
     lookup = name
+    resolved: Optional[str] = None
     try:
         resolved = await resolve_item_query(
             redis,
@@ -67,6 +77,26 @@ async def get_item(
             class_name=class_name,
             allow_scrape=False,
         )
+        if not resolved:
+            # Durable fix (found live Sep 14, repeatedly): a caller can hand
+            # this endpoint free text glued around a real item name (a chat
+            # reply's regex-based item extraction, or a stray follow-up
+            # question caught by the same pattern) rather than a clean typed
+            # name. resolve_item_query alone requires the *whole* string to
+            # match, so "snake eye ring is the awakened enchantment good"
+            # (a real, catalog-known ring plus an unrelated trailing
+            # question with no clean punctuation boundary) resolved to
+            # nothing and fell straight through to scrape_item() with that
+            # entire string as a literal wiki slug - guaranteed 404 after a
+            # ~30s two-attempt timeout, on every single repeat of the same
+            # broken message. Retrying against progressively shorter
+            # prefixes finds the real item inside without needing to know in
+            # advance which trailing words were never part of the name. See
+            # resolve_item_query_with_trim's docstring for the full
+            # reasoning.
+            resolved = await resolve_item_query_with_trim(
+                redis, name, ttl_seconds=ttl, class_name=class_name
+            )
         if resolved:
             lookup = resolved
             cached_resolved = await read_cached_item(redis, resolved)
@@ -78,6 +108,26 @@ async def get_item(
             "Item nickname resolve failed; trying the typed name"
         )
 
+    if not resolved and len(name.split()) > MAX_PLAUSIBLE_ITEM_NAME_WORDS:
+        # Too long to plausibly be a real item name (see
+        # MAX_PLAUSIBLE_ITEM_NAME_WORDS) and nothing in the known item
+        # catalog matches any prefix of it either - this is free text that
+        # was never an item name, not a not-yet-cataloged one. Reject
+        # immediately: no lookup quota charge, no scrape attempt, no ~30s
+        # wait for a page that could never have existed.
+        raise HTTPException(status_code=404, detail="Not an item name")
+
+    # Some real, correctly-named items (a fresh RealmShark leaderboard entry,
+    # e.g. Rift Rippers) genuinely have no RealmEye wiki page yet. Without
+    # this, every lookup paid a full two-attempt Playwright timeout (~30s)
+    # even though the previous lookup already learned the page doesn't
+    # exist. Checked (and charged no lookup quota) before the scrape below;
+    # short TTL means it starts resolving again once RealmEye publishes it.
+    if await is_item_marked_missing(redis, lookup):
+        raise HTTPException(
+            status_code=404, detail=f"{lookup} has no RealmEye wiki page yet"
+        )
+
     await consume_lookup_quota(request, settings, redis, user)
 
     try:
@@ -87,8 +137,11 @@ async def get_item(
             try:
                 item = await scrape_item(name)
             except ScraperError:
+                await mark_item_missing(redis, lookup, settings.missing_item_ttl_seconds)
+                await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
                 raise HTTPException(status_code=404, detail=str(e)) from e
         else:
+            await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
             raise HTTPException(status_code=404, detail=str(e)) from e
 
     try:

@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     player_scrape_ttl_seconds: int = 120
     scrape_ttl_hours: int = 168
     pet_sprite_ttl_days: int = 7
+    # Some real, correctly-named items (a fresh RealmShark DPS leaderboard
+    # entry, e.g. Rift Rippers) genuinely have no RealmEye wiki page yet -
+    # every lookup for one used to burn a full two-attempt, ~30s Playwright
+    # timeout, every single time, since a scrape failure was never cached.
+    # Short TTL: long enough that repeat lookups in the same session/day
+    # don't re-pay the timeout, short enough that the item shows up on its
+    # own within a few hours of RealmEye actually publishing the page.
+    missing_item_ttl_seconds: int = 3600
 
     @property
     def wiki_ttl_seconds(self) -> int:
@@ -162,6 +170,18 @@ class Settings(BaseSettings):
     uploads_db_path: str = "data/uploads.db"
     upload_ttl_days: int = 7
     upload_max_bytes: int = 4_000_000
+
+    # Server-side chat history sync for signed-in accounts
+    # (api/services/chat_sessions.py). Chats used to live only in browser
+    # localStorage, which an incognito window's last-tab-closed cleanup
+    # wipes even though the account itself is untouched - "sign in, chat,
+    # close incognito, sign back in" looked like history vanishing. This
+    # makes the account (not the browser) the unit of persistence for
+    # signed-in users; anonymous/guest chats stay local-only (no email to
+    # key a row on). Capped per account so one browser can't grow the table
+    # without bound.
+    chat_sessions_db_path: str = "data/chat_sessions.db"
+    chat_sessions_max_per_account: int = 200
 
     # Auth (magic link JWT) | legacy, being replaced by the identity provider
     # below. Kept so existing paid tokens keep working during the migration.

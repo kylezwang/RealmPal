@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/14/26 (10:15 AM)
+Last updated: 9/14/26 (8:45 PM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -45,9 +45,28 @@ Resume order when context is fresh:
 5. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
 6. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
 7. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
-8. **Not yet fixed - `realmshark.parse_query`'s history-based class/stat inheritance is still fragile.** Found live Sep 14 (see CHANGELOG.md `[2026.09.14]`, the "snake eye ring" enchant trace): when the *current* message has no class/stat of its own, `parse_query` scans backward through the entire conversation history and glues in the first class/stat it finds, from however many turns back, regardless of topic. Patched three symptoms of this around the edges (`stored_answers._build_reply`/`maybe_mint_brief` now refuse on `is_enchant_query`; `chat.py` and `realmshark.retrieve_build_knowledge`'s `enchant_only` gates now check `class_name and stat` instead of the coarser `buildish` flag), but the root inheritance function itself is unchanged and could still misfire for a *different* unrelated message that isn't an enchant question (e.g. a plain item-lookup follow-up that happens to contain a weak slot noun). Worth reconsidering: only inherit from the immediately-preceding turn, not the whole history, and/or require the current message to look like a genuine thin follow-up ("what other rings", "any other options") rather than inheriting whenever the current message merely lacks its own class/stat.
+
+**Done as of Sep 14 (later same day) - see CHANGELOG.md `[2026.09.14]`.** Item 8 (`parse_query` history-inheritance fragility) fixed at the root with `_has_own_topic()`; a matching frontend duplicate of the "with A, B, C" set-extraction bug (`web/lib/loadoutShowcase.ts`) was found and fixed too; real items missing a RealmEye wiki page now negative-cache instead of re-paying a ~30s scrape timeout every lookup; server-side chat history sync shipped for signed-in accounts (fixes chats appearing to vanish after an incognito session ends); the sidebar IGN/pet now falls back to the JWT's IGN so it prefills on any device; and the "item name glued to trailing free text" bug (multiple regex patches, same day) got a durable root fix - `resolve_item_query_with_trim` validates against the real item catalog with trailing-word trimming instead of ever handing a raw, unresolved capture to a scrape attempt.
 
 ## History
+### Until Sep 14, 2026 (later same day)
+Item 8 read: "**Not yet fixed - `realmshark.parse_query`'s history-based
+class/stat inheritance is still fragile.** Found live Sep 14 (see
+CHANGELOG.md `[2026.09.14]`, the "snake eye ring" enchant trace): when the
+*current* message has no class/stat of its own, `parse_query` scans
+backward through the entire conversation history and glues in the first
+class/stat it finds, from however many turns back, regardless of topic.
+Patched three symptoms of this around the edges (`stored_answers.
+_build_reply`/`maybe_mint_brief` now refuse on `is_enchant_query`; `chat.py`
+and `realmshark.retrieve_build_knowledge`'s `enchant_only` gates now check
+`class_name and stat` instead of the coarser `buildish` flag), but the root
+inheritance function itself is unchanged and could still misfire for a
+*different* unrelated message that isn't an enchant question (e.g. a plain
+item-lookup follow-up that happens to contain a weak slot noun). Worth
+reconsidering: only inherit from the immediately-preceding turn, not the
+whole history, and/or require the current message to look like a genuine
+thin follow-up ("what other rings", "any other options") rather than
+inheriting whenever the current message merely lacks its own class/stat."
 ### Until Sep 14, 2026, 10:15 AM (this revision)
 Resume order's top items were, in this order: (1) embeddings backend
 unreachable in production (CRITICAL, silently breaking all RAG), (2) a

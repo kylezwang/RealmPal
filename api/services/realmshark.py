@@ -154,6 +154,35 @@ def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
     return class_name, stat, buildish
 
 
+def _has_own_topic(message: str) -> bool:
+    """True when this message already names its own specialist topic
+    (an enchant question, a dungeon guide, an IGN lookup, or a skin/set
+    visualization) independent of any class+stat build context.
+
+    parse_query's history inheritance below exists for thin follow-ups like
+    "what other rings" that genuinely continue an earlier build conversation
+    with no class/stat of their own. But a message can *also* lack its own
+    class/stat while asking about something else entirely - and the weak
+    slot-noun half of _parse_query_text's buildish regex (ring/armor/weapon/
+    ability, as opposed to the stronger build/loadout/gear/equip/dps/best
+    items) is true of nearly every item/enchant question, since those
+    questions are inherently about gear. Found live Sep 14: "Shiny divine
+    snake eye ring. Is it insane with the awakened enchantment?" has no
+    class or stat of its own, "ring" alone made it look buildish, and it
+    inherited a completely unrelated Ninja/Attack combo from several turns
+    back in the same session. Every one of these detectors is already
+    imported above for the specialist routing this same function feeds -
+    reuse them here instead of guessing from a weaker signal.
+    """
+    return bool(
+        is_enchant_query(message)
+        or is_skin_visualize_query(message)
+        or is_set_visualize_query(message)
+        or extract_dungeon_query(message)
+        or extract_player_ign(message)
+    )
+
+
 def parse_query(
     message: str,
     history: Optional[list[str]] = None,
@@ -161,9 +190,11 @@ def parse_query(
     """Pull (class, stat, is_buildish) from a chat message.
 
     Follow-ups like "what other rings" inherit class/stat from earlier turns.
+    A message that already names its own specialist topic (enchant, skin,
+    set, dungeon, player) never inherits - see _has_own_topic.
     """
     class_name, stat, buildish = _parse_query_text(message)
-    if history:
+    if history and not _has_own_topic(message):
         for prev in reversed(history):
             if class_name and stat:
                 break

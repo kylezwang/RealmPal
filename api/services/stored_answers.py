@@ -26,7 +26,12 @@ from .dungeon_guide import (
     match_index_pages,
 )
 from .enchanting import is_enchant_query
-from .item_aliases import extract_set_item_names, resolve_item_query
+from .item_aliases import (
+    MAX_PLAUSIBLE_ITEM_NAME_WORDS,
+    extract_set_item_names,
+    resolve_item_query,
+    resolve_item_query_with_trim,
+)
 from .player_lookup import extract_player_ign
 from .realmshark import parse_query
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
@@ -86,7 +91,15 @@ _SHINY_DIVINE_ITEM = re.compile(
     # enchantment" as the "item name" - a second sentence asking a real
     # follow-up question got glued onto the item, guaranteeing a bogus
     # lookup instead of a clean single-word match.
-    r"(?=[.!?]|\s+looks?\s+like\b|$)",
+    #
+    # A punctuation/"look(s) like" boundary isn't enough on its own though -
+    # found live Sep 14 (again, same day, different phrasing): "Shiny divine
+    # snake eye ring is the awakened enchantment good?" has no sentence break
+    # at all before the trailing "?", the item name and the question run on
+    # as one grammatical sentence ("... ring IS ... good?"). No real item
+    # name contains a bare auxiliary/modal verb as a whole word, so treat
+    # one as an equally valid stop point.
+    r"(?=[.!?]|\s+looks?\s+like\b|\s+(?:is|does|has|can|will|should|would)\b|$)",
     re.I,
 )
 _SHINY_WORD = re.compile(r"\bshiny\b", re.I)
@@ -311,13 +324,37 @@ async def _shiny_divine_reply(
             resolved = await resolve_item_query(
                 redis, name, ttl_seconds=ttl, allow_scrape=False
             )
+            if not resolved:
+                # The durable fix (found live Sep 14, repeatedly): a regex
+                # extraction only knows where an item name *starts*, not
+                # reliably where a trailing question with no clear
+                # punctuation boundary *ends* ("...ring is the awakened
+                # enchantment good?"). Rather than keep guessing which
+                # trailing words are junk one incident at a time, ask the
+                # real item catalog whether any *prefix* of this text names
+                # a real item - see resolve_item_query_with_trim's
+                # docstring.
+                resolved = await resolve_item_query_with_trim(
+                    redis, name, ttl_seconds=ttl
+                )
         except Exception:
             resolved = None
         if resolved:
             item = await read_cached_item(redis, resolved)
             title = item.name if item else resolved
-        else:
+        elif len(name.split()) <= MAX_PLAUSIBLE_ITEM_NAME_WORDS:
+            # Short enough to plausibly be a real, just-not-yet-cataloged
+            # item (e.g. brand new gear the hub pages haven't listed yet) -
+            # let the router's own scrape-then-cache path have a shot at it.
             title = name
+        else:
+            # Too long to plausibly be a real item name and the catalog
+            # (even with trimming) found nothing in it - this is extraction
+            # garbage, not an item. Returning it here would hand the
+            # frontend a doomed lookup guaranteed to 404 after a long
+            # scrape timeout. Fall through to a different reply path
+            # instead of pretending this was a real item request.
+            return None
     else:
         title = item.name
     shiny, divine = _shiny_divine_flags(message)
