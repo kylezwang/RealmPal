@@ -123,8 +123,8 @@ export function ExamplePrompt({
   const stacked = config.layout === "stacked";
 
   const fieldClass = isCard
-    ? "h-8 rounded-md bg-[#333333] border border-[#454545] px-2 text-sm text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text"
-    : "h-6 rounded-md bg-[#2a2a2a] border border-[#3a3a3a] px-1.5 text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text";
+    ? "h-9 md:h-8 rounded-md bg-[#333333] border border-[#454545] px-2 text-base md:text-sm text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text"
+    : "h-8 md:h-6 rounded-md bg-[#2a2a2a] border border-[#3a3a3a] px-1.5 text-base md:text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-[#737373] cursor-text";
   const inputClass = `min-w-0 ${stacked ? "w-full" : isCard ? "w-[7.5rem]" : "w-[6.5rem]"} ${fieldClass}`;
   const compactInputClass = `min-w-0 ${isCard ? "w-[6.75rem]" : "w-[5.5rem]"} ${fieldClass}`;
 

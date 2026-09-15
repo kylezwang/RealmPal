@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/14/26 (10:35 PM)
+Last updated: 9/14/26 (10:55 PM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -14,7 +14,13 @@ SQLite on a mounted volume until billing lands, then Azure Postgres.
 Resume order when context is fresh:
 
 1. **Not yet fixed - every chat message unconditionally scrapes+ingests the signed-in user's own IGN profile**, even for messages with nothing to do with the player (`api/routers/chat.py`, `if body.ign:` block, ~line 588 - "Player profiles change constantly, scrape on lookup" comment explains the *intent* but this fires on every uncached message regardless of whether the message needs it, e.g. a pure "how to do X dungeon" question). Confirmed Sep 14: asking about Moonlight Village still triggered a 14s `Scraping player profile {'username': 'Turbine'}` call. This adds unnecessary load to the shared Playwright semaphore. Worth reconsidering: only scrape when `player_only`/`buildish` is true for *this* message (the router already computes these flags for the RAG-skip logic right below it), not unconditionally whenever `body.ign` is set.
-2. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
+2. **Build/loadout quality - feed responses from UmiEnjoyers + RealmShark, not just RealmEye hub rankings.** Live Sep 14 post-PR #15: shiny/divine full-build asks now render as a set visualizer (`wiki_scaling.top_build_items()`), but the four picks still come from warmed RealmEye hub stat sorting only. Gaps seen in playtesting:
+   - **RealmShark**: some class+stat combos have no dedicated board (e.g. Attack Huntress falls back to Archer bow loadouts in text briefs). `top_build_items()` does not consult RealmShark at all yet - only hub `_top_stat_items`. Wire `load_top_loadouts()` / graph edges into slot picks where a board exists; document honest fallback when it does not (sister-class weapon family, not wrong ability slot).
+   - **UmiEnjoyers**: `retrieve_umi_bis()` already scraped and injected for enchantment specialist + armor context, but not for weapon/ability/ring picks or the set-visualizer derived path. Umi general-tab BIS is community-curated and often names the items players actually wear - good tie-breaker when RealmEye hub order and RealmShark disagree.
+   - **Stored briefs vs visualizer**: minted `wiki:build:v1:{class}:{stat}` text briefs and `top_build_items()` can diverge (different code paths). Goal: one ranking source per slot, reused by text reply, set visualizer, and Claude context.
+   - **Claude synthesis**: even with good chunks, replies sometimes drop item names from tables (empty Weapon/Ability columns) or merge prior-turn context. Tighten set-visualizer header / stored-reply path so `[item:...]` tokens are emitted directly without relying on Claude to copy a table.
+   - Tests: assert Attack Huntress set-visualizer picks include a Huntress-scaling trap (not Archer quiver), and that Umi/RealmShark signals change the pick when hub data alone would differ.
+3. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
    frontend hosting existed yet, only the API backend is deployed. Chose
    Azure Static Web Apps over Vercel (Sep 13, decided to stay fully on
    Azure for the portfolio story) and over a second Container App (simpler
@@ -34,17 +40,19 @@ Resume order when context is fresh:
    **Done as of Sep 14 - see CHANGELOG.md `[2026.09.13]`.** Kept here (not
    deleted) per `doc-history.mdc` since this was the original plan text,
    not just a status update.
-3. **Key Vault**: move the env vars pasted into the Container App (JWT
+4. **Key Vault**: move the env vars pasted into the Container App (JWT
    secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
    references instead of plaintext. Priority 5 in the deploy guide.
-4. **Production secrets review**: the deployed Container App's log stream
+5. **Production secrets review**: the deployed Container App's log stream
    shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
    warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
    both explicitly and rotate `JWT_SECRET` off its local-dev value before
    real launch.
-5. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
-6. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
-7. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+6. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
+7. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
+8. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
+
+**Shipped live Sep 14 (late evening):** PR #14 + PR #15 merged to `master`, API redeployed, Static Web App live at realmpal.com. Webapp is fairly usable for core chat, item lookup, shiny/divine set visualizer, and build asks. Remaining rough edges (quota/paywall UX, quest timer, prompt mixing on delayed replies) and data-quality tuning tracked above.
 
 **Done as of Sep 14 (later same day) - see CHANGELOG.md `[2026.09.14]`.** Item 8 (`parse_query` history-inheritance fragility) fixed at the root with `_has_own_topic()`; a matching frontend duplicate of the "with A, B, C" set-extraction bug (`web/lib/loadoutShowcase.ts`) was found and fixed too; real items missing a RealmEye wiki page now negative-cache instead of re-paying a ~30s scrape timeout every lookup; server-side chat history sync shipped for signed-in accounts (fixes chats appearing to vanish after an incognito session ends); the sidebar IGN/pet now falls back to the JWT's IGN so it prefills on any device; and the "item name glued to trailing free text" bug (multiple regex patches, same day) got a durable root fix - `resolve_item_query_with_trim` validates against the real item catalog with trailing-word trimming instead of ever handing a raw, unresolved capture to a scrape attempt. Two more variants of the same "build request read as an item name" bug turned up live in production right after: "set for full dexterity huntress" (bare preposition left behind after stripping "set") and "attack huntress" (a bare stat+class pair, no preposition or "set"/"build" left to catch) both went to doomed wiki scrapes before being fixed with a preposition check and a stat/class-vocabulary check in `_shiny_divine_item_name`. Once that stopped 404ing, "show me full shiny divine attack huntress" surfaced a follow-on gap: the message fell through to the generic weapon/ability/armor/ring text brief instead of the shiny/divine item-circle loadout the wording actually asked for, since that visual only existed for explicitly-named sets. Added `wiki_scaling.top_build_items()` (single best item per gear slot for a class+stat, reusing the same ranking the text briefs already compute) and `item_aliases.is_stat_class_shiny_divine_query()`, wired into `retrieve_set_visualizer`/`route_slots`/`retrieve_build_knowledge`/`routers/chat.py` everywhere the named-set check already gated routing - see CHANGELOG.md `[2026.09.14]`.
 

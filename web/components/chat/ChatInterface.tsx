@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
-import { LANDING_EXAMPLE_PROMPTS, SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
+import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { ExamplePrompt } from "./ExamplePrompt";
 import { extractItemNames, skipDungeonItemCard, ITEM_CARD_ROW_SIZE } from "@/lib/itemLookup";
 import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, SET_SLOT_COUNT } from "@/lib/loadoutShowcase";
 import { inferSkinVisualize } from "@/lib/skinShowcase";
 import { MessageBubble } from "./MessageBubble";
-import { PetCompanion, PetSprite } from "./PetCompanion";
+import { PetSprite } from "./PetCompanion";
 import { PaywallModal } from "./PaywallModal";
 import { ChangelogModal } from "./ChangelogModal";
 import { hasUnseenChangelog } from "@/lib/changelog";
@@ -34,9 +34,9 @@ import {
   type QuestArt,
 } from "@/lib/quests";
 import { ChatOptionsModal } from "./ChatOptionsModal";
-import { SidebarAccount } from "./SidebarAccount";
+import { ChatSidebar } from "./ChatSidebar";
 import { AccountMenu } from "./AccountMenu";
-import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
+import { SWORD_SPRITE } from "@/lib/sprites";
 import {
   type ChatSession,
   loadSessions,
@@ -67,6 +67,55 @@ interface SpeechRecognitionLike {
 }
 
 const SUGGESTIONS_HIDDEN_KEY = "realm_pal_suggestions_hidden";
+
+function SidebarIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </svg>
+  );
+}
+
+function NewChatIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+/** Pin the chat shell to the visible Safari viewport so the composer stays
+ *  above the browser toolbar and the software keyboard. */
+function useAppViewport() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => {
+      const vv = window.visualViewport;
+      root.style.setProperty("--app-height", `${vv?.height ?? window.innerHeight}px`);
+      root.style.setProperty("--app-offset", `${vv?.offsetTop ?? 0}px`);
+    };
+    sync();
+    window.visualViewport?.addEventListener("resize", sync);
+    window.visualViewport?.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    window.addEventListener("orientationchange", sync);
+    const htmlOverflow = root.style.overflow;
+    const bodyOverflow = document.body.style.overflow;
+    root.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.visualViewport?.removeEventListener("resize", sync);
+      window.visualViewport?.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+      window.removeEventListener("orientationchange", sync);
+      root.style.removeProperty("--app-height");
+      root.style.removeProperty("--app-offset");
+      root.style.overflow = htmlOverflow;
+      document.body.style.overflow = bodyOverflow;
+    };
+  }, []);
+}
 
 interface Message {
   role: "user" | "assistant";
@@ -152,6 +201,9 @@ export function ChatInterface() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [optionsSessionId, setOptionsSessionId] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useAppViewport();
 
   const lastUserMsgRef = useRef<HTMLDivElement>(null);
   const pinToSentMessageRef = useRef(false);
@@ -849,173 +901,104 @@ export function ChatInterface() {
   const isEmpty = messages.length === 0;
   const lastUserIndex = messages.findLastIndex((m) => m.role === "user");
 
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMobileNav();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNavOpen, closeMobileNav]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = () => {
+      if (mq.matches) closeMobileNav();
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [closeMobileNav]);
+
+  const sidebarProps = {
+    isEmpty,
+    ign,
+    onIgnChange: setIgn,
+    onLoadPlayer: (name: string) => void loadPlayer(name),
+    ignError,
+    playerProfile,
+    isLoadingPlayer,
+    sessions,
+    activeSessionId,
+    onOpenSessionOptions: setOptionsSessionId,
+    showSuggestions,
+    onToggleSuggestions: toggleSuggestions,
+    isStreaming,
+    usage,
+    onOpenPaywall: () => {
+      openPaywall();
+      closeMobileNav();
+    },
+    isSignedIn,
+    questPercent: dailyQuestPercent(dailyQuests),
+    unseenChangelog,
+    onHome: () => {
+      goHome();
+      closeMobileNav();
+    },
+    onLoadSession: (id: string) => {
+      loadSession(id);
+      closeMobileNav();
+    },
+    onSubmitPrompt: (message: string) => {
+      void sendMessage(message);
+      closeMobileNav();
+    },
+    onOpenQuests: () => {
+      setShowQuests(true);
+      closeMobileNav();
+    },
+    onOpenChangelog: () => {
+      setShowChangelog(true);
+      closeMobileNav();
+    },
+  };
+
   return (
-    <div className="flex h-screen bg-[#1a1a1a] text-[#ececec]">
-      {/* Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 xl:w-72 flex-shrink-0 min-h-0 overflow-hidden border-r border-[#303030] p-4">
-        <button
-          onClick={goHome}
-          disabled={isEmpty}
-          className="flex items-center gap-2 mb-3 cursor-pointer disabled:cursor-default"
-          aria-label="Back to home"
-        >
-          <Image
-            src={isEmpty ? SWORD_SPRITE : USER_SPRITE}
-            alt={isEmpty ? "RealmPal" : "Your companion"}
-            width={34}
-            height={34}
-            style={{ imageRendering: "pixelated" }}
-            unoptimized
-          />
-          <span className="text-lg font-semibold text-[#ececec]">RealmPal</span>
-        </button>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (ign.trim()) void loadPlayer(ign.trim());
-          }}
-          className="mb-3"
-        >
-          <p className="text-xs text-[#6b6b6b] mb-2">Your IGN</p>
-          <div className="relative">
-            <input
-              type="text"
-              value={ign}
-              onChange={(e) => setIgn(e.target.value)}
-              placeholder="Turbine"
-              maxLength={20}
-              className="w-full rounded-lg bg-[#262626] border border-[#404040] pl-2.5 pr-8 py-1.5 text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-white"
-              aria-label="In-game name"
-            />
-            <button
-              type="submit"
-              disabled={!ign.trim()}
-              aria-label="Look up player"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-[#737373] hover:text-[#ececec] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2 21L23 12 2 3v7l15 2-15 2z" />
-              </svg>
-            </button>
-          </div>
-          {ignError && <p className="text-[11px] text-red-400 mt-1">{ignError}</p>}
-        </form>
-
-        <PetCompanion profile={playerProfile} loading={isLoadingPlayer} />
-
-        {sessions.length > 0 && (
-          <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1 mt-3">
-            <p className="text-xs text-[#525252] mb-2">Chats</p>
-            <ul className="space-y-1">
-              {[...sessions]
-                .sort((a, b) => b.updatedAt - a.updatedAt)
-                .map((session) => (
-                  <li key={session.id} className="group relative">
-                    <button
-                      onClick={() => loadSession(session.id)}
-                      className={`w-full text-left text-xs truncate rounded-lg pl-2.5 pr-7 py-1.5 transition-colors duration-150 cursor-pointer ${
-                        session.id === activeSessionId
-                          ? "bg-[#2f2f2f] text-[#ececec]"
-                          : "text-[#a3a3a3] hover:bg-[#454545] hover:text-[#ececec]"
-                      }`}
-                    >
-                      {session.title}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOptionsSessionId(session.id);
-                      }}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-[#737373] opacity-0 group-hover:opacity-100 hover:text-[#ececec] hover:bg-[#454545] transition-colors duration-150 cursor-pointer"
-                      aria-label="Chat options"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                        <circle cx="12" cy="5" r="2" />
-                        <circle cx="12" cy="12" r="2" />
-                        <circle cx="12" cy="19" r="2" />
-                      </svg>
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          </div>
-        )}
-
-        <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} flex-shrink-0`}>
-          <div className="flex justify-center">
-            <button
-              type="button"
-              onClick={toggleSuggestions}
-              aria-label={showSuggestions ? "Hide quick suggestions" : "Show quick suggestions"}
-              aria-expanded={showSuggestions}
-              className="flex h-5 w-6 items-center justify-center rounded text-[#525252] hover:text-[#a3a3a3] hover:bg-[#333333] transition-colors cursor-pointer"
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={`transition-transform duration-150 ${showSuggestions ? "" : "rotate-180"}`}
-                aria-hidden="true"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-          </div>
-          {showSuggestions && (
-            <div className="space-y-2 min-h-0 overflow-y-auto mt-1">
-              {SIDEBAR_EXAMPLE_PROMPTS.map((config) => (
-                <ExamplePrompt
-                  key={config.id}
-                  config={config}
-                  variant="sidebar"
-                  disabled={isStreaming}
-                  onSubmit={(message) => void sendMessage(message)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="flex-shrink-0 pt-3 mt-3 border-t border-[#303030] space-y-2">
-          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
-            <button
-              type="button"
-              onClick={openPaywall}
-              className="group w-full text-left px-2 py-1 -mx-2 rounded-lg hover:bg-[#333333] transition-colors cursor-pointer"
-            >
-              <span className="block text-sm text-[#a3a3a3] group-hover:text-[#ececec]">
-                {usage.remaining === 1
-                  ? "1 free message left"
-                  : `${usage.remaining} free messages left`}
-              </span>
-              {!isSignedIn && (
-                <span className="block text-xs leading-tight text-[#737373] group-hover:text-[#a3a3a3]">
-                  Sign in for 2 more today
-                </span>
-              )}
-            </button>
-          )}
-          <QuestProgressMeter
-            variant="sidebar"
-            percent={dailyQuestPercent(dailyQuests)}
-            onClick={() => setShowQuests(true)}
-          />
-          <SidebarAccount pet={playerProfile?.top_pet} />
-        </div>
+    <div className="app-shell flex bg-[#1a1a1a] text-[#ececec] overflow-hidden">
+      {/* Sidebar (desktop) */}
+      <aside className="hidden md:flex flex-col w-64 xl:w-72 flex-shrink-0 min-h-0 overflow-hidden border-r border-[#303030]">
+        <ChatSidebar className="flex flex-col flex-1 min-h-0 overflow-hidden p-4" {...sidebarProps} />
       </aside>
 
+      {mobileNavOpen && (
+        <div
+          className="md:hidden fixed z-50 flex flex-col bg-[#1a1a1a]"
+          style={{
+            top: "var(--app-offset, 0px)",
+            left: 0,
+            width: "100%",
+            height: "var(--app-height, 100svh)",
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Sidebar"
+        >
+          <ChatSidebar
+            className="flex flex-col flex-1 min-h-0 overflow-hidden px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]"
+            onClose={closeMobileNav}
+            {...sidebarProps}
+          />
+        </div>
+      )}
+
       {/* Main chat area */}
-      <main className="relative flex-1 flex flex-col min-w-0">
-        {/* Account cluster | signed out shows "Sign in" next to the avatar,
-            signed in just shows the avatar. Mirrors the sidebar's account
-            row (same AccountMenu component, kept in sync by construction). */}
-        <div className="absolute top-0 right-0 z-40 flex items-center gap-5 rounded-bl-xl bg-[#1a1a1a] border-b border-l border-[#303030] px-4 py-2">
+      <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
+        {/* Account cluster (desktop) | signed out shows "Sign in" next to the
+            avatar, signed in just shows the avatar. Mirrors the sidebar's
+            account row (same AccountMenu, kept in sync by construction). */}
+        <div className="hidden md:flex absolute top-0 right-0 z-40 items-center gap-5 rounded-bl-xl bg-[#1a1a1a] border-b border-l border-[#303030] px-4 py-2">
           {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
             <button
               type="button"
@@ -1059,41 +1042,45 @@ export function ChatInterface() {
           <AccountMenu pet={playerProfile?.top_pet} size={32} openDirection="down" align="right" />
         </div>
 
-        {/* Top bar (mobile) */}
-        <header className="md:hidden flex items-center gap-2 px-4 py-3 border-b border-[#303030]">
+        {/* Compact chrome (mobile): sidebar toggle, optional new chat, account */}
+        <header className="md:hidden flex items-center justify-between gap-2 px-2 py-1.5 flex-shrink-0">
           <button
-            onClick={goHome}
-            disabled={isEmpty}
-            className="flex items-center gap-2 cursor-pointer disabled:cursor-default"
-            aria-label="Back to home"
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-[#ececec] hover:bg-[#2a2a2a] transition-colors"
+            aria-label="Open sidebar"
+            aria-expanded={mobileNavOpen}
           >
-            <Image
-              src={isEmpty ? SWORD_SPRITE : USER_SPRITE}
-              alt={isEmpty ? "RealmPal" : "Your companion"}
-              width={26}
-              height={26}
-              style={{ imageRendering: "pixelated" }}
-              unoptimized
-            />
-            <span className="text-xl font-semibold">RealmPal</span>
+            <SidebarIcon />
           </button>
-          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
-            <button
-              type="button"
-              onClick={openPaywall}
-              className="ml-auto text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer"
-            >
-              {usage.remaining === 1
-                ? "1 free message left"
-                : `${usage.remaining} free messages left`}
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            {!isEmpty && (
+              <button
+                type="button"
+                onClick={goHome}
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-[#ececec] hover:bg-[#2a2a2a] transition-colors"
+                aria-label="New chat"
+              >
+                <NewChatIcon />
+              </button>
+            )}
+            {!isSignedIn && (
+              <button
+                type="button"
+                onClick={() => router.push("/auth/signin")}
+                className="px-3 py-1.5 rounded-md text-sm font-medium bg-white text-[#1a1a1a] hover:bg-[#e5e5e5] transition-colors"
+              >
+                Sign in
+              </button>
+            )}
+            <AccountMenu pet={playerProfile?.top_pet} size={28} openDirection="down" align="right" />
+          </div>
         </header>
 
         {/* Messages */}
-        <div className="flex-1 min-w-0 overflow-y-auto" role="log" aria-live="polite" aria-label="Chat messages">
+        <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain" role="log" aria-live="polite" aria-label="Chat messages">
           {isEmpty ? (
-            <div className="flex flex-col items-center justify-center h-full gap-6 px-4 pt-14">
+            <div className="flex flex-col items-center justify-center min-h-full gap-5 px-4 py-4 md:gap-6 md:pt-14">
               <div className="text-center">
                 <div className="mx-auto mb-3 flex h-[56px] w-[56px] items-center justify-center">
                   {playerProfile?.top_pet ? (
@@ -1128,7 +1115,7 @@ export function ChatInterface() {
               </div>
             </div>
           ) : (
-            <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto w-full min-w-0 pb-4 pt-16">
+            <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto w-full min-w-0 pb-4 md:pt-16">
               {messages.map((msg, i) => (
                 <div
                   key={msg.id ?? i}
@@ -1156,8 +1143,8 @@ export function ChatInterface() {
           )}
         </div>
 
-        {/* Input bar */}
-        <div className="border-t border-[#303030] bg-[#1a1a1a] p-4">
+        {/* Input bar | pinned above Safari's toolbar via the visual viewport shell */}
+        <div className="flex-shrink-0 border-t border-[#303030] bg-[#1a1a1a] px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-4">
           <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto">
             {attachedFile && (
               <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg bg-[#262626] border border-[#404040] text-xs text-[#a3a3a3] w-fit">
@@ -1177,11 +1164,12 @@ export function ChatInterface() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isStreaming ? "Thinking..." : "Ask about a player, item, or dungeon... or type /player <ign>"}
+                placeholder={isStreaming ? "Thinking..." : "Ask about a player, item, or dungeon..."}
                 rows={1}
                 style={{ resize: "none" }}
-                className="flex-1 bg-transparent text-sm leading-5 text-[#ececec] placeholder-[#525252] focus:outline-none min-h-[24px] max-h-[200px] overflow-y-auto"
+                className="flex-1 bg-transparent text-base md:text-sm leading-5 text-[#ececec] placeholder-[#525252] focus:outline-none min-h-[24px] max-h-[200px] overflow-y-auto"
                 aria-label="Message input"
+                enterKeyHint="send"
                 disabled={isStreaming}
               />
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -1243,7 +1231,7 @@ export function ChatInterface() {
                 </button>
               </div>
             </div>
-            <p className="text-center text-xs text-[#404040] mt-2">
+            <p className="hidden md:block text-center text-xs text-[#404040] mt-2">
               Data via realmeye.com & umienjoyers.com · Not affiliated with DECA Games
             </p>
           </div>
