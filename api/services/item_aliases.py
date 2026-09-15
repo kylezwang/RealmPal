@@ -666,6 +666,78 @@ async def resolve_item_query(
     return hit
 
 
+# No real RotMG item name runs longer than this many words (the longest
+# tiered names - "Ring of Transcendent Attack", "Staff of Ancient Antiquity"
+# - top out around 4-5). Used as a final sanity ceiling below: past this
+# length, a "name" is virtually certain to be leftover free text a
+# regex-based extractor glued onto (or mistook for) a real item name, not an
+# actual title RealmEye could ever have a page for.
+MAX_PLAUSIBLE_ITEM_NAME_WORDS = 6
+
+
+async def resolve_item_query_with_trim(
+    redis: aioredis.Redis,
+    query: str,
+    *,
+    ttl_seconds: int,
+    class_name: Optional[str] = None,
+    slot_hint: Optional[str] = None,
+    min_words: int = 2,
+) -> Optional[str]:
+    """Like resolve_item_query, but when the full string doesn't resolve,
+    retry against progressively shorter prefixes (drop one trailing word at
+    a time) before giving up.
+
+    This is the durable fix for a whole class of bug found live repeatedly
+    on Sep 14: every regex-based extractor that pulls an "item name" out of
+    free chat text (stored_answers._shiny_divine_item_name and friends)
+    only knows where the name *starts*, not reliably where it *ends* - a
+    trailing question with no clear punctuation/verb boundary
+    ("...ring is the awakened enchantment good?") gets glued onto the real
+    name no matter how many specific stop-words get added to those regexes
+    one incident at a time. Real item names are a closed, known set (the
+    item catalog, built from RealmEye's own hub/listing pages) - instead of
+    guessing *which* trailing words are junk, this asks the catalog "does
+    ANY prefix of this text name a real item," which needs no per-incident
+    regex tuning: "snake eye ring is the awakened enchantment good" fails
+    whole, then fails at 6 words, ... down to "snake eye ring" (3 words),
+    which resolves cleanly because all three tokens are real words in a
+    real catalog item's name - see score_nickname's `all(token in
+    name_words ...)` scoring. Returns the canonical title for the longest
+    resolving prefix, or None if nothing resolves even down to `min_words`.
+    """
+    raw = (query or "").strip()
+    if not raw:
+        return None
+    community = community_canonical(raw)
+    if community:
+        return community
+
+    catalog = await load_item_catalog(
+        redis, ttl_seconds=ttl_seconds, class_name=class_name, allow_scrape=False
+    )
+    if not catalog and class_name:
+        catalog = await load_item_catalog(
+            redis, ttl_seconds=ttl_seconds, class_name=None, allow_scrape=False
+        )
+    if not catalog:
+        return None
+
+    words = raw.split()
+    for end in range(len(words), max(min_words, 1) - 1, -1):
+        candidate = " ".join(words[:end])
+        if not candidate:
+            continue
+        hit = resolve_against_catalog(candidate, catalog, slot_hint=slot_hint)
+        if hit:
+            if end != len(words):
+                logger.bind(query=raw, trimmed_to=candidate, canonical=hit).info(
+                    "Resolved item nickname by trimming trailing text"
+                )
+            return hit
+    return None
+
+
 async def retrieve_set_visualizer(
     redis: aioredis.Redis,
     message: str,

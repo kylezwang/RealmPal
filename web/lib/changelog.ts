@@ -28,6 +28,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Your in-game name and pet companion now show up in the sidebar automatically after signing in, on any device.",
       "Your free daily messages now reset at the same time each day for everyone, instead of depending on when you first messaged.",
       "Tapping the sides of the upgrade screen now flips between slides, like a story.",
+      "Asking about an item in the same sentence as an unrelated follow-up question now correctly shows that item, instead of a broken result.",
     ],
   },
   {

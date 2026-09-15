@@ -1,8 +1,12 @@
+import json
+
 import pytest
+from fastapi import HTTPException
 
 from api.models.item import ItemProfile
 from api.routers import items as items_router
 from .conftest import build_request
+from api.services.item_aliases import CATALOG_PREFIX
 from api.services.scraper import ScraperError, _item_wiki_slug
 from api.services.wiki_scaling import (
     ITEM_CACHE_PREFIX,
@@ -123,3 +127,58 @@ async def test_item_marked_missing_fails_fast_without_scraping_again(
             object(),
             build_request(),
         )
+
+
+async def test_glued_free_text_resolves_via_catalog_trim_instead_of_scraping_garbage(
+    redis_client, anon_settings, monkeypatch
+):
+    """Durable fix, found live Sep 14 (repeatedly): a caller (a chat reply's
+    item extraction) can hand this endpoint free text with a real item name
+    glued to unrelated trailing words ("snake eye ring is the awakened
+    enchantment good"). resolve_item_query alone requires the whole string
+    to match and fails, but resolve_item_query_with_trim should find "Snake
+    Eye Ring" inside it - the endpoint must use the resolved, cached title
+    and never call scrape_item with the raw glued string."""
+    payload = [{"name": "Snake Eye Ring", "slot": "ring", "aliases": []}]
+    await redis_client.set(f"{CATALOG_PREFIX}:all:cached", json.dumps(payload))
+    item = ItemProfile(name="Snake Eye Ring", drop_locations=["Wine Cellar"])
+    await write_cached_item(redis_client, item, anon_settings.wiki_ttl_seconds)
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("must resolve via the catalog, not scrape raw glued text")
+
+    monkeypatch.setattr(items_router, "scrape_item", boom)
+
+    found = await items_router.get_item(
+        "snake eye ring is the awakened enchantment good",
+        anon_settings,
+        redis_client,
+        object(),
+        build_request(),
+    )
+    assert found.name == "Snake Eye Ring"
+
+
+async def test_implausibly_long_name_is_rejected_without_a_scrape_attempt(
+    redis_client, anon_settings, monkeypatch
+):
+    """When nothing in the catalog matches any prefix and the name is far
+    longer than any real item name could be, reject immediately (404, no
+    quota charge, no scrape) instead of paying a ~30s timeout for a wiki
+    page that could never have existed."""
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("must not attempt to scrape obvious extraction garbage")
+
+    monkeypatch.setattr(items_router, "scrape_item", boom)
+    monkeypatch.setattr(items_router, "resolve_item_query", _no_alias)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await items_router.get_item(
+            "completely unrelated nonsense text that names nothing real at all",
+            anon_settings,
+            redis_client,
+            object(),
+            build_request(),
+        )
+    assert exc_info.value.status_code == 404

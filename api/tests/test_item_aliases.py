@@ -3,7 +3,22 @@ request apart from a single-item shiny/divine request.
 """
 from __future__ import annotations
 
-from api.services.item_aliases import extract_set_item_names, is_set_visualize_query
+import json
+
+from api.services.item_aliases import (
+    CATALOG_PREFIX,
+    extract_set_item_names,
+    is_set_visualize_query,
+    resolve_item_query,
+    resolve_item_query_with_trim,
+)
+
+
+async def _seed_catalog(redis_client, items: list[tuple[str, str]]) -> None:
+    """Seed the item catalog cache directly (bypassing a live hub scrape),
+    same shape load_item_catalog writes: [{name, slot, aliases}, ...]."""
+    payload = [{"name": name, "slot": slot, "aliases": []} for name, slot in items]
+    await redis_client.set(f"{CATALOG_PREFIX}:all:cached", json.dumps(payload))
 
 
 def test_with_phrasing_still_extracts_a_set():
@@ -69,3 +84,64 @@ def test_with_phrasing_naming_only_one_item_is_not_a_set():
     assert not is_set_visualize_query(
         "Shiny divine snake eye ring. Is it insane with the awakened enchantment?"
     )
+
+
+# --- resolve_item_query_with_trim: the durable fix ---------------------
+
+
+async def test_trim_resolves_a_real_item_glued_to_a_trailing_question(redis_client, anon_settings):
+    """The durable fix, found live Sep 14 (repeatedly): a regex extractor
+    only knows where a name starts, not where a punctuation-less trailing
+    question ends. "snake eye ring is the awakened enchantment good" has no
+    sentence break at all - resolve_item_query alone (whole-string match)
+    finds nothing, but trimming trailing words one at a time until a real
+    catalog item matches finds "Snake Eye Ring" without needing to know in
+    advance that "is"/"the"/"awakened"/etc. were never part of the name."""
+    await _seed_catalog(redis_client, [("Snake Eye Ring", "ring")])
+    whole = await resolve_item_query(
+        redis_client,
+        "snake eye ring is the awakened enchantment good",
+        ttl_seconds=60,
+        allow_scrape=False,
+    )
+    assert whole is None  # confirms the untrimmed call really does fail
+
+    trimmed = await resolve_item_query_with_trim(
+        redis_client, "snake eye ring is the awakened enchantment good", ttl_seconds=60
+    )
+    assert trimmed == "Snake Eye Ring"
+
+
+async def test_trim_prefers_the_longest_resolving_prefix(redis_client, anon_settings):
+    """Guards against over-trimming: if both "Snake Eye" and "Snake Eye
+    Ring" were real catalog items, the longer (more specific) one that
+    still resolves should win, not the first short prefix reached."""
+    await _seed_catalog(
+        redis_client, [("Snake Eye Ring", "ring"), ("Snake Eye", "weapon")]
+    )
+    resolved = await resolve_item_query_with_trim(
+        redis_client, "snake eye ring is good right", ttl_seconds=60
+    )
+    assert resolved == "Snake Eye Ring"
+
+
+async def test_trim_returns_none_when_no_prefix_resolves(redis_client, anon_settings):
+    await _seed_catalog(redis_client, [("Snake Eye Ring", "ring")])
+    resolved = await resolve_item_query_with_trim(
+        redis_client, "completely unrelated nonsense text here", ttl_seconds=60
+    )
+    assert resolved is None
+
+
+async def test_trim_does_not_resolve_below_min_words(redis_client, anon_settings):
+    """A single leading word ("ring") can resolve confidently enough on its
+    own to match "Ring of Decades" (verified directly against
+    resolve_against_catalog) - but the default min_words=2 stops the
+    trim loop one word short of ever trying it, so a message that never
+    contains a real 2+-word prefix match falls all the way to None instead
+    of guessing off one generic word."""
+    await _seed_catalog(redis_client, [("Ring of Decades", "ring")])
+    resolved = await resolve_item_query_with_trim(
+        redis_client, "ring for my kensei build", ttl_seconds=60
+    )
+    assert resolved is None

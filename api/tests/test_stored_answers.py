@@ -13,11 +13,13 @@ from api.services import entitlements
 from api.services.claude_billing import peek_claude_usage
 from api.services.rate_limit import peek, quota_for
 from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
+from api.services.item_aliases import CATALOG_PREFIX
 from api.services.stored_answers import (
     _build_reply,
     _compose_guide_brief,
     _shiny_divine_flags,
     _shiny_divine_item_name,
+    _shiny_divine_reply,
     _strip_item_card_hooks,
     _strip_wiki_chrome,
     build_brief_key,
@@ -204,6 +206,46 @@ def test_shiny_item_with_no_sentence_break_stops_at_the_auxiliary_verb():
         _shiny_divine_item_name("Shiny divine Ring of Decades does it look good")
         == "Ring of Decades"
     )
+
+
+async def test_shiny_divine_reply_resolves_a_still_glued_run_on_via_the_catalog(
+    redis_client, anon_settings
+):
+    """Durable fix, layered on top of the regex fixes above: even a phrasing
+    the auxiliary-verb regex hasn't been taught to stop at yet (or an older
+    deployed revision that predates that regex fix) should still resolve to
+    the real item, because _shiny_divine_reply now falls back to the real
+    item catalog with trailing-word trimming instead of handing the
+    frontend a name that was never a real item ("...ring is the awakened
+    enchantment good" verbatim, guaranteed 404 after a ~30s scrape
+    timeout)."""
+    import json
+
+    payload = [{"name": "Snake Eye Ring", "slot": "ring", "aliases": []}]
+    await redis_client.set(f"{CATALOG_PREFIX}:all:cached", json.dumps(payload))
+
+    reply = await _shiny_divine_reply(
+        redis_client,
+        "shiny divine snake eye ring is the awakened enchantment good",
+        anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert "[item:Snake Eye Ring]" in reply.text
+
+
+async def test_shiny_divine_reply_gives_up_cleanly_on_pure_extraction_garbage(
+    redis_client, anon_settings
+):
+    """When nothing in the catalog matches any prefix and the leftover text
+    is too long to plausibly be a real item name, _shiny_divine_reply must
+    return None (falling through to a different reply path) instead of a
+    StoredReply pointing the frontend at a doomed lookup."""
+    reply = await _shiny_divine_reply(
+        redis_client,
+        "shiny divine completely unrelated nonsense text that names nothing real",
+        anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is None
 
 
 async def test_enchant_question_about_a_ring_does_not_reuse_a_cached_build_brief(
