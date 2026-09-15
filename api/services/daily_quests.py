@@ -1,19 +1,30 @@
-"""Daily quest completion bonus: +1 message once per rolling quota window.
+"""Daily quest completion bonus: +1 message once per quota window.
 
 Free and guest accounts get one extra daily chat. Paid accounts get one extra
 included Claude reply. Claim is idempotent within that window.
 
-The free/guest bonus is deliberately NOT keyed to the UTC calendar day. The
-message quota itself (`rate_limit.Quota`) is a rolling 24h window that starts
-on a caller's first message, not one aligned to midnight. A calendar-day
-bonus key would drift out of sync with it: the bonus could vanish hours
-before the quota it boosts actually resets (key rolls over at midnight,
-quota doesn't), or a caller could re-claim right after midnight and stack a
-second bonus onto a quota window that hasn't reset yet. `claim_daily_bonus`
-takes the caller's live quota TTL (`rate_limit.peek_ttl`) and expires the
-claim/bonus keys at the same moment the quota resets, so the two can't drift.
-The paid path is unaffected: it increments a calendar-month pool
-(`_paid_bonus_key`), which matches the monthly Claude included-pool it feeds.
+The free/guest bonus is deliberately NOT keyed to the UTC calendar day. As of
+Sep 14, 2026 the message quota itself (`rate_limit.Quota`) resets for
+everyone at the same wall-clock instant, 5pm Pacific
+(`rate_limit.seconds_until_daily_reset`) - but a calendar-day bonus key would
+still drift out of sync with it, since UTC midnight and 5pm Pacific are two
+different, unrelated instants (and the offset between them shifts with
+PST/PDT). `claim_daily_bonus` takes the caller's live quota TTL
+(`rate_limit.peek_ttl`) and expires the claim/bonus keys at the same moment
+the quota resets, so the two can't drift regardless of which wall-clock
+instant that is. The paid path is unaffected: it increments a calendar-month
+pool (`_paid_bonus_key`), which matches the monthly Claude included-pool it
+feeds.
+
+## History
+
+### Until Sep 14, 2026
+The message quota was a rolling 24h window that started on a caller's own
+first message of the window, not aligned to any shared clock time (INCR +
+EXPIRE 86400 on the first hit). Reported live Sep 14: users expected a
+single shared daily reset (framed as "5pm Pacific") instead of "24h after
+whenever I happened to first message." `seconds_until_daily_reset()`
+replaced the flat `QUOTA_TTL_SECONDS` expiry in `rate_limit.consume()`.
 
 Also picks today's dungeon portal and a cached shiny-divine sprite so the
 quests modal can show real wiki art instead of empty checkboxes.
@@ -29,7 +40,7 @@ import redis.asyncio as aioredis
 
 from ..config import Settings
 from .dungeon_guide import load_dungeon_guide
-from .rate_limit import QUOTA_TTL_SECONDS, hash_identifier
+from .rate_limit import hash_identifier, seconds_until_daily_reset
 from .wiki_scaling import read_cached_item
 
 BONUS_MESSAGES = 1
@@ -190,11 +201,12 @@ async def claim_daily_bonus(
     (`rate_limit.peek_ttl`) for the free/guest path, so the claim and the
     bonus it grants expire at the same instant the quota itself resets. Pass
     0 (or omit) when the quota key doesn't exist yet, e.g. the caller hasn't
-    sent a message on this window yet, in which case a full rolling day is
-    used instead. Returns True if this call actually granted a new bonus.
+    sent a message on this window yet, in which case the time until the next
+    shared 5pm-Pacific reset is used instead. Returns True if this call
+    actually granted a new bonus.
     """
     bucket = identity_key(subject, settings)
-    ttl = quota_ttl_seconds if quota_ttl_seconds > 0 else QUOTA_TTL_SECONDS
+    ttl = quota_ttl_seconds if quota_ttl_seconds > 0 else seconds_until_daily_reset()
     first = await redis.set(_claimed_key(bucket), "1", nx=True, ex=ttl)
     if not first:
         return False

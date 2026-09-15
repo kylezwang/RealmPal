@@ -19,3 +19,6 @@ python-multipart==0.0.20
 langgraph==0.3.34
 langchain-core==0.3.86
 langchain-text-splitters==0.3.9
+# zoneinfo (stdlib) needs an IANA tz database on disk; not every base image
+# ships one. First-party pure-Python fallback per CPython's own docs.
+tzdata==2025.2
