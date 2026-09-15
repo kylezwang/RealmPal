@@ -7,6 +7,9 @@ only worth anything if the caller can't pick which bucket they land in.
 """
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from api.identity import AuthenticatedUser
@@ -18,6 +21,7 @@ from api.services.rate_limit import (
     consume,
     peek,
     quota_for,
+    seconds_until_daily_reset,
 )
 
 from .conftest import build_request
@@ -202,6 +206,39 @@ async def test_corrupt_counter_reads_as_zero(redis_client, anon_settings, junk):
     quota = quota_for(None, build_request(), anon_settings)
     await redis_client.set(quota.key, junk)
     assert await peek(redis_client, quota) == 0
+
+
+# --- shared daily reset time -----------------------------------------------
+
+
+def test_seconds_until_daily_reset_counts_down_to_5pm_pacific_same_day():
+    """Regression: quotas used to reset 24h after each caller's own first
+    message, so "when do I get more" depended on when you happened to first
+    message - reported live Sep 14. Everyone now shares one reset instant."""
+    pacific = ZoneInfo("America/Los_Angeles")
+    noon = datetime(2026, 9, 14, 12, 0, tzinfo=pacific)
+    assert seconds_until_daily_reset(noon) == 5 * 3600
+
+
+def test_seconds_until_daily_reset_rolls_to_tomorrow_once_past_5pm():
+    pacific = ZoneInfo("America/Los_Angeles")
+    just_after = datetime(2026, 9, 14, 17, 0, 1, tzinfo=pacific)
+    # 23h59m59s until tomorrow's 5pm.
+    assert seconds_until_daily_reset(just_after) == 23 * 3600 + 59 * 60 + 59
+
+
+def test_seconds_until_daily_reset_exactly_at_5pm_rolls_to_tomorrow():
+    pacific = ZoneInfo("America/Los_Angeles")
+    exactly = datetime(2026, 9, 14, 17, 0, 0, tzinfo=pacific)
+    assert seconds_until_daily_reset(exactly) == 24 * 3600
+
+
+def test_seconds_until_daily_reset_is_timezone_independent_input():
+    """A UTC instant and its Pacific equivalent must agree."""
+    pacific = ZoneInfo("America/Los_Angeles")
+    in_pacific = datetime(2026, 9, 14, 9, 0, tzinfo=pacific)
+    in_utc = in_pacific.astimezone(ZoneInfo("UTC"))
+    assert seconds_until_daily_reset(in_pacific) == seconds_until_daily_reset(in_utc)
 
 
 async def test_anonymous_allowance_is_exhausted_at_the_limit(

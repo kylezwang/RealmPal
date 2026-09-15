@@ -32,7 +32,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 from fastapi import Request
@@ -45,8 +47,31 @@ USER_SCOPE = "user"
 ANONYMOUS_SCOPE = "ip"
 LOOKUP_SCOPE = "lookup"
 
-# Quota windows roll every 24h.
+# Quota windows roll every 24h. Kept as a constant (still the right ceiling
+# for a "how long could this TTL possibly be" assertion) even though the
+# actual expiry `consume()` sets is no longer a flat 24h - see
+# seconds_until_daily_reset().
 QUOTA_TTL_SECONDS = 60 * 60 * 24
+
+# Until Sep 14, 2026, a caller's free quota reset 24h after their own first
+# message of the window (INCR + EXPIRE QUOTA_TTL_SECONDS on the first hit).
+# That meant "when do I get my next 5 free messages" depended on exactly
+# when you happened to send your first one - a user who messaged at 11pm
+# reset at 11pm the next day, one who messaged at 6am reset at 6am. Reported
+# live Sep 14: users expected a single shared daily reset instead. Now every
+# free/anonymous quota resets at the same wall-clock instant for everyone:
+# 5pm Pacific (America/Los_Angeles, so it tracks PST/PDT automatically).
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+_DAILY_RESET_HOUR_PT = 17
+
+
+def seconds_until_daily_reset(now: Optional[datetime] = None) -> int:
+    """Seconds from `now` (default: real now) until the next 5pm Pacific."""
+    current = (now or datetime.now(timezone.utc)).astimezone(_PACIFIC)
+    target = datetime.combine(current.date(), time(_DAILY_RESET_HOUR_PT), tzinfo=_PACIFIC)
+    if target <= current:
+        target += timedelta(days=1)
+    return max(1, int((target - current).total_seconds()))
 
 _UNKNOWN_CLIENT = "unknown"
 
@@ -147,7 +172,7 @@ async def consume(redis: aioredis.Redis, quota: Quota) -> int:
     """Count one request against the quota and return the new total."""
     count = await redis.incr(quota.key)
     if count == 1:
-        await redis.expire(quota.key, QUOTA_TTL_SECONDS)
+        await redis.expire(quota.key, seconds_until_daily_reset())
     return int(count)
 
 

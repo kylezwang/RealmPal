@@ -14,6 +14,16 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.14",
+    date: "Sep 14, 2026",
+    items: [
+      "Chat answers are grounded in real wiki data again, across every kind of question.",
+      "Dungeon guides and the skin/outfit visualizer are back to full strength after a rough patch.",
+      "Skin visualizer follow-ups, like correcting a name or asking for just the shiny or divine version, work more reliably.",
+      "Your free daily messages now reset at the same time each day for everyone, instead of depending on when you first messaged.",
+    ],
+  },
+  {
     version: "2026.09.13",
     date: "Sep 13, 2026",
     items: [
