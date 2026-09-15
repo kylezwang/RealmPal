@@ -64,7 +64,7 @@ class ScraperError(Exception):
 
 
 PET_NOT_FOUND_MSG = "Sorry, I wasn't able to find a pet. Please try again later."
-PET_LOOKUP_TIMEOUT_SECONDS = 10.0
+PET_LOOKUP_TIMEOUT_SECONDS = 20.0
 
 
 def _pick_top_pet(pets: list[dict]) -> Optional[dict]:
