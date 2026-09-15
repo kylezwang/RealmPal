@@ -26,7 +26,11 @@ from .chunks import wrap_slot_chunk
 from .dps_specialist import is_dps_query, retrieve_dps_brief
 from .dungeon_guide import extract_dungeon_query, retrieve_dungeon_guide
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
-from .item_aliases import is_set_visualize_query, retrieve_set_visualizer
+from .item_aliases import (
+    is_set_visualize_query,
+    is_stat_class_shiny_divine_query,
+    retrieve_set_visualizer,
+)
 from .skin_visualizer import is_skin_visualize_query, retrieve_skin_visualizer
 from .player_lookup import extract_player_ign, format_player_brief, get_or_scrape_player
 from .wiki_scaling import (
@@ -76,10 +80,17 @@ def route_slots(
 ) -> tuple[list[SlotName], Depth]:
     """Full builds use every gear slot. Named-slot follow-ups stay narrow.
     A named shiny/divine set uses the set visualizer instead of the four
-    gear agents. A skin/outfit dye preview uses the skin visualizer. A
-    player lookup adds the player specialist. A guide question adds dungeon."""
+    gear agents - so does a shiny/divine class+stat ask with no items
+    named ("full shiny divine attack huntress"), which resolves the top
+    weapon/ability/armor/ring for that build first (see
+    is_stat_class_shiny_divine_query / top_build_items), same visual
+    output either way. A skin/outfit dye preview uses the skin visualizer.
+    A player lookup adds the player specialist. A guide question adds
+    dungeon."""
     lower = message.lower()
-    if is_set_visualize_query(message):
+    if is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
+        message, class_name, stat
+    ):
         extras: list[SlotName] = []
         if player_ign:
             extras.append("player")
@@ -538,6 +549,7 @@ async def _set_agent(redis: aioredis.Redis, state: SlotState) -> str:
             state["message"],
             ttl_seconds=state["ttl_seconds"],
             class_name=state.get("class_name"),
+            stat=state.get("stat"),
             allow_scrape=False,
         )
     except Exception as e:

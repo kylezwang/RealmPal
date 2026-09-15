@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import json
 
+from api.services import item_aliases
 from api.services.item_aliases import (
     CATALOG_PREFIX,
     extract_set_item_names,
     is_set_visualize_query,
+    is_stat_class_shiny_divine_query,
     resolve_item_query,
     resolve_item_query_with_trim,
+    retrieve_set_visualizer,
 )
 
 
@@ -131,6 +134,86 @@ async def test_trim_returns_none_when_no_prefix_resolves(redis_client, anon_sett
         redis_client, "completely unrelated nonsense text here", ttl_seconds=60
     )
     assert resolved is None
+
+
+# --- is_stat_class_shiny_divine_query / retrieve_set_visualizer's -------
+# --- build-derived branch: "show me full shiny divine attack huntress" --
+
+def test_stat_class_shiny_divine_query_needs_shiny_or_divine_and_no_named_items():
+    """Regression: found live Sep 14, right after "attack huntress" stopped
+    being misread as a literal item name - the message then fell through
+    to the generic balanced-loadout brief instead of the set-visualizer
+    loadout "full shiny divine X" actually implies."""
+    assert is_stat_class_shiny_divine_query(
+        "Show me full shiny divine attack huntress", "Huntress", "Attack"
+    )
+    assert is_stat_class_shiny_divine_query(
+        "shiny dex huntress please", "Huntress", "Dexterity"
+    )
+    # No shiny/divine wording at all - a plain build ask stays on the text
+    # brief path, this function must not claim it.
+    assert not is_stat_class_shiny_divine_query(
+        "best items for a dex huntress", "Huntress", "Dexterity"
+    )
+    # No resolved class+stat - nothing to build a loadout from.
+    assert not is_stat_class_shiny_divine_query("shiny divine please", None, None)
+    # A real named set always wins over the derived-from-build path.
+    assert not is_stat_class_shiny_divine_query(
+        "shiny divine set with Crown, Sword of Acclaim, Robe, and Ring of Decades",
+        "Huntress",
+        "Attack",
+    )
+
+
+async def test_retrieve_set_visualizer_derives_items_from_build_when_none_named(
+    redis_client, monkeypatch
+):
+    async def fake_top_build_items(redis, class_name, stat, *, ttl_seconds, cache_only=True):
+        assert class_name == "Huntress"
+        assert stat == "Attack"
+        return {
+            "weapon": "Doom Bow",
+            "ability": "Lifebringing Lotus",
+            "armor": "Puppy's Collar",
+            "ring": "Ring of Transcendent Attack",
+        }
+
+    monkeypatch.setattr(item_aliases, "top_build_items", fake_top_build_items)
+
+    text = await retrieve_set_visualizer(
+        redis_client,
+        "Show me full shiny divine attack huntress",
+        ttl_seconds=60,
+        class_name="Huntress",
+        stat="Attack",
+        allow_scrape=False,
+    )
+    assert "[loadout shiny divine]" in text
+    assert "[item:Doom Bow]" in text
+    assert "[item:Lifebringing Lotus]" in text
+    assert "[item:Puppy's Collar]" in text
+    assert "[item:Ring of Transcendent Attack]" in text
+
+
+async def test_retrieve_set_visualizer_stays_empty_without_shiny_divine_wording(
+    redis_client, monkeypatch
+):
+    """A plain "best items for a dex huntress" (no shiny/divine wording)
+    must not derive a set - that ask stays on the text-brief path."""
+    async def boom(*args, **kwargs):
+        raise AssertionError("must not derive build items with no shiny/divine wording")
+
+    monkeypatch.setattr(item_aliases, "top_build_items", boom)
+
+    text = await retrieve_set_visualizer(
+        redis_client,
+        "best items for a dex huntress",
+        ttl_seconds=60,
+        class_name="Huntress",
+        stat="Dexterity",
+        allow_scrape=False,
+    )
+    assert text == ""
 
 
 async def test_trim_does_not_resolve_below_min_words(redis_client, anon_settings):

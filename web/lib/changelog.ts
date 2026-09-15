@@ -30,6 +30,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Tapping the sides of the upgrade screen now flips between slides, like a story.",
       "Asking about an item in the same sentence as an unrelated follow-up question now correctly shows that item, instead of a broken result.",
       "Asking for a shiny/divine build by class and stat (like \"attack huntress\" or \"a set for dex huntress\") no longer errors out trying to look it up as a single item.",
+      "Asking to see a full shiny/divine build by class and stat now shows the actual recommended weapon, ability, armor, and ring as a loadout, instead of a wall of text.",
     ],
   },
   {
