@@ -29,6 +29,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Your free daily messages now reset at the same time each day for everyone, instead of depending on when you first messaged.",
       "Tapping the sides of the upgrade screen now flips between slides, like a story.",
       "Asking about an item in the same sentence as an unrelated follow-up question now correctly shows that item, instead of a broken result.",
+      "Asking for a shiny/divine build by class and stat (like \"attack huntress\" or \"a set for dex huntress\") no longer errors out trying to look it up as a single item.",
     ],
   },
   {

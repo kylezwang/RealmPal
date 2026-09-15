@@ -16,7 +16,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 from loguru import logger
 
-from ..models.build import CLASS_ABILITY_HUB
+from ..models.build import CLASS_ABILITY_HUB, CLASS_ALIASES, STAT_ALIASES
 from .dungeon_guide import (
     _focus_text,
     _is_hardmode_shatters,
@@ -298,6 +298,22 @@ def _clean_drop_name(raw: str) -> str:
     return re.sub(r"[?.!]+$", "", name).strip(" \t-")
 
 
+# Every word that names a stat or a class (plus their nicknames -
+# STAT_ALIASES/CLASS_ALIASES already cover "dex"/"atk"/"myst"/"war"/etc). A
+# real item name is never composed *entirely* of these - used below to
+# reject "attack huntress" / "dex huntress" as an item name the same way
+# the "for X" guard above rejects "for full dexterity huntress": both are
+# build references, not a name RealmEye could ever have a wiki page for.
+_BUILD_VOCAB_WORDS: frozenset[str] = frozenset(
+    word.lower()
+    for word in (
+        *STAT_ALIASES.keys(),
+        *CLASS_ALIASES.keys(),
+        *(alias for aliases in CLASS_ALIASES.values() for alias in aliases),
+    )
+)
+
+
 def _shiny_divine_item_name(message: str) -> Optional[str]:
     """Single item from 'show me a shiny divine Crown'. Not a four-slot set."""
     if extract_set_item_names(message or ""):
@@ -305,9 +321,32 @@ def _shiny_divine_item_name(message: str) -> Optional[str]:
     match = _SHINY_DIVINE_ITEM.search((message or "").strip())
     if not match:
         return None
-    name = re.sub(r"\b(item|sprite|set|loadout)\b", "", match.group(1), flags=re.I)
+    name = re.sub(r"\b(item|sprite|set|loadout|build|gear)\b", "", match.group(1), flags=re.I)
     name = re.sub(r"[?.!]+$", "", name).strip(" \t-")
+    name = re.sub(r"\s+", " ", name)
     if not name or len(name) > 80:
+        return None
+    # Regression, found live Sep 14 (in-game playtest): "best shiny divine
+    # set for full dexterity huntress" strips "set" above and leaves "for
+    # full dexterity huntress" - no item was ever named, this is a build
+    # request ("a set FOR this class/stat"), not "an item literally named
+    # X". No real item name starts with a bare preposition/relative word,
+    # so treat one as a sign the real noun got consumed by the "set"/"item"
+    # strip and bail out here, letting this fall through to the general
+    # build-brief flow (realmshark.parse_query) that already understands
+    # "best build for a dex huntress" - instead of sending "for full
+    # dexterity huntress" to a doomed wiki scrape.
+    if re.match(r"^(?:for|on|to|that|which|who)\b", name, re.I):
+        return None
+    # Regression, found live Sep 14 (in-game playtest, right after the "for
+    # X" fix above): "shiny divine attack huntress" has no "for"/"set" to
+    # strip or catch - it's a bare stat+class pair with no item named at
+    # all, but nothing above rejects it, so it went to a doomed wiki scrape
+    # of "/wiki/attack-huntress" (404 after a ~30s timeout). If every
+    # remaining word is stat/class vocabulary, this is a build reference,
+    # not an item.
+    words = [w.lower() for w in name.split()]
+    if words and all(w in _BUILD_VOCAB_WORDS for w in words):
         return None
     return name
 
