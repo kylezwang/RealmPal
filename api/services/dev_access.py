@@ -1,4 +1,8 @@
-"""Local-only testers that skip quotas while DEBUG=true."""
+"""Named test accounts (DEBUG_UNLIMITED_IGNS) that skip chat + lookup quotas.
+
+Until Sep 14, 2026 this also required DEBUG=true; see
+Settings.debug_unlimited_ign_set for why that coupling was removed.
+"""
 from __future__ import annotations
 
 from typing import Optional

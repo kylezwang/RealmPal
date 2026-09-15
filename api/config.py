@@ -199,14 +199,24 @@ class Settings(BaseSettings):
     # canonical URL used for redirects, magic links, and Stripe return URLs.
     extra_cors_origins: str = ""
     debug: bool = False
-    # Comma-separated IGNs that skip chat + lookup quotas while DEBUG=true.
-    # Local testing only — ignored in any non-debug process.
+    # Comma-separated IGNs that skip chat + lookup quotas, for the handful of
+    # named test accounts we actually control (e.g. the founder's own IGN).
+    # Until Sep 14, 2026 this also required DEBUG=true, which meant unlocking
+    # it in production dragged in DEBUG's other side effects too (public
+    # /docs, muted secret-rotation warnings) - see debug_unlimited_ign_set
+    # history below. It's now its own explicit opt-in: setting this env var
+    # alone is enough, in any environment. Leave unset in prod unless you
+    # mean to name someone.
     debug_unlimited_igns: str = ""
 
     @property
     def debug_unlimited_ign_set(self) -> frozenset[str]:
-        if not self.debug:
-            return frozenset()
+        # History: until Sep 14, 2026 this returned frozenset() unless
+        # settings.debug was also True, so the only way to use it live was to
+        # flip DEBUG=true - which also publicly exposes /docs and silences
+        # the JWT-secret/Anthropic-key warnings in _warn_on_default_secrets /
+        # _warn_on_llm_config. Decoupled so naming a tester doesn't require
+        # accepting those unrelated debug-mode side effects.
         return frozenset(
             name.strip().lower()
             for name in self.debug_unlimited_igns.split(",")
