@@ -225,6 +225,28 @@ def test_shiny_divine_set_request_with_no_named_item_is_not_treated_as_an_item()
     assert _shiny_divine_item_name("shiny divine loadout for wizard") is None
 
 
+def test_shiny_divine_bare_stat_and_class_is_not_treated_as_an_item():
+    """Regression: found live Sep 14 (in-game playtest, minutes after the
+    "for X" fix above closed one gap) - "shiny divine attack huntress" has
+    no "for"/"set" to strip or catch, it's a bare stat+class pair with no
+    item named at all, but nothing rejected it, so it went to a doomed wiki
+    scrape of "/wiki/attack-huntress" (404 after a ~30s timeout, then
+    negative-cached). If every remaining word is stat/class vocabulary
+    (including nicknames like "dex"/"myst"), this is a build reference, not
+    an item name."""
+    assert _shiny_divine_item_name("shiny divine attack huntress") is None
+    assert _shiny_divine_item_name("shiny divine attack huntress build") is None
+    assert _shiny_divine_item_name("shiny divine dex huntress") is None
+    assert _shiny_divine_item_name("shiny divine mystic") is None
+    # Real items keep working: connector words / non-class-stat nouns mean
+    # not every word is build vocabulary.
+    assert _shiny_divine_item_name("Show me a shiny divine Crown") == "Crown"
+    assert (
+        _shiny_divine_item_name("Shiny divine Ring of Decades does it look good")
+        == "Ring of Decades"
+    )
+
+
 async def test_shiny_divine_reply_resolves_a_still_glued_run_on_via_the_catalog(
     redis_client, anon_settings
 ):
