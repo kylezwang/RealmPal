@@ -40,9 +40,6 @@ from ..models.chat import (
 )
 from ..models.build import CLASS_ABILITY_HUB
 from ..services.rag import build_system_prompt, rag_exclude_slugs, retrieve_context
-from ..services.scraper import ScraperError
-from ..services.ingestion import ingest_player
-from ..services.player_lookup import PLAYER_CACHE_PREFIX, get_or_scrape_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.enchanting import is_enchant_query
@@ -582,25 +579,6 @@ async def chat_stream(
 
     await _enforce_quota(quota, redis, settings, authorization, user)
     await consume_claude_reply(redis, user, settings, paid=paid)
-
-    # Player profiles change constantly — scrape on lookup. The short TTL
-    # only collapses sidebar + chat hitting RealmEye twice in one session.
-    if body.ign:
-        cache_key = f"{PLAYER_CACHE_PREFIX}{body.ign.lower()}"
-        had_cached = settings.player_ttl_seconds > 0 and await redis.exists(cache_key)
-        try:
-            profile = await get_or_scrape_player(
-                redis, body.ign, ttl_seconds=settings.player_ttl_seconds
-            )
-            if not had_cached:
-                await ingest_player(qdrant, profile)
-        except ScraperError as e:
-            logger.bind(ign=body.ign, error=str(e)).warning("Could not scrape player on chat request")
-        except Exception as e:
-            # e.g. embeddings backend (Ollama) unreachable | don't block chat
-            logger.bind(ign=body.ign, error=str(e)).warning(
-                "Could not ingest scraped player profile on chat request"
-            )
 
     # Retrieve RAG context. A degraded embeddings/vector backend (e.g. Ollama
     # not running locally) must never take down the whole chat feature |

@@ -45,6 +45,14 @@ function CloseIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 export function ChatSidebar({
   className = "",
   isEmpty,
@@ -110,7 +118,7 @@ export function ChatSidebar({
         }}
         className="mb-3"
       >
-        <p className="text-xs text-[#6b6b6b] mb-2">Your IGN</p>
+        <p className="text-xs text-[#6b6b6b] mb-2">Find your pet by entering your IGN</p>
         <div className="relative">
           <input
             type="text"
@@ -135,11 +143,21 @@ export function ChatSidebar({
         {ignError && <p className="text-[11px] text-red-400 mt-1">{ignError}</p>}
       </form>
 
-      <PetCompanion profile={playerProfile} loading={isLoadingPlayer} />
+      <PetCompanion profile={playerProfile} loading={isLoadingPlayer} lookupError={ignError} />
 
-      {sessions.length > 0 && (
-        <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1 mt-3">
-          <p className="text-xs text-[#525252] mb-2">Chats</p>
+      <button
+        type="button"
+        onClick={onHome}
+        className="mt-3 flex-shrink-0 w-full flex items-center justify-center gap-1.5 rounded-lg bg-[#3a3a3a] border border-[#404040] px-2.5 py-2 text-sm md:text-xs text-[#ececec] hover:border-white transition-colors cursor-pointer"
+        aria-label="New chat"
+      >
+        <PlusIcon />
+        New chat
+      </button>
+
+      <div className="flex-1 overflow-y-auto min-h-0 -mx-1 px-1 mt-3">
+        <p className="text-xs text-[#525252] mb-2 px-1">Chats</p>
+        {sessions.length > 0 && (
           <ul className="space-y-1">
             {[...sessions]
               .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -160,7 +178,7 @@ export function ChatSidebar({
                       e.stopPropagation();
                       onOpenSessionOptions(session.id);
                     }}
-                      className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 md:w-5 md:h-5 flex items-center justify-center rounded text-[#737373] opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 hover:text-[#ececec] hover:bg-[#454545] transition-colors duration-150 cursor-pointer"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 md:w-5 md:h-5 flex items-center justify-center rounded text-[#737373] opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 hover:text-[#ececec] hover:bg-[#454545] transition-colors duration-150 cursor-pointer"
                     aria-label="Chat options"
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -172,10 +190,10 @@ export function ChatSidebar({
                 </li>
               ))}
           </ul>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className={`${sessions.length > 0 ? "mt-3" : "mt-auto"} flex-shrink-0`}>
+      <div className="mt-3 flex-shrink-0">
         <div className="flex justify-center">
           <button
             type="button"

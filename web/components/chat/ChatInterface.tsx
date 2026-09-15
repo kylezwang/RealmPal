@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { streamChat, fetchPlayer, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
+import { streamChat, fetchPlayer, fetchPlayerPet, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -168,16 +168,24 @@ export function ChatInterface() {
   const [questArt, setQuestArt] = useState<QuestArt | undefined>(() => mergeQuestArt());
   const [questBonusClaimed, setQuestBonusClaimed] = useState(false);
   const [questRefreshing, setQuestRefreshing] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(true);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Remember whether the sidebar quick-suggestion prompts were hidden.
+  // Phone: start collapsed. Desktop: start open unless they hid them.
+  // A hide or show is stored and reused on the next visit.
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(SUGGESTIONS_HIDDEN_KEY) === "1") {
+      const stored = window.localStorage.getItem(SUGGESTIONS_HIDDEN_KEY);
+      if (stored === "1") {
         setShowSuggestions(false);
+        return;
       }
+      if (stored === "0") {
+        setShowSuggestions(true);
+        return;
+      }
+      setShowSuggestions(!window.matchMedia("(max-width: 767px)").matches);
     } catch {
-      // Private mode / storage disabled — default to shown.
+      // Private mode / storage disabled: stay collapsed.
     }
   }, []);
 
@@ -485,7 +493,7 @@ export function ChatInterface() {
     setIgnError(null);
     if (!options?.silent) setIsLoadingPlayer(true);
     try {
-      const profile = await fetchPlayer(name);
+      const profile = await fetchPlayerPet(name);
       setPlayerProfile(profile);
       if (decodeAuthEmail()) {
         saveSavedAccountProfile({ ign: name, top_pet: profile.top_pet });
