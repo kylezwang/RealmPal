@@ -46,7 +46,7 @@ from ..services.player_lookup import PLAYER_CACHE_PREFIX, get_or_scrape_player
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.enchanting import is_enchant_query
-from ..services.item_aliases import is_set_visualize_query
+from ..services.item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
 from ..services.player_lookup import extract_player_ign
 from ..services.skin_visualizer import is_skin_visualize_query, outfit_history_from_messages
 from ..services.dev_access import is_debug_unlimited
@@ -644,6 +644,7 @@ async def chat_stream(
             or enchant_only
             or is_skin_visualize_query(query_text, history=outfit_history)
             or is_set_visualize_query(query_text)
+            or is_stat_class_shiny_divine_query(query_text, class_name, stat)
         ):
             context = ""
         else:

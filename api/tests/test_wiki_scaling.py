@@ -208,6 +208,41 @@ async def test_build_knowledge_reads_store_not_live_wiki(redis_client, monkeypat
     assert called["n"] == 0
 
 
+async def test_build_knowledge_routes_shiny_divine_class_stat_to_set_visualizer(
+    redis_client, monkeypatch
+):
+    """Regression: found live Sep 14, right after "attack huntress" stopped
+    being misread as a literal item name - "show me full shiny divine
+    attack huntress" then fell through to the generic weapon/ability/armor/
+    ring text brief (this same function's RealmShark-graph tail) instead of
+    the set visualizer's item-circle loadout, which only ever ran for
+    explicitly-named sets. Must now route through run_slot_agents (the set
+    agent resolves the build's top items itself) same as a named set does,
+    not the plain-text graph branch below."""
+    called: dict[str, object] = {}
+
+    async def fake_run_slot_agents(redis, message, **kwargs):
+        called["message"] = message
+        called["class_name"] = kwargs.get("class_name")
+        called["stat"] = kwargs.get("stat")
+        return "SET VISUALIZER stub"
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("must not fall through to the plain-text graph branch")
+
+    monkeypatch.setattr(realmshark, "run_slot_agents", fake_run_slot_agents)
+    monkeypatch.setattr(realmshark, "load_graph", boom)
+
+    text = await realmshark.retrieve_build_knowledge(
+        redis_client,
+        "Show me full shiny divine attack huntress",
+        ttl_seconds=60,
+    )
+    assert text == "SET VISUALIZER stub"
+    assert called["class_name"] == "Huntress"
+    assert called["stat"] == "Attack"
+
+
 async def test_ability_brief_cache_only_does_not_scrape(redis_client, monkeypatch):
     await redis_client.set(
         f"{wiki_scaling.CACHE_PREFIX}:huntress",
@@ -233,6 +268,78 @@ async def test_ability_brief_cache_only_does_not_scrape(redis_client, monkeypatc
         redis_client, "Huntress", stat="Dexterity", ttl_seconds=60, cache_only=True
     )
     assert "Lifebringing Lotus" in text
+
+
+async def test_top_build_items_picks_one_item_per_slot(redis_client, monkeypatch):
+    """top_build_items backs the shiny/divine "full build" set visualizer
+    (found live Sep 14: "show me full shiny divine attack huntress" landed
+    on the multi-paragraph balanced-loadout brief instead of a set
+    visualization once "attack huntress" stopped being misread as a literal
+    item name). It must read the exact same hub/ability data the text
+    briefs already use and pick the #1 item for each gear slot."""
+    hub_rows = {
+        "bows": [{"name": "Doom Bow", "tier": "UT", "bonus": "+11 ATT"}],
+        "longbows": [],
+        "leather-armors": [
+            {"name": "Puppy's Collar", "tier": "UT", "bonus": "+10 ATT"}
+        ],
+        "attack-rings": [
+            {"name": "Ring of Decades", "tier": "UT", "bonus": "+9 ATT"}
+        ],
+        "rings": [],
+    }
+
+    async def fake_hub_index(redis, slug, ttl, *, cache_only=False, force=False):
+        return hub_rows.get(slug, [])
+
+    monkeypatch.setattr(wiki_scaling, "_hub_index", fake_hub_index)
+
+    await redis_client.set(
+        f"{wiki_scaling.CACHE_PREFIX}:huntress",
+        json.dumps(
+            {
+                "class_name": "Huntress",
+                "abilities": [
+                    {
+                        "name": "Lifebringing Lotus",
+                        "tier": "UT",
+                        "scales": {"Attack": "Damage: 400 (+10 per ATT over 46)"},
+                        "effects": "Berserk, Healing",
+                    }
+                ],
+            }
+        ),
+    )
+
+    picks = await wiki_scaling.top_build_items(
+        redis_client, "Huntress", "Attack", ttl_seconds=60, cache_only=True
+    )
+    assert picks["weapon"] == "Doom Bow"
+    assert picks["ability"] == "Lifebringing Lotus"
+    assert picks["armor"] == "Puppy's Collar"
+    # Rings deliberately always lead with T7 (a guaranteed, always-available
+    # choice - see retrieve_universal_rings' own header text), regardless of
+    # whether a UT in the hub has a technically higher raw bonus.
+    assert picks["ring"] == "Ring of Transcendent Attack"
+
+
+async def test_top_build_items_skips_slots_with_no_data(redis_client, monkeypatch):
+    """A class/stat combo with no matching weapon or armor should simply
+    omit that slot rather than raise or invent a name."""
+    async def empty_hub_index(redis, slug, ttl, *, cache_only=False, force=False):
+        return []
+
+    monkeypatch.setattr(wiki_scaling, "_hub_index", empty_hub_index)
+
+    picks = await wiki_scaling.top_build_items(
+        redis_client, "Huntress", "Wisdom", ttl_seconds=60, cache_only=True
+    )
+    assert "weapon" not in picks
+    assert "armor" not in picks
+    assert "ability" not in picks
+    # Every stat has a T7 ring name, so the ring agent's fallback still
+    # produces a pick even with a completely empty hub.
+    assert picks.get("ring") == "Ring of Transcendent Wisdom"
 
 
 async def test_dungeon_guide_cache_only_does_not_scrape(redis_client, monkeypatch):

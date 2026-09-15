@@ -1040,6 +1040,82 @@ async def retrieve_ability_brief(
     return prefix + text
 
 
+_ITEM_TOKEN_RE = re.compile(r"\[item:([^\]]+)\]")
+
+
+async def top_build_items(
+    redis: aioredis.Redis,
+    class_name: str,
+    stat: str,
+    *,
+    ttl_seconds: int,
+    cache_only: bool = True,
+) -> dict[str, str]:
+    """The single best weapon/ability/armor/ring for a class+stat build.
+
+    Found live Sep 14, right after fixing "attack huntress" from being
+    misread as a literal item name (stored_answers._shiny_divine_item_name):
+    "show me full shiny divine attack huntress" then fell through correctly,
+    but landed on the multi-paragraph balanced-loadout brief instead of the
+    shiny/divine item-circle loadout the wording actually asked for - that
+    visual only existed for explicitly *named* sets ("full shiny divine
+    Enforcer, Ballistic Star, Straitjacket, and Lean"), never for a
+    class+stat ask with no items named. Rather than re-rank items a second
+    time, this reuses the exact same ranking each text-brief slot agent
+    already computes (retrieve_weapon_brief/retrieve_ability_brief/
+    retrieve_armor_brief/retrieve_universal_rings - top_stat_items ordering,
+    T7 fallback, ring infobox verification) by asking each for its top pick
+    and reading back the first [item:...] token, so the single-item pick
+    can never disagree with what the full brief would have said about that
+    same slot.
+
+    limit=2 (not 1) for weapon/armor: _top_stat_items' "always include a T7
+    baseline" rule can *replace* the actual top pick when limit=1 (it only
+    guarantees T7 appears *somewhere* in the returned list, not that it's
+    ranked first) - asking for 2 and taking the first still returns the
+    highest-stat_value item after the re-sort, T7 or not. Rings use limit=1
+    since T7 is deliberately always the ring agent's first pick regardless
+    of stat_value (a guaranteed, always-available choice, per
+    retrieve_universal_rings' own header text) - not an artifact to work
+    around.
+    """
+    picks: dict[str, str] = {}
+
+    weapon_text = await retrieve_weapon_brief(
+        redis, class_name, stat, ttl_seconds=ttl_seconds, limit=2, brief=True,
+        cache_only=cache_only,
+    )
+    match = _ITEM_TOKEN_RE.search(weapon_text)
+    if match:
+        picks["weapon"] = match.group(1)
+
+    ability_text = await retrieve_ability_brief(
+        redis, class_name, stat=stat, ttl_seconds=ttl_seconds, brief=True,
+        cache_only=cache_only,
+    )
+    match = _ITEM_TOKEN_RE.search(ability_text)
+    if match:
+        picks["ability"] = match.group(1)
+
+    armor_text = await retrieve_armor_brief(
+        redis, class_name, stat, ttl_seconds=ttl_seconds, limit=2, brief=True,
+        cache_only=cache_only,
+    )
+    match = _ITEM_TOKEN_RE.search(armor_text)
+    if match:
+        picks["armor"] = match.group(1)
+
+    ring_text = await retrieve_universal_rings(
+        redis, stat, ttl_seconds=ttl_seconds, limit=1, brief=True,
+        cache_only=cache_only,
+    )
+    match = _ITEM_TOKEN_RE.search(ring_text)
+    if match:
+        picks["ring"] = match.group(1)
+
+    return picks
+
+
 async def retrieve_stat_gear(
     redis: aioredis.Redis,
     class_name: str,

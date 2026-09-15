@@ -34,7 +34,7 @@ from ..models.build import (
 )
 from .dungeon_guide import extract_dungeon_query
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
-from .item_aliases import is_set_visualize_query
+from .item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
 from .skin_visualizer import is_skin_visualize_query
 from .player_lookup import extract_player_ign
 from .slot_graph import run_slot_agents
@@ -568,7 +568,9 @@ async def retrieve_build_knowledge(
     class_name, stat, buildish = parse_query(message, history=history)
     player_ign = extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
-    set_visualize = is_set_visualize_query(message)
+    set_visualize = is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
+        message, class_name, stat
+    )
     skin_visualize = is_skin_visualize_query(message)
     # "What enchants on QOT" has no class/stat/build keyword, so it isn't
     # buildish on its own | without this it would fall through the gate

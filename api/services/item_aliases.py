@@ -21,7 +21,7 @@ from ..models.build import (
     WEAPON_FAMILIES,
     weapon_family,
 )
-from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME
+from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME, top_build_items
 
 SET_SLOT_COUNT = 4
 SET_SLOTS = ("weapon", "ability", "armor", "ring")
@@ -503,6 +503,34 @@ def set_visualize_flags(message: str) -> tuple[bool, bool]:
     return bool(_SHINY.search(text)), bool(_DIVINE.search(text))
 
 
+def is_stat_class_shiny_divine_query(
+    message: str, class_name: Optional[str], stat: Optional[str]
+) -> bool:
+    """'Show me full shiny divine attack huntress' - shiny/divine wording
+    plus a resolved class+stat, but no items named directly (a real named
+    set always takes priority - this only fires when
+    extract_set_item_names finds nothing). The user wants the best weapon/
+    ability/armor/ring for this exact build rendered as the same shiny/
+    divine item-circle loadout the named-set path already produces, not a
+    wall of build-brief text.
+
+    Found live Sep 14, immediately after "attack huntress" stopped being
+    misread as a literal item name (see
+    stored_answers._shiny_divine_item_name's bare-stat-and-class guard):
+    the message correctly stopped 404ing, but fell through to the generic
+    balanced-loadout brief (weapon/ability/armor/ring paragraphs, a
+    RealmShark loadouts table) instead of what "full shiny divine X"
+    actually asked for - a set visualization, same as naming the four
+    items directly would produce.
+    """
+    if not (class_name and stat):
+        return False
+    if extract_set_item_names(message):
+        return False
+    shiny, divine = set_visualize_flags(message)
+    return shiny or divine
+
+
 def _equipment_hubs(class_name: Optional[str]) -> list[tuple[str, str]]:
     hubs: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -744,38 +772,79 @@ async def retrieve_set_visualizer(
     *,
     ttl_seconds: int,
     class_name: Optional[str] = None,
+    stat: Optional[str] = None,
     allow_scrape: bool = True,
 ) -> str:
-    """Slot-agent report: nickname → [item:Wiki Title] for a named set."""
+    """Slot-agent report: nickname → [item:Wiki Title] for a named set, or
+    (found live Sep 14, see is_stat_class_shiny_divine_query) the best
+    weapon/ability/armor/ring for a class+stat build when no items are
+    named at all - "show me full shiny divine attack huntress" gets the
+    same item-circle loadout as naming all four items would, instead of a
+    wall of build-brief text.
+    """
     names = extract_set_item_names(message)
+    derived_from_build = False
+    if not names and class_name and stat:
+        shiny, divine = set_visualize_flags(message)
+        if shiny or divine:
+            picks = await top_build_items(
+                redis, class_name, stat, ttl_seconds=ttl_seconds,
+                cache_only=not allow_scrape,
+            )
+            names = [picks[slot] for slot in SET_SLOTS if slot in picks]
+            derived_from_build = True
     if not names:
         return ""
     shiny, divine = set_visualize_flags(message)
     flags = [flag for flag, on in (("shiny", shiny), ("divine", divine)) if on]
-    catalog = await load_item_catalog(
-        redis,
-        ttl_seconds=ttl_seconds,
-        class_name=class_name,
-        allow_scrape=allow_scrape,
-    )
-    resolved: list[tuple[str, str, Optional[str]]] = []
-    for index, raw in enumerate(names):
-        slot = SET_SLOTS[index] if index < len(SET_SLOTS) else None
-        canonical = resolve_against_catalog(raw, catalog, slot_hint=slot)
-        resolved.append((raw, slot or "item", canonical))
+
+    if derived_from_build:
+        # Already real wiki titles from top_build_items (read straight off
+        # the warmed hub data) - resolving them again through the nickname
+        # catalog would be redundant and risks a miss on an item the
+        # catalog hasn't indexed under its exact wiki title yet.
+        resolved: list[tuple[str, str, Optional[str]]] = [
+            (name, SET_SLOTS[i] if i < len(SET_SLOTS) else "item", name)
+            for i, name in enumerate(names)
+        ]
+    else:
+        catalog = await load_item_catalog(
+            redis,
+            ttl_seconds=ttl_seconds,
+            class_name=class_name,
+            allow_scrape=allow_scrape,
+        )
+        resolved = []
+        for index, raw in enumerate(names):
+            slot = SET_SLOTS[index] if index < len(SET_SLOTS) else None
+            canonical = resolve_against_catalog(raw, catalog, slot_hint=slot)
+            resolved.append((raw, slot or "item", canonical))
 
     token_line = " ".join(
         f"[item:{canonical}]" for _raw, _slot, canonical in resolved if canonical
     )
     flag_token = " ".join(flags)
-    lines = [
-        "SET VISUALIZER. The user asked to show this exact named set.",
-        "Copy the flags and wiki titles below. Do not substitute other items.",
-        "Keep the reply to a short confirmation.",
-        f"[loadout {flag_token}]".strip() if flag_token else "[loadout]",
-        token_line,
-        "Resolved nicknames:",
-    ]
+    if derived_from_build:
+        lines = [
+            "SET VISUALIZER. The user asked for the best build for "
+            f"{stat} {class_name}, shown as a set (no items named "
+            "directly) - these are the top weapon/ability/armor/ring for "
+            "that build, already picked for you.",
+            "Copy the flags and wiki titles below. Do not substitute other items.",
+            "Keep the reply to a short confirmation naming each slot's item.",
+            f"[loadout {flag_token}]".strip() if flag_token else "[loadout]",
+            token_line,
+            "Picked for this build:",
+        ]
+    else:
+        lines = [
+            "SET VISUALIZER. The user asked to show this exact named set.",
+            "Copy the flags and wiki titles below. Do not substitute other items.",
+            "Keep the reply to a short confirmation.",
+            f"[loadout {flag_token}]".strip() if flag_token else "[loadout]",
+            token_line,
+            "Resolved nicknames:",
+        ]
     for raw, slot, canonical in resolved:
         if canonical:
             lines.append(f"  {slot}: {raw} → [item:{canonical}]")
