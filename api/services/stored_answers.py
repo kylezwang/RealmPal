@@ -25,6 +25,7 @@ from .dungeon_guide import (
     get_or_scrape_wiki,
     match_index_pages,
 )
+from .enchanting import is_enchant_query
 from .item_aliases import extract_set_item_names, resolve_item_query
 from .player_lookup import extract_player_ign
 from .realmshark import parse_query
@@ -77,7 +78,15 @@ _SHINY_DIVINE_ITEM = re.compile(
     # that has no way to actually render anything.
     r"(?:a\s+)?(?:shiny\s+divine|divine\s+shiny|shiny|divine)\s+"
     r"(.+?)"
-    r"(?:\s+looks?\s+like\b.*)?$",
+    # Stop at the first sentence break (or " look(s) like", or end of
+    # string) instead of the old bare `$` anchor, which forced the capture
+    # to swallow everything up to the end of the message. Found live Sep 14:
+    # "Shiny divine snake eye ring. Is it insane with the awakened
+    # enchantment?" captured "snake eye ring. Is it insane with the awakened
+    # enchantment" as the "item name" - a second sentence asking a real
+    # follow-up question got glued onto the item, guaranteeing a bogus
+    # lookup instead of a clean single-word match.
+    r"(?=[.!?]|\s+looks?\s+like\b|$)",
     re.I,
 )
 _SHINY_WORD = re.compile(r"\bshiny\b", re.I)
@@ -395,6 +404,20 @@ async def _slot_reply(redis: aioredis.Redis, message: str) -> Optional[StoredRep
 async def _build_reply(
     redis: aioredis.Redis, message: str, history: Optional[list[str]]
 ) -> Optional[StoredReply]:
+    if is_enchant_query(message):
+        # An enchant question (e.g. "...insane with the awakened
+        # enchantment?") almost always names a slot noun (ring/armor/weapon/
+        # ability), which alone flips parse_query's weak `buildish` regex to
+        # True even with no class or stat in *this* message - and once
+        # buildish is True, class_name/stat get pulled in from history no
+        # matter how many turns back or how unrelated. Found live Sep 14: a
+        # follow-up about a Snake Eye Ring's awakened enchant got answered
+        # with a stale cached "Ninja Attack build" brief from several turns
+        # earlier because "ring" alone was enough to look buildish. Enchant
+        # questions have their own specialist (is_enchant_query is the same
+        # gate api/routers/chat.py uses to route to it) - never let the
+        # generic class+stat build cache intercept them first.
+        return None
     class_name, stat, buildish = parse_query(message, history=history)
     if not (buildish and class_name and stat):
         return None
@@ -546,6 +569,14 @@ async def maybe_mint_brief(
     if is_constrained(message) or not (reply or "").strip():
         return None
     if extract_dungeon_query(message, history=history):
+        return None
+    if is_enchant_query(message):
+        # Same reasoning as _build_reply: a slot noun (ring/armor/weapon/
+        # ability) alone can flip buildish True and pull a stale class+stat
+        # in from history, which would mint *this* enchant answer over the
+        # general class+stat build brief - corrupting it for the next real
+        # "best attack ninja build" ask. Enchant answers are never a
+        # substitute for the general build brief.
         return None
     text = reply.strip()[:MAX_BRIEF_CHARS]
     class_name, stat, buildish = parse_query(message, history=history)
