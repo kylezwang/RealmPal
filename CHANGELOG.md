@@ -11,6 +11,15 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.15] - Sep 15, 2026
+
+### Changed
+- **Mobile sidebar suggestions start collapsed** (`web/components/chat/ChatInterface.tsx`): on viewports below `md`, the sidebar example prompts default hidden. `realm_pal_suggestions_hidden` still stores an explicit hide (`1`) or show (`0`) so a later session reuses that choice on any device. No stored key: phones stay collapsed, desktop stays open.
+- **New chat control above the chat list** (`web/components/chat/ChatSidebar.tsx`): a filled, centered "New chat" control with a plus icon on the left (same border as the IGN field, fill `#3a3a3a` so it reads lighter than the `#262626` inputs) sits above an always-visible `Chats` label and calls `goHome`. Disabled while already on an empty landing.
+- **IGN field label** (`web/components/chat/ChatSidebar.tsx`): "Your IGN" is now "Find your pet by entering your IGN".
+- **Compact pet lookup for sidebar IGN** (`GET /players/{username}/pet`, `scrape_player_pet()`): sidebar "Find your pet" now opens only the RealmEye Pet Yard tab (via `_read_top_pet_from_page`), skips characters/exaltations/summary scraping, caches under `player:pet:v1:`, and hard-caps at 10s with `Sorry, I wasn't able to find a pet.` when the tab is missing, empty, or slow. Full profile scrape (`GET /players/{username}`) is unchanged for chat player cards and explicit lookups.
+- **Chat no longer scrapes full player profile on every message** (`api/routers/chat.py`): removed the unconditional `body.ign` → `get_or_scrape_player()` block; full profiles are fetched only when the user asks about a player in chat (frontend `fetchPlayer` on lookup patterns) or via the player endpoint directly.
+
 ## [2026.09.14] - Sep 14, 2026
 
 ### Fixed

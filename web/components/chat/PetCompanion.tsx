@@ -72,13 +72,14 @@ function Spinner({ size = 16 }: { size?: number }) {
 interface Props {
   profile: PlayerProfile | null;
   loading?: boolean;
+  lookupError?: string | null;
 }
 
 /**
  * Displays the user's top pet sprite in the sidebar/header.
  * The pet "travels with them" through every conversation | personalizes the AI experience.
  */
-export function PetCompanion({ profile, loading = false }: Props) {
+export function PetCompanion({ profile, loading = false, lookupError = null }: Props) {
   if (loading) {
     return (
       <div
@@ -92,14 +93,16 @@ export function PetCompanion({ profile, loading = false }: Props) {
     );
   }
 
-  if (!profile?.top_pet) {
+  if (lookupError || !profile?.top_pet) {
     return (
       <div
         className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1c1c1c] border border-dotted border-[#2e2e2e] text-xs text-[#737373]"
-        title="Enter your IGN to load your pet"
+        title={lookupError ?? "Enter your IGN to load your pet"}
       >
-        <PawIcon className="text-[#737373]" size={16} />
-        <span>No pet found yet.</span>
+        <PawIcon className={`flex-shrink-0 ${lookupError ? "text-red-400/80" : "text-[#737373]"}`} size={16} />
+        <span className={lookupError ? "text-red-400/90" : undefined}>
+          {lookupError ?? "No pet found yet."}
+        </span>
       </div>
     );
   }

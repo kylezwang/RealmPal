@@ -19,10 +19,34 @@ from ..dependencies import enforce_lookup_rate_limit, get_redis, get_qdrant
 from ..models.player import PlayerProfile
 from ..services.scraper import ScraperError
 from ..services.ingestion import ingest_player
-from ..services.player_lookup import get_or_scrape_player
+from ..services.player_lookup import get_or_scrape_player, get_or_scrape_player_pet
 from ..services.validation import sanitize_lookup_name
 
 router = APIRouter(prefix="/players", tags=["players"])
+
+
+@router.get(
+    "/{username}/pet",
+    response_model=PlayerProfile,
+    dependencies=[Depends(enforce_lookup_rate_limit)],
+)
+async def get_player_pet(
+    username: str,
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+) -> PlayerProfile:
+    """Compact pet lookup for the sidebar IGN field (Pet Yard tab only)."""
+    username = sanitize_lookup_name(username, field="username")
+    try:
+        profile = await get_or_scrape_player_pet(
+            redis, username, ttl_seconds=settings.player_ttl_seconds
+        )
+    except ScraperError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    logger.bind(username=username, pet=profile.top_pet.name if profile.top_pet else None).info(
+        "Player pet fetched"
+    )
+    return profile
 
 
 @router.get(

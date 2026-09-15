@@ -63,6 +63,10 @@ class ScraperError(Exception):
     """Raised when scraping fails after retries."""
 
 
+PET_NOT_FOUND_MSG = "Sorry, I wasn't able to find a pet. Please try again later."
+PET_LOOKUP_TIMEOUT_SECONDS = 10.0
+
+
 def _pick_top_pet(pets: list[dict]) -> Optional[dict]:
     """RealmEye top pet is the highest ability total, not the first yard slot."""
     scored: list[dict] = []
@@ -514,6 +518,67 @@ def _leading_int(text: Optional[str]) -> Optional[int]:
     return int(match.group(0).replace(",", ""))
 
 
+async def _read_top_pet_from_page(page: Page, username: str) -> Optional[PetInfo]:
+    """Pet Yard tab only | skips characters, exaltations, and summary extras."""
+    try:
+        pet_tab = page.get_by_text("Pet Yard", exact=False)
+        if await pet_tab.count() == 0:
+            return None
+        await pet_tab.first.click(timeout=3000)
+        pets: list[dict] = []
+        for _ in range(16):
+            pets = await page.evaluate(_PET_YARD_JS)
+            if pets and any(pet.get("levels") for pet in pets):
+                break
+            await asyncio.sleep(0.25)
+        picked = _pick_top_pet(pets)
+        if not picked or picked.get("x") is None or picked.get("y") is None:
+            return None
+        sheet_match = re.search(r'url\("?([^")]+)"?\)', picked.get("sheet") or "")
+        size_match = re.search(r"\d+", picked.get("size") or "")
+        top_pet = PetInfo(
+            name=picked["name"],
+            sprite_sheet_url=sheet_match.group(1) if sheet_match else None,
+            sprite_x=int(picked["x"]),
+            sprite_y=int(picked["y"]),
+            sprite_size=int(size_match.group(0)) if size_match else 48,
+        )
+        logger.bind(
+            username=username,
+            pet=top_pet.name,
+            levels=picked.get("levels"),
+        ).info("Picked top pet by RealmEye ability total")
+        return top_pet
+    except Exception as e:
+        logger.bind(username=username, error=str(e)).warning("Pet sprite lookup failed")
+        return None
+
+
+async def scrape_player_pet(username: str) -> PlayerProfile:
+    """Fast sidebar lookup: load the player page, open Pet Yard, return top pet only."""
+
+    async def _run() -> PlayerProfile:
+        url = f"{REALMEYE_BASE}/player/{username}"
+        logger.bind(username=username, url=url).info("Scraping player pet (compact)")
+        async with _playwright_browser() as browser:
+            page = await _new_page(browser)
+            await _goto_with_retry(page, url, ready_selector="table.summary")
+            title = await page.title()
+            if "404" in title or "Private" in title.lower():
+                raise ScraperError(f"Player '{username}' not found or profile is private")
+            top_pet = await _read_top_pet_from_page(page, username)
+            if not top_pet:
+                raise ScraperError(PET_NOT_FOUND_MSG)
+            return PlayerProfile(username=username, top_pet=top_pet)
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=PET_LOOKUP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        raise ScraperError(PET_NOT_FOUND_MSG) from None
+    except PlaywrightTimeout:
+        raise ScraperError(PET_NOT_FOUND_MSG) from None
+
+
 async def _summary_cell(page: Page, label: str) -> Optional[str]:
     """Read a RealmEye summary-table value by exact left-column label."""
     return await page.evaluate(
@@ -669,41 +734,7 @@ async def scrape_player_profile(username: str) -> PlayerProfile:
             except Exception as e:
                 logger.bind(username=username, error=str(e)).warning("Exaltation list scrape failed")
 
-            # Top pet: highest Heal/Magic Heal/Electric (etc.) total on the
-            # Pet Yard tab. RealmEye lists pets in yard order, so the first
-            # span.pet is often a low pet (Monkey Head), not the best one.
-            top_pet: Optional[PetInfo] = None
-            try:
-                pet_tab = page.get_by_text("Pet Yard", exact=False)
-                if await pet_tab.count() > 0:
-                    await pet_tab.first.click()
-                    pets: list[dict] = []
-                    for _ in range(24):
-                        pets = await page.evaluate(_PET_YARD_JS)
-                        if pets and any(pet.get("levels") for pet in pets):
-                            break
-                        await asyncio.sleep(0.25)
-                    picked = _pick_top_pet(pets)
-                    if picked and picked.get("x") is not None and picked.get("y") is not None:
-                        sheet_match = re.search(
-                            r'url\("?([^")]+)"?\)', picked.get("sheet") or ""
-                        )
-                        size_match = re.search(r"\d+", picked.get("size") or "")
-                        top_pet = PetInfo(
-                            name=picked["name"],
-                            sprite_sheet_url=sheet_match.group(1) if sheet_match else None,
-                            sprite_x=int(picked["x"]),
-                            sprite_y=int(picked["y"]),
-                            sprite_size=int(size_match.group(0)) if size_match else 48,
-                        )
-                        logger.bind(
-                            username=username,
-                            pet=top_pet.name,
-                            levels=picked.get("levels"),
-                        ).info("Picked top pet by RealmEye ability total")
-            except Exception as e:
-                logger.bind(username=username, error=str(e)).warning("Pet sprite lookup failed")
-                pass
+            top_pet = await _read_top_pet_from_page(page, username)
 
             profile = PlayerProfile(
                 username=username,

@@ -12,6 +12,7 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  timeoutMessage = "That's taking longer than expected. Please try again.",
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -19,7 +20,7 @@ async function fetchWithTimeout(
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error("That's taking longer than expected. Please try again.");
+      throw new Error(timeoutMessage);
     }
     throw err;
   } finally {
@@ -448,6 +449,23 @@ export async function requestSignInLink(email: string): Promise<void> {
 // rather than leave the sidebar's pet selector (or an item/dungeon card)
 // waiting forever. Shared by fetchPlayer/fetchDungeon/fetchItem below.
 const SCRAPE_LOOKUP_TIMEOUT_MS = 45_000;
+const PET_LOOKUP_TIMEOUT_MS = 10_000;
+export const PET_NOT_FOUND_MESSAGE = "Sorry, I wasn't able to find a pet. Please try again later.";
+
+/** Sidebar IGN field only | Pet Yard tab, not the full profile scrape. */
+export async function fetchPlayerPet(username: string): Promise<PlayerProfile> {
+  const res = await fetchWithTimeout(
+    `${API_URL}/players/${encodeURIComponent(username)}/pet`,
+    { cache: "no-store", headers: authHeaders() },
+    PET_LOOKUP_TIMEOUT_MS,
+    PET_NOT_FOUND_MESSAGE,
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? PET_NOT_FOUND_MESSAGE);
+  }
+  return res.json();
+}
 
 export async function fetchPlayer(username: string): Promise<PlayerProfile> {
   // Redis (server-side, TTL'd) is the source of truth for caching | the

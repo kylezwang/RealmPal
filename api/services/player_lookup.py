@@ -12,9 +12,10 @@ from typing import Optional
 import redis.asyncio as aioredis
 
 from ..models.player import PlayerProfile
-from .scraper import scrape_player_profile
+from .scraper import scrape_player_profile, scrape_player_pet
 
 PLAYER_CACHE_PREFIX = "player:profile:v3:"
+PLAYER_PET_CACHE_PREFIX = "player:pet:v1:"
 # Wiki specialist stores last a week. A player row must never inherit that
 # TTL — fame/gear change constantly and are scraped on lookup.
 MAX_PLAYER_CACHE_SECONDS = 15 * 60
@@ -78,6 +79,25 @@ async def get_or_scrape_player(
         if cached:
             return PlayerProfile.model_validate_json(cached)
     profile = await scrape_player_profile(username)
+    if ttl_seconds > 0:
+        await redis.setex(cache_key, ttl_seconds, profile.model_dump_json())
+    return profile
+
+
+async def get_or_scrape_player_pet(
+    redis: aioredis.Redis,
+    username: str,
+    *,
+    ttl_seconds: int,
+) -> PlayerProfile:
+    """Redis-cached compact pet lookup for the sidebar IGN field."""
+    cache_key = f"{PLAYER_PET_CACHE_PREFIX}{username.lower()}"
+    if ttl_seconds > 0:
+        ttl_seconds = min(int(ttl_seconds), MAX_PLAYER_CACHE_SECONDS)
+        cached = await redis.get(cache_key)
+        if cached:
+            return PlayerProfile.model_validate_json(cached)
+    profile = await scrape_player_pet(username)
     if ttl_seconds > 0:
         await redis.setex(cache_key, ttl_seconds, profile.model_dump_json())
     return profile

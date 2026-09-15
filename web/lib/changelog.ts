@@ -14,6 +14,16 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.15",
+    date: "Sep 15, 2026",
+    items: [
+      "On phones, sidebar suggestion prompts start hidden, and that hide or show choice is remembered next time.",
+      "The menu now has a New chat button above your chat list.",
+      "The in-game name field now tells you to enter your IGN to find your pet.",
+      "Finding your pet by IGN is much faster, and shows a clear message if your pet yard is hidden.",
+    ],
+  },
+  {
     version: "2026.09.14-2",
     date: "Sep 14, 2026",
     items: [
