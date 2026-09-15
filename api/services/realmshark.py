@@ -542,7 +542,16 @@ async def retrieve_build_knowledge(
     # "What enchants on QOT" has no class/stat/build keyword, so it isn't
     # buildish on its own | without this it would fall through the gate
     # below with no context and Claude would have to invent roll numbers.
-    enchant_only = is_enchant_query(message) and not buildish
+    # Use (class_name and stat), not the raw buildish flag: buildish also
+    # flips True on a bare slot noun (ring/armor/weapon/ability) with no
+    # class or stat at all, and almost every enchant question names one of
+    # those nouns. Found live Sep 14: "...insane with the awakened
+    # enchantment?" (about a ring) had buildish=True from "ring" alone (plus
+    # Ninja/Attack pulled in from history), so this skipped the enchant
+    # brief entirely and fell through to the generic DPS-graph context for
+    # an unrelated class/stat. Only a real class+stat pair (an actual
+    # combined build+enchant ask) should still skip the enchant-only path.
+    enchant_only = is_enchant_query(message) and not (class_name and stat)
     if (
         not buildish
         and not player_ign

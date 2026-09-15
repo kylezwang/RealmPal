@@ -473,7 +473,17 @@ def extract_set_item_names(prompt: str) -> list[str]:
         cleaned = re.sub(r"\s+", " ", cleaned)
         if 3 <= len(cleaned) <= 60:
             names.append(cleaned)
-    if match is None and len(names) < 2:
+    # A real set names 2+ items. This guard used to only apply to the
+    # _AFTER_SHINY_DIVINE fallback (`match is None and ...`), so _WITH_ITEMS'
+    # very permissive "with <anything>" still counted a single trailing noun
+    # phrase as a one-item "set." Found live Sep 14: "Shiny divine snake eye
+    # ring. Is it insane with the awakened enchantment?" matched "with the
+    # awakened enchantment" and returned ["the awakened enchantment"] - a
+    # single bogus "item" that then got scraped as a real wiki page (404) and
+    # also made _shiny_divine_item_name wrongly bail out of the real single-
+    # item shiny/divine path for "snake eye ring." Applying the >=2 check
+    # regardless of which branch matched closes both holes.
+    if len(names) < 2:
         return []
     return names[:SET_SLOT_COUNT]
 

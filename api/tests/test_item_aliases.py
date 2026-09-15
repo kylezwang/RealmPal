@@ -49,3 +49,23 @@ def test_full_shiny_divine_list_without_with_routes_to_set_visualizer():
 def test_plain_sentence_with_no_shiny_divine_or_with_is_not_a_set():
     assert extract_set_item_names("How to do moonlight village?") == []
     assert not is_set_visualize_query("How to do moonlight village?")
+
+
+def test_with_phrasing_naming_only_one_item_is_not_a_set():
+    """Regression: found live Sep 14 as "Shiny divine snake eye ring. Is it
+    insane with the awakened enchantment?" - _WITH_ITEMS matched "with the
+    awakened enchantment" and returned a one-item list (the >=2 guard used
+    to only apply to the _AFTER_SHINY_DIVINE fallback, not this branch).
+    That single bogus "item" ("the awakened enchantment") then got scraped
+    as a real wiki page (guaranteed 404) and also made
+    stored_answers._shiny_divine_item_name wrongly bail out of the real
+    single-item shiny/divine path for "snake eye ring"."""
+    assert (
+        extract_set_item_names(
+            "Shiny divine snake eye ring. Is it insane with the awakened enchantment?"
+        )
+        == []
+    )
+    assert not is_set_visualize_query(
+        "Shiny divine snake eye ring. Is it insane with the awakened enchantment?"
+    )

@@ -625,7 +625,16 @@ async def chat_stream(
         )
         # "What enchants on QOT" has no class/stat, so it isn't buildish |
         # gate on the same is_enchant_query the enchantment specialist uses.
-        enchant_only = is_enchant_query(query_text) and not buildish
+        # Use (class_name and stat), not the raw `buildish` flag: buildish
+        # also flips True on a bare slot noun (ring/armor/weapon/ability)
+        # with no class or stat at all, and almost every enchant question
+        # names one of those nouns (it's asking about gear). Found live
+        # Sep 14: "...insane with the awakened enchantment?" (about a ring)
+        # had buildish=True from "ring" alone, so this always fell through
+        # to the full RAG/Claude path and skipped the enchant specialist's
+        # injected brief. Only a real class+stat pair (an actual combined
+        # build+enchant ask) should still get the full build context here.
+        enchant_only = is_enchant_query(query_text) and not (class_name and stat)
         # Specialists already inject the right chunk. Extra wiki RAG pads
         # the bill and, if we glue on the previous user turn, mixes topics
         # (player lookup + Bard attack → off-class bows).

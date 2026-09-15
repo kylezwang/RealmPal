@@ -14,6 +14,7 @@ from api.services.claude_billing import peek_claude_usage
 from api.services.rate_limit import peek, quota_for
 from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
 from api.services.stored_answers import (
+    _build_reply,
     _compose_guide_brief,
     _shiny_divine_flags,
     _shiny_divine_item_name,
@@ -167,6 +168,51 @@ def test_shiny_alone_extracts_the_item_and_strips_look_like():
 def test_divine_alone_extracts_the_item():
     assert _shiny_divine_item_name("What does divine Crown look like") == "Crown"
     assert _shiny_divine_flags("What does divine Crown look like") == (False, True)
+
+
+def test_shiny_item_followed_by_a_new_sentence_stops_at_the_period():
+    """Regression: the old regex was anchored to a bare `$` with no way to
+    stop partway through the message, so a second sentence asking a real
+    follow-up question got glued onto the item name as one giant "name."
+    Found live Sep 14: "Shiny divine snake eye ring. Is it insane with the
+    awakened enchantment?" extracted "snake eye ring. Is it insane with the
+    awakened enchantment" instead of just "snake eye ring."""
+    assert (
+        _shiny_divine_item_name(
+            "Shiny divine snake eye ring. Is it insane with the awakened enchantment?"
+        )
+        == "snake eye ring"
+    )
+
+
+async def test_enchant_question_about_a_ring_does_not_reuse_a_cached_build_brief(
+    redis_client, anon_settings
+):
+    """Regression: found live Sep 14 - after minting an Attack Ninja build
+    brief, a later unrelated follow-up ("Shiny divine snake eye ring. Is it
+    insane with the awakened enchantment?") got served that stale cached
+    brief instead of an answer about the ring's enchant. "ring" alone flips
+    parse_query's weak buildish regex True, which then pulled Ninja/Attack
+    in from history no matter how unrelated the actual question was.
+    Enchant questions have their own specialist and must never be
+    intercepted by the generic class+stat build-brief cache."""
+    await maybe_mint_brief(
+        redis_client,
+        "Best attack ninja build",
+        "The stored Attack Ninja brief.",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert await redis_client.get(build_brief_key("Ninja", "Attack"))
+    history = [
+        "Best attack ninja build",
+        "Would this be the bis attack ninja then?",
+    ]
+    reply = await _build_reply(
+        redis_client,
+        "Shiny divine snake eye ring. Is it insane with the awakened enchantment?",
+        history,
+    )
+    assert reply is None
 
 
 async def test_shiny_alone_item_never_hits_the_llm_and_renders_shiny_only(
