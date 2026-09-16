@@ -432,7 +432,7 @@ export function PaywallModal({
               RealmPal Pro
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              This type of question can be answered with in-depth responses, such as item set-building & enchanting guides
+              This type of question can be answered with in-depth responses, such as items, set-building, & enchanting guides
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Ask for a class and a stat. Get a real loadout tailored to your playstyle. Enchant rolls that
@@ -452,7 +452,7 @@ export function PaywallModal({
               See it before you farm it
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              Set skin, and item visualizers. See it before you decide if it's worth the farm.
+              Set, skin, and item visualizers. See it before you decide if it's worth the farm.
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Shiny and divine sets render as a four-slot loadout. Dye a class skin with cloths
