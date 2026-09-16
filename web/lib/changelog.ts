@@ -21,6 +21,16 @@ export interface ChangelogEntry {
  * a user can see or do should add (or extend) an entry here. See
  * .cursor/rules/changelog.mdc for the house style.
  */
+export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "2026.09.16-6",
+    date: "Sep 16, 2026",
+    items: [
+      "Build advice now leads with a short player-confirmed base for each weapon type, robes, leather, and rings.",
+      "Unusual class and stat builds now stack that stat from the class wiki table unless Umi or RealmShark already has that full set.",
+      "Samurai and Kensei Dexterity or Vitality sets now name Tools of the Tarnished with Fungal Breastplate.",
+    ],
+  },
   {
     version: "2026.09.16-5",
     date: "Sep 16, 2026",

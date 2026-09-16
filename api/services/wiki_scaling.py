@@ -30,10 +30,15 @@ from ..models.build import (
 )
 from ..models.item import ItemProfile
 from .community_knowledge import (
+    ability_source_note,
     always_mention_rings_note,
+    armor_core_note,
     overlay_slot_picks,
     CLASS_STAT_SLOT_OVERRIDES,
+    is_unique_stat_build,
+    umi_has_matching_stat_tab,
     upgrade_notes_for,
+    weapon_core_note,
 )
 from .scraper import (
     REALMEYE_BASE,
@@ -974,12 +979,23 @@ async def retrieve_armor_brief(
             f"[item:{overlay['armor']}]. Prefer this over hub On Equip "
             "ranking below."
         )
-    if stat == "Attack" and armor_slug == "robes":
+    unique = False
+    try:
+        cached = await cached_class_wiki_scaling(redis, class_name)
+        unique = is_unique_stat_build(
+            class_name, stat, infer_class_primary_stat(cached)
+        )
+    except Exception:
+        unique = False
+    if not unique:
+        armor_core = armor_core_note(class_name, stat)
+        if armor_core:
+            prefixes.append(armor_core)
+    elif text:
         prefixes.append(
-            "Attack robe cores: [item:Diplomatic Robe] and "
-            "[item:Vesture of Duality], with [item:Flowering Kimono] as "
-            "an honorable mention. If Diplomatic is the pick, Vesture is "
-            "the first alternative. Never list a T7 robe as an alternative."
+            f"Unique {stat} {class_name} armor: stack {stat} from the "
+            "RealmEye Maximum Achievable Stats row, not general robe or "
+            "leather cores."
         )
     if prefixes and text:
         text = "\n".join(prefixes) + "\n" + text
@@ -1023,6 +1039,9 @@ async def retrieve_weapon_brief(
             f"[item:{overlay['weapon']}]. Prefer this over hub On Equip "
             "ranking below."
         )
+    core = weapon_core_note(class_name)
+    if core:
+        lines.append(core)
     named: list[str] = []
     if stat and rows:
         top = _top_stat_items(rows, stat, limit=limit, include_t7=True)
@@ -1095,10 +1114,39 @@ async def retrieve_ability_brief(
             f"[item:{overlay['ability']}]. Prefer this over the wiki "
             "scaling list below.\n"
         )
+    unique = False
+    try:
+        unique = is_unique_stat_build(
+            class_name,
+            stat,
+            infer_class_primary_stat(
+                await cached_class_wiki_scaling(redis, class_name)
+            ),
+        )
+    except Exception:
+        unique = False
+    prefix += ability_source_note(unique_build=unique) + "\n"
     return prefix + text
 
 
 _ITEM_TOKEN_RE = re.compile(r"\[item:([^\]]+)\]")
+
+
+def _first_visualizer_item(text: str) -> str | None:
+    """First [item:] that is not a player overlay base note.
+
+    Family cores (Makakoyumi, Enforcer, Vesture, Straitjacket, ...) are
+    prepended onto slot briefs so Claude leads with them. They are not
+    forced visualizer picks. CLASS_STAT_SLOT_OVERRIDES still wins later
+    via overlay_slot_picks (Attack Bard Triangle + Vesture).
+    """
+    body = "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.startswith("Player overlay")
+    )
+    match = _ITEM_TOKEN_RE.search(body)
+    return match.group(1) if match else None
 
 
 async def top_build_items(
@@ -1143,33 +1191,33 @@ async def top_build_items(
         redis, class_name, stat, ttl_seconds=ttl_seconds, limit=2, brief=True,
         cache_only=cache_only,
     )
-    match = _ITEM_TOKEN_RE.search(weapon_text)
-    if match:
-        picks["weapon"] = match.group(1)
+    weapon = _first_visualizer_item(weapon_text)
+    if weapon:
+        picks["weapon"] = weapon
 
     ability_text = await retrieve_ability_brief(
         redis, class_name, stat=stat, ttl_seconds=ttl_seconds, brief=True,
         cache_only=cache_only,
     )
-    match = _ITEM_TOKEN_RE.search(ability_text)
-    if match:
-        picks["ability"] = match.group(1)
+    ability = _first_visualizer_item(ability_text)
+    if ability:
+        picks["ability"] = ability
 
     armor_text = await retrieve_armor_brief(
         redis, class_name, stat, ttl_seconds=ttl_seconds, limit=2, brief=True,
         cache_only=cache_only,
     )
-    match = _ITEM_TOKEN_RE.search(armor_text)
-    if match:
-        picks["armor"] = match.group(1)
+    armor = _first_visualizer_item(armor_text)
+    if armor:
+        picks["armor"] = armor
 
     ring_text = await retrieve_universal_rings(
         redis, stat, ttl_seconds=ttl_seconds, limit=1, brief=True,
         cache_only=cache_only,
     )
-    match = _ITEM_TOKEN_RE.search(ring_text)
-    if match:
-        picks["ring"] = match.group(1)
+    ring = _first_visualizer_item(ring_text)
+    if ring:
+        picks["ring"] = ring
 
     try:
         from .realmshark import shark_slot_picks
@@ -1345,16 +1393,38 @@ async def retrieve_umi_bis(
             f"Prefer the Umi tab that matches {stat} {class_name} "
             f"(?tab={tab_slug}, e.g. Speed Wizard at ?tab=speed-wizard). "
         )
+    unique = False
+    try:
+        cached = await cached_class_wiki_scaling(redis, class_name)
+        unique = is_unique_stat_build(
+            class_name, stat, infer_class_primary_stat(cached)
+        )
+    except Exception:
+        unique = False
+    robe_line = (
+        "Do not use an Attack tab as the armor, ring, or ability pick "
+        "for a non-Attack ask (e.g. do not pick Vesture of Duality "
+        "for a Wisdom robe build). "
+    )
+    if unique:
+        robe_line += (
+            f"This is a unique {stat} {class_name} build. Do not apply "
+            "general robe or leather cores. Ability, armor, and ring "
+            "follow the matching Umi tab when it exists, else the "
+            "Maximum Achievable Stats row.\n"
+        )
+    else:
+        robe_line += (
+            "For robe classes, name Vesture of Duality, Diplomatic Robe, "
+            "and Flowering Kimono as the robe base. Vesture is Attack; "
+            "do not pick it for a non-Attack robe.\n"
+        )
     return (
         f"UmiEnjoyers community BIS ({class_name}). Tabs are separate "
         f"pages such as ?tab=general, ?tab=speed-wizard, "
         f"?tab=attack-wizard. {tab_hint}"
         "Use General for alternatives and when no matching tab exists. "
-        "Do not use an Attack tab as the armor, ring, or ability pick "
-        "for a non-Attack ask (e.g. do not pick Vesture of Duality "
-        "for a Wisdom robe build). For Attack robe classes, name "
-        "Diplomatic Robe and Vesture of Duality, with Flowering Kimono as "
-        "an honorable mention.\n"
+        f"{robe_line}"
         f"Source: {url}\n\n{text}"
     )
 
@@ -1363,8 +1433,10 @@ def format_class_max_stats(
     payload: dict,
     *,
     stat: Optional[str] = None,
+    unique_build: bool = False,
+    community_full_build: bool = False,
 ) -> str:
-    """Candidate items from the class wiki table. Last in the source rank."""
+    """Items from the class wiki Maximum Achievable Stats table."""
     rows = list(payload.get("rows") or [])
     if stat:
         want = stat.lower()
@@ -1389,15 +1461,37 @@ def format_class_max_stats(
         return ""
     class_name = payload.get("class_name") or "this class"
     wanted = f" ({stat})" if stat else ""
-    header = (
-        f"RealmEye class-page Maximum Achievable Stats for {class_name}{wanted}. "
-        "Grain of salt: this table is a max-stat stack, not the best playstyle "
-        "build. Rank it last after RealmShark (top 5 sets plus on-character "
-        "enchants), the player overlay, and UmiEnjoyers BIS in synergy. "
-        "Skip Limited Edition reskins. Example: Bard Attack on this table is "
-        "often Wavecrest Concertina + Diplomatic Robe; the playstyle best is "
-        "The Triangle + Vesture of Duality."
+    overlay_note = (
+        " CLASS_STAT_SLOT_OVERRIDES still beat this table (Attack Bard is "
+        "The Triangle + Vesture of Duality, not Concertina + Diplomatic)."
     )
+    if unique_build and not community_full_build:
+        header = (
+            f"PRIORITY: RealmEye class-page Maximum Achievable Stats for "
+            f"{class_name}{wanted}. This unique class+stat build has no "
+            "RealmShark top 5 and no matching Umi tab. Stack the highest "
+            f"{stat or 'asked'} on ability, armor, and ring from this row. "
+            "Weapon may still use the player overlay family base. Skip "
+            f"Limited Edition reskins.{overlay_note}"
+        )
+    elif unique_build:
+        header = (
+            f"RealmEye class-page Maximum Achievable Stats for "
+            f"{class_name}{wanted}. This unique build already has a "
+            "RealmShark top 5 or matching Umi tab; use that full loadout "
+            "first and treat this table as a fallback. Skip Limited "
+            f"Edition reskins.{overlay_note}"
+        )
+    else:
+        header = (
+            f"RealmEye class-page Maximum Achievable Stats for {class_name}{wanted}. "
+            "Grain of salt: this table is a max-stat stack, not the best playstyle "
+            "build. Rank it last after RealmShark (top 5 sets plus on-character "
+            "enchants), the player overlay, and UmiEnjoyers BIS in synergy. "
+            "Skip Limited Edition reskins. Example: Bard Attack on this table is "
+            "often Wavecrest Concertina + Diplomatic Robe; the playstyle best is "
+            "The Triangle + Vesture of Duality."
+        )
     url = payload.get("url") or ""
     parts = [header, *lines]
     if url:
@@ -1413,6 +1507,8 @@ async def retrieve_class_max_stats(
     stat: Optional[str] = None,
     cache_only: bool = False,
     force: bool = False,
+    unique_build: bool = False,
+    community_full_build: bool = False,
 ) -> str:
     """Stored Maximum Achievable Stats table for a class wiki page."""
     cache_key = f"{CLASS_MAXSTATS_PREFIX}:{class_name.lower()}"
@@ -1432,4 +1528,64 @@ async def retrieve_class_max_stats(
             )
             return ""
         await redis.setex(cache_key, ttl_seconds, json.dumps(payload))
-    return format_class_max_stats(payload, stat=stat)
+    return format_class_max_stats(
+        payload,
+        stat=stat,
+        unique_build=unique_build,
+        community_full_build=community_full_build,
+    )
+
+
+async def resolve_source_rank(
+    redis: aioredis.Redis,
+    class_name: Optional[str],
+    stat: Optional[str],
+    *,
+    ttl_seconds: int,
+    cache_only: bool = True,
+) -> dict:
+    """Flags for general vs unique ranking and whether Umi/Shark has a set."""
+    primary = None
+    if class_name:
+        cached = await cached_class_wiki_scaling(redis, class_name)
+        primary = infer_class_primary_stat(cached)
+    unique = is_unique_stat_build(class_name, stat, primary)
+    shark = False
+    umi_tab = False
+    umi_text = ""
+    if class_name and stat:
+        try:
+            from .realmshark import load_graph
+
+            graph = await load_graph(redis, ttl_seconds, cache_only=cache_only)
+            shark = any(
+                edge.class_name.lower() == class_name.lower()
+                and edge.stat.lower() == stat.lower()
+                for edge in graph.edges
+            )
+        except Exception as e:
+            logger.bind(error=str(e), class_name=class_name, stat=stat).warning(
+                "RealmShark board check unavailable"
+            )
+        try:
+            umi_text = await retrieve_umi_bis(
+                redis,
+                class_name,
+                ttl_seconds=ttl_seconds,
+                cache_only=cache_only,
+                stat=stat,
+            )
+            umi_tab = umi_has_matching_stat_tab(umi_text, class_name, stat)
+        except Exception as e:
+            logger.bind(error=str(e), class_name=class_name).warning(
+                "Umi tab check unavailable"
+            )
+    community = bool(shark or umi_tab)
+    source = "realmshark" if shark else ("umi" if umi_tab else "")
+    return {
+        "primary_stat": primary,
+        "unique_build": unique,
+        "community_full_build": community,
+        "community_source": source,
+        "umi_text": umi_text,
+    }

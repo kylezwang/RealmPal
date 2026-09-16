@@ -414,6 +414,7 @@ def test_ring_brief_always_names_kage_with_lean_crown_and_gem():
     assert "[item:Chrysalis of Eternity]" in text
     assert "[item:The Forgotten Crown]" in text
     assert "[item:The Twilight Gemstone]" in text
+    assert "[item:Snake Eye Ring]" in text
 
 
 def test_class_max_stats_table_is_a_candidate_list_not_bis():
@@ -512,6 +513,116 @@ def test_store_ranking_brief_attack_bard_names_triangle():
     assert "SLOT ALTERNATIVES" in text
     assert "umienjoyers.com/guides/best-in-slot/bard" in text
     assert "RealmShark" in text
+
+
+def test_store_ranking_brief_weapon_family_and_leather_cores():
+    from api.services.community_knowledge import store_ranking_brief
+
+    wizard = store_ranking_brief("Wizard", "Attack")
+    assert "[item:Staff of Unholy Sacrifice]" in wizard
+    assert "[item:Lumiaire]" not in wizard
+    archer = store_ranking_brief("Archer", "Dexterity")
+    assert "[item:Makakoyumi]" in archer
+    rogue = store_ranking_brief("Rogue", "Dexterity")
+    assert "[item:Fractal Blades]" in rogue
+    assert "[item:Phantom Sickle]" in rogue
+    warrior = store_ranking_brief("Warrior", "Attack")
+    assert "[item:Divinity]" in warrior
+    assert "[item:Damnation]" in warrior
+    summoner = store_ranking_brief("Summoner", "Attack")
+    assert "[item:Lumiaire]" in summoner
+    kensei = store_ranking_brief("Kensei", "Dexterity")
+    assert "[item:Enforcer]" in kensei
+    assert "[item:Valor]" in kensei
+    assert "[item:Tools of the Tarnished]" in kensei
+    huntress = store_ranking_brief("Huntress", "Dexterity")
+    assert "[item:Cackling Straitjacket]" in huntress
+    assert "[item:Centaur's Shielding]" in huntress
+    assert "[item:Ethereal Happi]" in huntress
+    assert "no forced heavy armor" in warrior.lower()
+    assert "RealmShark" in kensei
+    assert "ability specialist" in kensei.lower()
+    assert "[item:Fungal Breastplate]" in kensei
+    samurai = store_ranking_brief("Samurai", "Vitality")
+    assert "[item:Tools of the Tarnished]" in samurai
+    assert "[item:Fungal Breastplate]" in samurai
+    ninja = store_ranking_brief("Ninja", "Dexterity")
+    assert "[item:Fungal Breastplate]" not in ninja
+
+
+def test_store_ranking_brief_unique_without_community_uses_max_stats():
+    from api.services.community_knowledge import store_ranking_brief
+
+    text = store_ranking_brief(
+        "Wizard", "Wisdom", primary_stat="Attack"
+    )
+    assert "unique" in text.lower()
+    assert "Maximum Achievable Stats" in text
+    assert "ability, armor, and ring" in text.lower()
+    assert "[item:Vesture of Duality]" not in text
+    assert "[item:Cackling Straitjacket]" not in text
+    assert "Kage / Lean" in text
+
+
+def test_store_ranking_brief_unique_with_umi_keeps_community_first():
+    from api.services.community_knowledge import store_ranking_brief
+
+    text = store_ranking_brief(
+        "Wizard",
+        "Speed",
+        primary_stat="Attack",
+        community_full_build=True,
+        community_source="umi",
+    )
+    assert "already exists on umi" in text.lower()
+    assert "general gameplay only" in text.lower()
+    assert "[item:Staff of Unholy Sacrifice]" in text
+
+
+def test_class_max_stats_unique_without_community_is_priority():
+    text = wiki_scaling.format_class_max_stats(
+        {
+            "class_name": "Wizard",
+            "url": "https://www.realmeye.com/wiki/wizard",
+            "rows": [
+                {
+                    "stat": "Wisdom",
+                    "items": ["Ritual Robe", "Theurgy Wand"],
+                }
+            ],
+        },
+        stat="Wisdom",
+        unique_build=True,
+        community_full_build=False,
+    )
+    assert "PRIORITY" in text
+    assert "[item:Ritual Robe]" in text
+    assert "max-stat stack, not the best playstyle" not in text
+
+
+def test_umi_has_matching_stat_tab_ignores_general():
+    from api.services.community_knowledge import umi_has_matching_stat_tab
+
+    body = "## Umi tab: Speed Wizard (?tab=speed-wizard)\nTideturner"
+    assert umi_has_matching_stat_tab(body, "Wizard", "Speed") is True
+    assert umi_has_matching_stat_tab(body, "Wizard", "Wisdom") is False
+    assert umi_has_matching_stat_tab(
+        "## Umi tab: General (?tab=general)\nUnholy Sacrifice",
+        "Wizard",
+        "Attack",
+    ) is False
+
+
+def test_overlay_slot_picks_kensei_dex_uses_tools_and_fungal():
+    from api.services.community_knowledge import overlay_slot_picks
+
+    picks = overlay_slot_picks(
+        "Kensei",
+        "Dexterity",
+        {"weapon": "Enforcer", "armor": "Resurrected Warrior's Armor"},
+    )
+    assert picks["weapon"] == "Tools of the Tarnished"
+    assert picks["armor"] == "Fungal Breastplate"
 
 
 async def test_retrieve_build_knowledge_injects_ranking_for_claude(

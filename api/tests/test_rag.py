@@ -29,3 +29,8 @@ def test_system_prompt_ranks_realmshark_first():
     assert "SET VISUALIZER PICKS" in prompt
     assert "UmiEnjoyers BIS tabs" in prompt or "?tab=speed-wizard" in prompt
     assert "Never list a T7 robe" in prompt
+    assert "Makakoyumi" in prompt
+    assert "Enforcer" in prompt
+    assert "Snake Eye Ring" in prompt
+    assert "unique class+stat" in prompt.lower()
+    assert "Fungal Breastplate" in prompt

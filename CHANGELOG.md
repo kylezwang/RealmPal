@@ -14,16 +14,20 @@ Format: each version has technical notes, linked commits, migration guides (if n
 ## [2026.09.16] - Sep 16, 2026
 
 ### Added
+- **Samurai/Kensei Vit-Dex combo** (`combo_note`, `CLASS_STAT_SLOT_OVERRIDES`): Tools of the Tarnished + Fungal Breastplate is one of the strongest vitality/dexterity weapon/armor pairs. Forced overlay on Samurai and Kensei for Dexterity and Vitality (not Ninja). Named in ranking briefs, heavy-armor notes, and the Claude system prompt.
+- **Unique class+stat ranking** (`is_unique_stat_build`, `resolve_source_rank`): when the asked stat is not the class's primary, ability/armor/ring follow RealmEye Maximum Achievable Stats unless a RealmShark top 5 or matching Umi `?tab=` (not General) already has that full loadout. Injected into `store_ranking_brief`, slot-graph headers, `_in_depth_build_extras`, and `format_class_max_stats`. Overlay family cores stay general gameplay.
+- **Weapon / armor family cores** (`WEAPON_FAMILY_CORES`, `ROBE_CORE`, `LEATHER_CORE` in `community_knowledge.py`): player-confirmed bases injected via `weapon_core_note` / `armor_core_note` / `ability_source_note` into store ranking, slot alternatives, weapon/armor/ability briefs, and the Claude system prompt. Staves: Staff of Unholy Sacrifice. Bows: Makakoyumi. Daggers: Fractal Blades + Phantom Sickle. Swords: Divinity + Damnation. Wands: Lumiaire. Katanas: Enforcer, Valor, Tools of the Tarnished. Robes: Vesture of Duality, Diplomatic Robe, Flowering Kimono. Leather: Cackling Straitjacket, Centaur's Shielding, Ethereal Happi. Heavy: no forced list except the Samurai/Kensei combo above. Abilities: RealmShark board if present, else ability specialist. Not `overlay_slot_picks` (does not force Speed Wizard onto Unholy Sacrifice). Attack Bard still forces Triangle + Vesture.
 - **Player overlay for build picks** (`api/services/community_knowledge.py`): confirmed Attack Bard BIS is The Triangle + Vesture of Duality (wiki Maximum Achievable Stats row is Concertina + Diplomatic, which is a max-stat stack, not the playstyle best). `top_build_items` applies `CLASS_STAT_SLOT_OVERRIDES` after hub ranking. Source ranking recorded: RealmShark first, overlay second, Umi in synergy, RealmEye class-page max-stats last.
 - **Item upgrade notes**: if a weapon brief lists Doom Bow, it also names Clockwork Repeater.
 - **Community nicknames**: `triangle`/`the triangle` → The Triangle, `cbow` → Coral Bow, `lbow` → Leaf Bow, `dbow` → Doom Bow, `lean crown` → Chrysalis of Eternity (`COMMUNITY_ALIASES`). Enchant extraction only consults this map, not the hub catalog.
-- **Always-mention rings** (`TOP_RINGS`): every ring brief names Kagenohikari with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone *after* the ranked table (so the set visualizer still picks T7 first, not Kage as the only ring). Kage is usually missing from RealmEye / Umi / RealmShark unless a top-5 set happens to wear it.
+- **Always-mention rings** (`TOP_RINGS`): every ring brief names Kagenohikari and Snake Eye Ring with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone *after* the ranked table (so the set visualizer still picks T7 first, not Kage as the only ring). Kage and Snake Eye are usually missing from RealmEye / Umi / RealmShark unless a top-5 set happens to wear them.
 - **Closed-vocab typos** (`api/services/fuzzy_match.py`): unique 1-edit on classes (`brd` → Bard), dungeon names (`moonlite` / `shaters`), and nickname keys. Ability-slot nouns stay exact so `spel` does not become Wizard.
 - **Multi-item enchant/DPS extract** (`extract_mentioned_items`): `cbow` vs `lbow` (and `awakening` as an enchant cue) resolves both Coral Bow and Leaf Bow. Enchant-only turns with 2+ nicknames also route the DPS slot.
 - **RealmShark set-visualizer picks** (`shark_slot_picks` / `picks_from_loadouts`): majority item per slot across the top 5, Limited Edition reskins skipped, then the player overlay still wins.
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Family cores in briefs and Umi prompt**: `retrieve_weapon_brief` / `retrieve_armor_brief` / `retrieve_ability_brief` prepend `weapon_core_note` / `armor_core_note` / `ability_source_note`. `retrieve_umi_bis()` now names Vesture, Diplomatic, and Flowering Kimono as the robe base (Kimono is not only an honorable mention). Ring briefs always include Snake Eye Ring with Kage / Lean / Crown / Gemstone.
 - **`retrieve_umi_bis()` prompt** no longer calls RealmEye the source of truth. Matches the ranking above. Attack robe classes: Diplomatic Robe and Vesture of Duality, Flowering Kimono as honorable mention.
 - **Anonymous stored answers no longer spend the daily guest quota** (`api/routers/chat.py`): the stored-hit branch used to call `_enforce_quota()` only for `quota.is_anonymous` so guests would hit the sign-in wall after 3 no-model replies. Guest, free, and Pro now all skip the meter when the turn never calls Claude. A real Claude turn still consumes. A guest who already spent their Claude turns can still get stored replies.
 - **Claude uses the same store ranking as stored answers** (`api/services/rag.py`, `store_ranking_brief`): in-depth model turns were still told RealmEye hub tables were the source of truth. System prompt + injected chunk now rank RealmShark first, then the player overlay, Umi in synergy, class-page max-stats last. Weapon/armor briefs prepend overlay picks (Attack Bard Triangle + Vesture).
@@ -64,8 +68,21 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_followup_and_small_sentinel_cloth_too_is_skin_query`
 - `test_skin_followup_with_history_routes_to_skin_agent`
 - `test_player_lookup_at_daily_limit_is_stored_not_claude`
+- `test_store_ranking_brief_weapon_family_and_leather_cores`
+- `test_community_nicknames_for_bows_and_triangle` also asserts enforcer / valor / tarnished / snake ring
+- `test_store_ranking_brief_unique_without_community_uses_max_stats`
+- `test_store_ranking_brief_unique_with_umi_keeps_community_first`
+- `test_class_max_stats_unique_without_community_is_priority`
+- `test_umi_has_matching_stat_tab_ignores_general`
+- `test_overlay_slot_picks_kensei_dex_uses_tools_and_fungal`
 
 ### History
+#### Until Sep 16, 2026 (1:20 PM)
+Source ranking treated Maximum Achievable Stats as last for every class+stat. Unique Dex/Vit Samurai and Kensei did not overlay Tools of the Tarnished + Fungal Breastplate. Heavy armor had no forced list.
+
+#### Until Sep 16, 2026 (1:15 PM)
+`TOP_RINGS` was Chrysalis of Eternity, The Forgotten Crown, The Twilight Gemstone, and Kagenohikari (no Snake Eye Ring). Attack robe copy treated Flowering Kimono as an honorable mention next to Diplomatic Robe and Vesture of Duality, not a robe base. Weapon family cores (katanas Enforcer / Valor / Tools of the Tarnished, and the other slot bases) were not in the overlay.
+
 #### Until Sep 16, 2026 (same day, unshipped)
 The in-depth paywall opened only on the first daily 402; later spent in-depth tries kept leftover suggestions above the input without the modal. Guest/free UI copy said "AI-powered responses", then "in-depth prompts". Generic Claude builds dumped `format_graph`, up to 4 RealmShark boards, stored wiki scaling, the armor hub, the full Umi page, class max-stats, and the enchant brief, plus extra wiki RAG. Later the same day, leftover suggestions after a 402 were injected as an assistant bubble in the transcript (which split them from player character cards). Player lookups skipped the stored path (`try_stored_reply` returned None whenever `extract_player_ign` matched) and 402'd after the in-depth cap even though the frontend scrape still attached a card. Skin follow-ups like "And small sentinel cloth too" were not classified as the same visualize turn, so they spent Sonnet.
 
