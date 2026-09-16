@@ -15,6 +15,8 @@ import { PetSprite } from "./PetCompanion";
 import { PaywallModal } from "./PaywallModal";
 import { ChangelogModal } from "./ChangelogModal";
 import { hasUnseenChangelog } from "@/lib/changelog";
+import { freeInDepthPromptsLeft } from "@/lib/usageCopy";
+import { LeftoverAskBar } from "./LeftoverAskBar";
 import { QuestProgressMeter } from "./QuestProgressMeter";
 import { QuestsModal } from "./QuestsModal";
 import {
@@ -67,6 +69,17 @@ interface SpeechRecognitionLike {
 }
 
 const SUGGESTIONS_HIDDEN_KEY = "realm_pal_suggestions_hidden";
+const LEFTOVER_HIDDEN_KEY = "realm_pal_leftover_suggestions_hidden";
+
+function clearLeftoverHideIfRefreshed(remaining: number) {
+  if (remaining > 0) {
+    try {
+      window.localStorage.removeItem(LEFTOVER_HIDDEN_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 function SidebarIcon() {
   return (
@@ -173,6 +186,8 @@ export function ChatInterface() {
   const [questBonusClaimed, setQuestBonusClaimed] = useState(false);
   const [questRefreshing, setQuestRefreshing] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [leftoverExpanded, setLeftoverExpanded] = useState(true);
+  const [leftoverArmed, setLeftoverArmed] = useState(false);
 
   // Phone: start collapsed. Desktop: start open unless they hid them.
   // A hide or show is stored and reused on the next visit.
@@ -190,6 +205,14 @@ export function ChatInterface() {
       setShowSuggestions(!window.matchMedia("(max-width: 767px)").matches);
     } catch {
       // Private mode / storage disabled: stay collapsed.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      setLeftoverExpanded(window.localStorage.getItem(LEFTOVER_HIDDEN_KEY) !== "1");
+    } catch {
+      setLeftoverExpanded(true);
     }
   }, []);
 
@@ -245,6 +268,11 @@ export function ChatInterface() {
     try {
       const fresh = await fetchChatUsage();
       setUsage(fresh);
+      clearLeftoverHideIfRefreshed(fresh.remaining);
+      if (fresh.remaining > 0) {
+        setLeftoverArmed(false);
+        setLeftoverExpanded(true);
+      }
       // Only clear today's quest checkmarks (and the bonus they unlock)
       // once the caller's actual quota timer rolls over, not at a
       // UTC-midnight calendar flip, which can land hours off from it.
@@ -518,7 +546,7 @@ export function ChatInterface() {
 
     // Handle /player command | this is a client-side lookup only. It should
     // never reach Claude: sending the literal "/player <ign>" text as a chat
-    // message burned one of the user's 3 free messages for a request the AI
+    // message burned one of the user's free in-depth responses for a request the AI
     // can't meaningfully answer anyway, since the profile just loads into the
     // sidebar via loadPlayer().
     const playerMatch = trimmed.match(/^\/player\s+(\S+)/i);
@@ -766,9 +794,28 @@ export function ChatInterface() {
       }
     } catch (e: unknown) {
       if (e && typeof e === "object" && "paywall" in e) {
-        // Rate limit hit | remove empty placeholder, show modal
-        setMessages((prev) => prev.slice(0, -1));
-        setPaywall((e as { paywall: PaywallInfo }).paywall);
+        const info = (e as { paywall: PaywallInfo }).paywall;
+        const freeQuota = (info.reason ?? "free_quota") === "free_quota";
+        if (freeQuota) {
+          setPaywall(info);
+          setLeftoverArmed(true);
+          setMessages((prev) => prev.slice(0, -1));
+        } else {
+          setMessages((prev) => prev.slice(0, -1));
+          setPaywall(info);
+        }
+      } else if (e && typeof e === "object" && "tooMany" in e) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content:
+              e instanceof Error
+                ? e.message
+                : "Too many questions. Try again in a minute.",
+          };
+          return updated;
+        });
       } else if ((e as Error)?.name !== "AbortError") {
         setMessages((prev) => {
           const updated = [...prev];
@@ -824,6 +871,18 @@ export function ChatInterface() {
   function closeChangelog() {
     setShowChangelog(false);
     setUnseenChangelog(false);
+  }
+
+  function toggleLeftover() {
+    setLeftoverExpanded((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(LEFTOVER_HIDDEN_KEY, next ? "0" : "1");
+      } catch {
+        // Private mode / storage disabled.
+      }
+      return next;
+    });
   }
 
   function toggleSuggestions() {
@@ -1002,6 +1061,9 @@ export function ChatInterface() {
     },
   };
 
+  const leftoverActive =
+    usage.tier !== "paid" && (leftoverArmed || usage.remaining <= 0);
+
   return (
     <div className="app-shell flex bg-[#1a1a1a] text-[#ececec] overflow-hidden">
       {/* Sidebar (desktop) */}
@@ -1042,9 +1104,7 @@ export function ChatInterface() {
               onClick={openPaywall}
               className="text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer whitespace-nowrap"
             >
-              {usage.remaining === 1
-                ? "1 free message left"
-                : `${usage.remaining} free messages left`}
+              {freeInDepthPromptsLeft(usage.remaining)}
             </button>
           )}
           <button
@@ -1139,6 +1199,7 @@ export function ChatInterface() {
                 </p>
               </div>
               {/* Example prompt cards */}
+              {!(leftoverActive && leftoverExpanded) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md">
                 {LANDING_EXAMPLE_PROMPTS.map((config) => (
                   <ExamplePrompt
@@ -1150,6 +1211,7 @@ export function ChatInterface() {
                   />
                 ))}
               </div>
+              )}
             </div>
           ) : (
             <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto w-full min-w-0 pb-4 md:pt-16">
@@ -1184,6 +1246,15 @@ export function ChatInterface() {
         {/* Input bar | pinned above Safari's toolbar via the visual viewport shell */}
         <div className="flex-shrink-0 border-t border-[#303030] bg-[#1a1a1a] px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:p-4">
           <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto">
+            {leftoverActive && (
+              <LeftoverAskBar
+                signedIn={isSignedIn}
+                expanded={leftoverExpanded}
+                onToggle={toggleLeftover}
+                disabled={isStreaming}
+                onSubmit={(message) => void sendMessage(message)}
+              />
+            )}
             {attachedFile && (
               <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg bg-[#262626] border border-[#404040] text-xs text-[#a3a3a3] w-fit">
                 <span className="truncate max-w-[200px]">{attachedFile.name}</span>

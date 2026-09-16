@@ -13,6 +13,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 from loguru import logger
 
+from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
 from .scraper import (
     REALMEYE_BASE,
     ScraperError,
@@ -40,11 +41,13 @@ INDEX_URLS = (
 # against the scraped index, not used as a dungeon list.
 _NICKNAMES = {
     "shatts": "shatters",
+    "shaters": "shatters",
     "lh": "lost halls",
     "o3": "oryx sanctuary",
     "o2": "wine cellar",
     "udl": "undead lair",
     "mv": "moonlight village",
+    "moonlite": "moonlight",
 }
 
 _GUIDE_RE = re.compile(
@@ -158,7 +161,15 @@ def extract_dungeon_query(
 def _normalize(name: str) -> str:
     cleaned = re.sub(r"['’]", "", name or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
-    parts = [_NICKNAMES.get(p, p) for p in cleaned.split()]
+    nick_pairs = list(_NICKNAMES.items()) + [(value, value) for value in _NICKNAMES.values()]
+    parts = []
+    for part in cleaned.split():
+        mapped = _NICKNAMES.get(part)
+        if mapped:
+            parts.append(mapped)
+            continue
+        fuzzy = fuzzy_closed_vocab(part, nick_pairs)
+        parts.append(fuzzy or part)
     return " ".join(parts)
 
 
@@ -270,6 +281,21 @@ def _score_entry(query: str, entry: dict) -> int:
     overlap = qtoks & ttoks
     if overlap:
         return 25 + 10 * len(overlap)
+    fuzzy_hits = 0
+    for qt in qtoks:
+        if any(
+            fuzzy_word_match(qt, tt)
+            or (
+                len(qt) >= 3
+                and len(tt) >= 3
+                and abs(len(qt) - len(tt)) <= 1
+                and levenshtein(qt, tt) <= 1
+            )
+            for tt in ttoks
+        ):
+            fuzzy_hits += 1
+    if qtoks and fuzzy_hits == len(qtoks):
+        return 55
     return 0
 
 

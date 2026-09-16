@@ -104,7 +104,28 @@ async def get_or_scrape_player_pet(
 
 
 def format_player_brief(profile: PlayerProfile) -> str:
-    """Account-summary bullets only. Character gear stays in the UI card."""
+    """Account-summary bullets for the model. Character gear stays in the UI card."""
+    return "\n".join(
+        [
+            "Copy these summary bullets exactly, then go straight to ## Sources. "
+            "Each fact must be its own markdown list item on its own line, "
+            "starting with '- '. Never join them onto one line.",
+            "Do not list characters. Do not write a gear/loadout table. Do not "
+            "name weapons, abilities, armors, or rings. The UI Characters "
+            "section already shows portraits, fame, rank, and worn items "
+            "from the scrape.",
+            "",
+            *format_player_fact_lines(profile),
+        ]
+    )
+
+
+def format_player_stored_reply(profile: PlayerProfile) -> str:
+    """Same facts as the model brief, without the copy-this instructions."""
+    return "\n".join(format_player_fact_lines(profile))
+
+
+def format_player_fact_lines(profile: PlayerProfile) -> list[str]:
     guild = profile.guild or "No guild"
     if profile.guild and profile.guild_rank:
         guild = f"{profile.guild} ({profile.guild_rank})"
@@ -121,22 +142,11 @@ def format_player_brief(profile: PlayerProfile) -> str:
     )
     pet = profile.top_pet.name if profile.top_pet else "unknown"
     seen = profile.last_seen or "unknown"
-
-    return "\n".join(
-        [
-            "Copy these summary bullets exactly, then go straight to ## Sources. "
-            "Each fact must be its own markdown list item on its own line, "
-            "starting with '- '. Never join them onto one line.",
-            "Do not list characters. Do not write a gear/loadout table. Do not "
-            "name weapons, abilities, armors, or rings. The UI Characters "
-            "section already shows portraits, fame, rank, and worn items "
-            "from the scrape.",
-            "",
-            f"- Fame: **{fame}**",
-            f"- Account fame: **{account_fame}**",
-            f"- Guild: **{guild}**",
-            f"- Total exaltations: **{exalts}**",
-            f"- Top pet: **{pet}**",
-            f"- Last seen: **{seen}**",
-        ]
-    )
+    return [
+        f"- Fame: **{fame}**",
+        f"- Account fame: **{account_fame}**",
+        f"- Guild: **{guild}**",
+        f"- Total exaltations: **{exalts}**",
+        f"- Top pet: **{pet}**",
+        f"- Last seen: **{seen}**",
+    ]

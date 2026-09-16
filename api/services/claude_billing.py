@@ -1,8 +1,8 @@
 """Monthly Claude pool + optional on-demand overage for paid accounts.
 
-Guest/free daily message quotas stay on every chat turn. Paid stored answers
-do not touch this meter. Only a real Claude call consumes an included reply
-or, after that, $0.08 against the user's spend cap.
+Guest/free daily message quotas and this paid meter all skip a turn that
+never calls Claude. Only a real model call consumes a daily message, an
+included reply, or, after that, $0.08 against the user's spend cap.
 """
 from __future__ import annotations
 

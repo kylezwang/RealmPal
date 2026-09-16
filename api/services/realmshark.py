@@ -12,8 +12,8 @@ vector retrieval.
 """
 from __future__ import annotations
 
-import asyncio
 import re
+from collections import Counter
 from typing import Optional
 
 import httpx
@@ -22,7 +22,6 @@ from loguru import logger
 
 from ..models.build import (
     CLASS_ALIASES,
-    CLASS_ARMOR_HUB,
     PLAYER_STATS,
     STAT_ALIASES,
     WEAPON_SHARE_GROUPS,
@@ -34,17 +33,19 @@ from ..models.build import (
 )
 from .dungeon_guide import extract_dungeon_query
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
-from .item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
+from .fuzzy_match import fuzzy_closed_vocab
+from .item_aliases import (
+    SET_SLOTS,
+    is_set_visualize_query,
+    is_stat_class_shiny_divine_query,
+)
 from .skin_visualizer import is_skin_visualize_query
 from .player_lookup import extract_player_ign
 from .slot_graph import run_slot_agents
+from .community_knowledge import store_ranking_brief
 from .wiki_scaling import (
-    HUB_PREFIX,
     cached_class_wiki_scaling,
-    format_wiki_scaling,
     infer_class_primary_stat,
-    retrieve_armor_brief,
-    retrieve_umi_bis,
 )
 
 REALMSHARK_API = "https://tracker.realmshark.cc/api/v1"
@@ -121,6 +122,47 @@ def _tag_le(name: str) -> str:
     return name
 
 
+# Ability-slot nouns in CLASS_ALIASES must stay exact-only. Fuzzy "spel"
+# -> spell -> Wizard would fire on unrelated messages.
+_SLOT_NOUNS = frozenset(
+    {
+        "cloak",
+        "quiver",
+        "spell",
+        "tome",
+        "helm",
+        "shield",
+        "seal",
+        "poison",
+        "skull",
+        "trap",
+        "orb",
+        "prism",
+        "scepter",
+        "star",
+        "wakizashi",
+        "lute",
+        "mace",
+        "sheath",
+        "sigil",
+    }
+)
+
+
+def _class_alias_pairs() -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for canon, aliases in CLASS_ALIASES.items():
+        pairs.append((canon.lower(), canon))
+        for alias in aliases:
+            if alias not in _SLOT_NOUNS:
+                pairs.append((alias, canon))
+    return pairs
+
+
+def _stat_alias_pairs() -> list[tuple[str, str]]:
+    return list(STAT_ALIASES.items())
+
+
 def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
     lower = text.lower()
     classes: list[str] = []
@@ -129,6 +171,13 @@ def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
         if any(re.search(rf"\b{re.escape(n)}\b", lower) for n in needles):
             classes.append(canon)
     class_name = classes[0] if len(classes) == 1 else None
+    if class_name is None and not classes:
+        fuzzy_classes: list[str] = []
+        for token in re.findall(r"[a-z]+", lower):
+            canon = fuzzy_closed_vocab(token, _class_alias_pairs())
+            if canon and canon not in fuzzy_classes:
+                fuzzy_classes.append(canon)
+        class_name = fuzzy_classes[0] if len(fuzzy_classes) == 1 else None
 
     stats: list[str] = []
     seen: set[str] = set()
@@ -140,6 +189,13 @@ def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
             seen.add(canon)
             stats.append(canon)
     stat = stats[0] if len(stats) == 1 else None
+    if stat is None and not stats:
+        fuzzy_stats: list[str] = []
+        for token in re.findall(r"[a-z]+", lower):
+            canon = fuzzy_closed_vocab(token, _stat_alias_pairs())
+            if canon and canon not in fuzzy_stats:
+                fuzzy_stats.append(canon)
+        stat = fuzzy_stats[0] if len(fuzzy_stats) == 1 else None
 
     buildish = bool(
         class_name
@@ -154,7 +210,7 @@ def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
     return class_name, stat, buildish
 
 
-def _has_own_topic(message: str) -> bool:
+def _has_own_topic(message: str, history: Optional[list[str]] = None) -> bool:
     """True when this message already names its own specialist topic
     (an enchant question, a dungeon guide, an IGN lookup, or a skin/set
     visualization) independent of any class+stat build context.
@@ -176,7 +232,7 @@ def _has_own_topic(message: str) -> bool:
     """
     return bool(
         is_enchant_query(message)
-        or is_skin_visualize_query(message)
+        or is_skin_visualize_query(message, history=history)
         or is_set_visualize_query(message)
         or extract_dungeon_query(message)
         or extract_player_ign(message)
@@ -194,7 +250,7 @@ def parse_query(
     set, dungeon, player) never inherits - see _has_own_topic.
     """
     class_name, stat, buildish = _parse_query_text(message)
-    if history and not _has_own_topic(message):
+    if history and not _has_own_topic(message, history=history):
         for prev in reversed(history):
             if class_name and stat:
                 break
@@ -553,6 +609,65 @@ async def load_top_loadouts(
     return loadouts
 
 
+def picks_from_loadouts(loadouts: list[Loadout]) -> dict[str, str]:
+    """Majority item per slot across a RealmShark top-N board.
+
+    Limited Edition names are skipped so a seasonal reskin cannot become
+    the set-visualizer pick. An empty slot stays empty for the hub
+    ranking to fill.
+    """
+    counts = {slot: Counter() for slot in ("weapon", "ability", "armor", "ring")}
+    for row in loadouts:
+        by_slot = {s.slot.lower(): s.item_name for s in row.equipment}
+        names = {
+            "weapon": by_slot.get("weapon") or row.weapon_name,
+            "ability": by_slot.get("ability") or row.ability_name,
+            "armor": by_slot.get("armor"),
+            "ring": by_slot.get("ring"),
+        }
+        for slot, name in names.items():
+            if not name or _LE_NAME.search(name):
+                continue
+            counts[slot][name] += 1
+    return {
+        slot: counter.most_common(1)[0][0]
+        for slot, counter in counts.items()
+        if counter
+    }
+
+
+async def shark_slot_picks(
+    redis: aioredis.Redis,
+    class_name: str,
+    stat: str,
+    *,
+    ttl_seconds: int,
+    cache_only: bool = True,
+) -> dict[str, str]:
+    """Best-effort four-slot pick from the class+stat RealmShark board."""
+    try:
+        graph = await load_graph(redis, ttl_seconds, cache_only=True)
+    except Exception as e:
+        logger.bind(error=str(e)).warning("RealmShark graph unavailable for slot picks")
+        return {}
+    edges = [
+        edge
+        for edge in graph.edges
+        if edge.class_name.lower() == class_name.lower()
+        and edge.stat.lower() == stat.lower()
+    ]
+    if not edges:
+        return {}
+    loadouts = await load_top_loadouts(
+        redis,
+        edges[0],
+        season=graph.season,
+        ttl_seconds=ttl_seconds,
+        cache_only=cache_only,
+    )
+    return picks_from_loadouts(loadouts)
+
+
 async def retrieve_build_knowledge(
     redis: aioredis.Redis,
     message: str,
@@ -571,7 +686,7 @@ async def retrieve_build_knowledge(
     set_visualize = is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
         message, class_name, stat
     )
-    skin_visualize = is_skin_visualize_query(message)
+    skin_visualize = is_skin_visualize_query(message, history=history)
     # "What enchants on QOT" has no class/stat/build keyword, so it isn't
     # buildish on its own | without this it would fall through the gate
     # below with no context and Claude would have to invent roll numbers.
@@ -685,120 +800,120 @@ async def retrieve_build_knowledge(
             logger.bind(error=str(e)).warning("Enchantment specialist unavailable")
             return ""
 
-    parts: list[str] = []
-    has_board = False
-    try:
-        graph = await load_graph(redis, ttl_seconds, cache_only=True)
-        parts.append(format_graph(graph, class_name=class_name, stat=stat))
-        matched = graph.edges
-        if class_name:
-            matched = [e for e in matched if e.class_name.lower() == class_name.lower()]
-        if stat:
-            matched = [e for e in matched if e.stat.lower() == stat.lower()]
-        has_board = bool(matched)
-        if class_name:
-            _hubs, wep_label = weapon_family(class_name)
-            if wep_label:
-                parts.append(
-                    f"{class_name} can only use {wep_label}. Never recommend "
-                    f"a weapon from another family (no wand on Mystic, no "
-                    f"staff on Priest, no bow on Wizard)."
-                )
-            for edge in matched[:4]:
-                loadouts = await load_top_loadouts(
-                    redis,
-                    edge,
-                    season=graph.season,
-                    ttl_seconds=ttl_seconds,
-                    cache_only=True,
-                )
-                formatted = format_loadouts(edge.label, loadouts)
-                if formatted:
-                    parts.append(formatted)
-            if not matched:
-                sister = await _sister_weapon_loadouts(
-                    redis,
-                    graph,
-                    class_name,
-                    stat,
-                    ttl_seconds=ttl_seconds,
-                    cache_only=True,
-                )
-                if sister:
-                    parts.append(sister)
-    except Exception as e:
-        logger.bind(error=str(e)).warning("RealmShark builds catalog unavailable")
-
-    # Specialists read the stored wiki corpus. Chat must not launch a
-    # RealmEye crawl — that is refresh_wiki.py (once a week).
+    effective_stat = stat
+    inferred_note = ""
     cached_wiki = (
         await cached_class_wiki_scaling(redis, class_name) if class_name else None
     )
-    if cached_wiki:
-        text = format_wiki_scaling(cached_wiki, stat=stat)
-        if text:
-            parts.append("ABILITY AGENT — stored wiki scaling.\n" + text)
-        armor_slug = CLASS_ARMOR_HUB.get(class_name or "")
-        if class_name and stat and armor_slug and await redis.get(
-            f"{HUB_PREFIX}:{armor_slug}"
-        ):
-            armor = await retrieve_armor_brief(
+    if class_name and not effective_stat and cached_wiki:
+        guessed = infer_class_primary_stat(cached_wiki)
+        if guessed:
+            effective_stat = guessed
+            inferred_note = (
+                f"No stat was named; {class_name}'s abilities mostly "
+                f"scale with {guessed}, so the loadout and enchants below "
+                f"target {guessed}."
+            )
+
+    # In-depth Claude turn: slot specialists (weapon/ability/armor/ring/
+    # enchantment) plus only the extras that answer the question. Do not
+    # dump the full Umi page, every wiki hub, or four Shark boards.
+    try:
+        slots_text = await run_slot_agents(
+            redis,
+            message,
+            ttl_seconds=ttl_seconds,
+            player_ttl_seconds=player_ttl_seconds,
+            user_history=history,
+            class_name=class_name,
+            stat=effective_stat,
+            player_ign=player_ign,
+            dungeon_name=dungeon_name,
+        )
+    except Exception as e:
+        logger.bind(error=str(e)).warning("Slot specialists unavailable")
+        slots_text = ""
+
+    extras = await _in_depth_build_extras(
+        redis,
+        class_name,
+        effective_stat,
+        ttl_seconds=ttl_seconds,
+    )
+    ranking = store_ranking_brief(class_name, effective_stat)
+    if ranking and slots_text and ranking in slots_text:
+        ranking = ""
+    parts = [p for p in (inferred_note, ranking, slots_text, *extras) if p]
+    return "\n\n".join(parts)
+
+
+async def _in_depth_build_extras(
+    redis: aioredis.Redis,
+    class_name: Optional[str],
+    stat: Optional[str],
+    *,
+    ttl_seconds: int,
+) -> list[str]:
+    """Set-visualizer four-slot picks plus one RealmShark top-5 table."""
+    bits: list[str] = []
+    if class_name and stat:
+        try:
+            from .wiki_scaling import top_build_items
+
+            picks = await top_build_items(
                 redis,
                 class_name,
                 stat,
                 ttl_seconds=ttl_seconds,
-                limit=5,
-                brief=False,
                 cache_only=True,
             )
-            if armor:
-                parts.append(armor)
-        umi_key = f"umi:bis:v1:{(class_name or '').lower()}"
-        if class_name and await redis.get(umi_key):
-            umi = await retrieve_umi_bis(
-                redis, class_name, ttl_seconds=ttl_seconds, cache_only=True
-            )
-            if umi:
-                parts.append(umi)
-    elif class_name:
-        logger.bind(class_name=class_name).info(
-            "No stored wiki scaling yet; answering from DPS boards"
-        )
-
-    # A full "best {stat} {class}" build covers Weapon/Ability/Armor/Ring
-    # above; Enchantments is the fifth slot. Same RealmEye roll table as
-    # the enchant-only branch, filtered to this stat so a Wisdom build
-    # doesn't get handed Attack-flat rolls. No stat named ("best kensei
-    # build")? Most DPS builds chase whichever stat the class's own
-    # abilities scale with | infer that the same way a single-item ask
-    # infers from the item's own On Equip bonus, instead of dropping
-    # Enchantments from the build entirely.
-    effective_stat = stat
-    stat_inferred = False
-    if class_name and not effective_stat and cached_wiki:
-        effective_stat = infer_class_primary_stat(cached_wiki)
-        stat_inferred = bool(effective_stat)
-    if class_name and effective_stat:
-        try:
-            enchant_brief = await retrieve_enchanting_brief(
-                redis,
-                message,
-                ttl_seconds=ttl_seconds,
-                class_name=class_name,
-                stat=effective_stat,
-                cache_only=True,
-            )
-            if enchant_brief:
-                if stat_inferred:
-                    enchant_brief = (
-                        f"No stat was named; {class_name}'s abilities mostly "
-                        f"scale with {effective_stat}, so enchants below "
-                        f"target {effective_stat}.\n{enchant_brief}"
-                    )
-                parts.append(enchant_brief)
         except Exception as e:
-            logger.bind(error=str(e), class_name=class_name).warning(
-                "Enchantment specialist unavailable for build"
+            logger.bind(error=str(e)).warning("Set visualizer picks unavailable")
+            picks = {}
+        tokens = " ".join(
+            f"[item:{picks[slot]}]" for slot in SET_SLOTS if picks.get(slot)
+        )
+        if tokens:
+            bits.append(
+                "SET VISUALIZER PICKS in weapon, ability, armor, ring order. "
+                "Already ranked RealmShark majority, then the player overlay. "
+                "If the answer is a recommended loadout, copy these tokens: "
+                f"{tokens}"
             )
-
-    return "\n\n".join(parts)
+    try:
+        graph = await load_graph(redis, ttl_seconds, cache_only=True)
+    except Exception as e:
+        logger.bind(error=str(e)).warning("RealmShark graph unavailable")
+        return bits
+    if not class_name:
+        return bits
+    matched = [
+        edge
+        for edge in graph.edges
+        if edge.class_name.lower() == class_name.lower()
+        and (not stat or edge.stat.lower() == stat.lower())
+    ]
+    if matched:
+        loadouts = await load_top_loadouts(
+            redis,
+            matched[0],
+            season=graph.season,
+            ttl_seconds=ttl_seconds,
+            cache_only=True,
+        )
+        formatted = format_loadouts(matched[0].label, loadouts)
+        if formatted:
+            bits.append(formatted)
+        return bits
+    if stat:
+        sister = await _sister_weapon_loadouts(
+            redis,
+            graph,
+            class_name,
+            stat,
+            ttl_seconds=ttl_seconds,
+            cache_only=True,
+        )
+        if sister:
+            bits.append(sister)
+    return bits

@@ -11,7 +11,61 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
-## [2026.09.15] - Sep 15, 2026
+## [2026.09.16] - Sep 16, 2026
+
+### Added
+- **Player overlay for build picks** (`api/services/community_knowledge.py`): confirmed Attack Bard BIS is The Triangle + Vesture of Duality (wiki Maximum Achievable Stats row is Concertina + Diplomatic, which is a max-stat stack, not the playstyle best). `top_build_items` applies `CLASS_STAT_SLOT_OVERRIDES` after hub ranking. Source ranking recorded: RealmShark first, overlay second, Umi in synergy, RealmEye class-page max-stats last.
+- **Item upgrade notes**: if a weapon brief lists Doom Bow, it also names Clockwork Repeater.
+- **Community nicknames**: `triangle`/`the triangle` → The Triangle, `cbow` → Coral Bow, `lbow` → Leaf Bow, `dbow` → Doom Bow, `lean crown` → Chrysalis of Eternity (`COMMUNITY_ALIASES`). Enchant extraction only consults this map, not the hub catalog.
+- **Always-mention rings** (`TOP_RINGS`): every ring brief names Kagenohikari with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone *after* the ranked table (so the set visualizer still picks T7 first, not Kage as the only ring). Kage is usually missing from RealmEye / Umi / RealmShark unless a top-5 set happens to wear it.
+- **Closed-vocab typos** (`api/services/fuzzy_match.py`): unique 1-edit on classes (`brd` → Bard), dungeon names (`moonlite` / `shaters`), and nickname keys. Ability-slot nouns stay exact so `spel` does not become Wizard.
+- **Multi-item enchant/DPS extract** (`extract_mentioned_items`): `cbow` vs `lbow` (and `awakening` as an enchant cue) resolves both Coral Bow and Leaf Bow. Enchant-only turns with 2+ nicknames also route the DPS slot.
+- **RealmShark set-visualizer picks** (`shark_slot_picks` / `picks_from_loadouts`): majority item per slot across the top 5, Limited Edition reskins skipped, then the player overlay still wins.
+- **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
+
+### Changed
+- **`retrieve_umi_bis()` prompt** no longer calls RealmEye the source of truth. Matches the ranking above. Attack robe classes: Diplomatic Robe and Vesture of Duality, Flowering Kimono as honorable mention.
+- **Anonymous stored answers no longer spend the daily guest quota** (`api/routers/chat.py`): the stored-hit branch used to call `_enforce_quota()` only for `quota.is_anonymous` so guests would hit the sign-in wall after 3 no-model replies. Guest, free, and Pro now all skip the meter when the turn never calls Claude. A real Claude turn still consumes. A guest who already spent their Claude turns can still get stored replies.
+- **Claude uses the same store ranking as stored answers** (`api/services/rag.py`, `store_ranking_brief`): in-depth model turns were still told RealmEye hub tables were the source of truth. System prompt + injected chunk now rank RealmShark first, then the player overlay, Umi in synergy, class-page max-stats last. Weapon/armor briefs prepend overlay picks (Attack Bard Triangle + Vesture).
+- **In-depth Claude builds use slot agents instead of the wiki dump** (`retrieve_build_knowledge`): generic class+stat turns now call `run_slot_agents` (weapon / ability / armor / ring / enchantment), then compact extras from `top_build_items` (SET VISUALIZER PICKS) and one matching RealmShark top-5 table (`format_loadouts`). Skips extra wiki RAG on those turns. Infer the class primary stat before the fan-out so "best kensei build" still gets Dexterity enchants.
+- **Guest/free counter copy** (`web/lib/usageCopy.ts`): "in-depth responses" (only Claude turns spend this). Paywall and 402 copy match.
+- **Chat burst limiter** (`chat_burst_quota_for`, `_enforce_chat_burst`): every `/chat/stream` turn, including stored answers, counts against a 60s window (20/min guest, 60/min signed-in). 429 when exceeded. Separate Redis key from the daily in-depth quota and from lookup scrape limits.
+- **In-depth paywall on every spent in-depth try** (`web/components/chat/ChatInterface.tsx`): a 402 for the daily free quota opens the paywall every time, not only the first time in the window. The user message stays. Leftover suggestions still pin above the input (guest: create an account; signed-in: RealmPal Pro). Same chevron as the sidebar hides the strip until the quota refreshes.
+- **Skin follow-ups stay on the stored visualizer** (`is_skin_visualize_query`, `route_slots`, `retrieve_build_knowledge`): history plus "and ... too" / a named cloth or dye (e.g. "And small sentinel cloth too") is the same outfit turn. Does not inherit a class+stat build or spend Claude.
+- **Player lookups are stored, not Claude** (`try_stored_reply` `_player_reply`): `Look up player X` scrapes/caches the RealmEye row and streams the fact bullets. No daily in-depth spend. After the cap this still 200s instead of 402.
+
+### Tests
+- `test_community_nicknames_for_bows_and_triangle`
+- `test_extract_mentioned_items_returns_cbow_and_lbow`
+- `test_one_letter_class_typo_still_resolves`
+- `test_one_letter_dungeon_typos_still_match_the_index`
+- `test_enchant_comparison_of_two_nicknames_also_routes_dps`
+- `test_retrieve_enchanting_brief_compares_cbow_and_lbow`
+- `test_top_build_items_attack_bard_uses_player_overlay`
+- `test_top_build_items_shark_majority_then_overlay`
+- `test_picks_from_loadouts_majority_skips_limited_edition`
+- `test_class_max_stats_table_is_a_candidate_list_not_bis`
+- `test_weapon_brief_names_doom_bow_upgrade`
+- `test_drop_question_never_hits_the_llm` now asserts `peek() == 0`
+- `test_anonymous_at_daily_limit_still_gets_stored_answer`
+- `test_anonymous_claude_turn_still_spends_daily_quota`
+- `test_system_prompt_ranks_realmshark_first`
+- `test_store_ranking_brief_attack_bard_names_triangle`
+- `test_in_depth_build_uses_slot_agents_set_picks_and_one_shark_top5`
+- `test_stored_answers_are_burst_limited_even_after_daily_in_depth_is_spent`
+- `test_claude_turn_at_daily_limit_still_returns_402`
+- `test_chat_burst_bucket_is_not_daily_quota_or_lookup`
+- `test_followup_and_small_sentinel_cloth_too_is_skin_query`
+- `test_skin_followup_with_history_routes_to_skin_agent`
+- `test_player_lookup_at_daily_limit_is_stored_not_claude`
+
+### History
+#### Until Sep 16, 2026 (same day, unshipped)
+The in-depth paywall opened only on the first daily 402; later spent in-depth tries kept leftover suggestions above the input without the modal. Guest/free UI copy said "AI-powered responses", then "in-depth prompts". Generic Claude builds dumped `format_graph`, up to 4 RealmShark boards, stored wiki scaling, the armor hub, the full Umi page, class max-stats, and the enchant brief, plus extra wiki RAG. Later the same day, leftover suggestions after a 402 were injected as an assistant bubble in the transcript (which split them from player character cards). Player lookups skipped the stored path (`try_stored_reply` returned None whenever `extract_player_ign` matched) and 402'd after the in-depth cap even though the frontend scrape still attached a card. Skin follow-ups like "And small sentinel cloth too" were not classified as the same visualize turn, so they spent Sonnet.
+
+---
+
+
 
 ### Changed
 - **Mobile sidebar suggestions start collapsed** (`web/components/chat/ChatInterface.tsx`): on viewports below `md`, the sidebar example prompts default hidden. `realm_pal_suggestions_hidden` still stores an explicit hide (`1`) or show (`0`) so a later session reuses that choice on any device. No stored key: phones stay collapsed, desktop stays open.

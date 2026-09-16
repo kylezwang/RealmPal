@@ -29,9 +29,16 @@ from ..models.build import (
     weapon_family,
 )
 from ..models.item import ItemProfile
+from .community_knowledge import (
+    always_mention_rings_note,
+    overlay_slot_picks,
+    CLASS_STAT_SLOT_OVERRIDES,
+    upgrade_notes_for,
+)
 from .scraper import (
     REALMEYE_BASE,
     scrape_ability_hub,
+    scrape_class_max_stats,
     scrape_items_batch,
     scrape_umi_bis,
     ScraperError,
@@ -41,6 +48,7 @@ CACHE_PREFIX = "wiki:ability-scaling:v6"
 HUB_PREFIX = "wiki:hub-index:v8"
 ITEM_CACHE_PREFIX = "item:profile:v3"
 LEGACY_ITEM_CACHE_PREFIX = "item:profile:v2"
+CLASS_MAXSTATS_PREFIX = "wiki:class-maxstats:v1"
 MAX_UT = 8
 
 _SKIP_NAME = re.compile(
@@ -831,11 +839,13 @@ def format_stat_gear(
             lines.append(
                 f"| [item:{row['name']}] | +{att} {abbr} | {_ring_why(row, stat)} |"
             )
+        lines.append(always_mention_rings_note())
         return "\n".join(lines)
     header = (
-        f"RealmEye source of truth — highest {stat} {kind} from {hub_url} "
-        "(this class's armor type only; ignore Umi general-tab armor "
-        "if it is for a different stat, e.g. Vesture of Duality is Attack)."
+        f"RealmEye hub On Equip ranks for {stat} {kind} from {hub_url} "
+        "(last in the source list after RealmShark, the player overlay, and "
+        "Umi). This class's armor type only; ignore Umi general-tab armor "
+        "if it is for a different stat, e.g. Vesture of Duality is Attack."
     )
     if brief:
         header += " Give 2-3 armor options as part of a balanced loadout."
@@ -943,13 +953,21 @@ async def retrieve_armor_brief(
         )
         return ""
     top_armor = _top_stat_items(armor_rows, stat, limit=limit, include_t7=True)
-    return format_stat_gear(
+    text = format_stat_gear(
         "armors",
         f"{REALMEYE_BASE}/wiki/{armor_slug}",
         top_armor,
         stat,
         brief=brief,
     )
+    overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat), {})
+    if overlay.get("armor") and text:
+        text = (
+            f"Player overlay armor for {class_name} {stat}: "
+            f"[item:{overlay['armor']}]. Prefer this over hub On Equip "
+            f"ranking below.\n{text}"
+        )
+    return text
 
 
 async def retrieve_weapon_brief(
@@ -982,6 +1000,14 @@ async def retrieve_weapon_brief(
         f"({', '.join(f'{REALMEYE_BASE}/wiki/{h}' for h in hubs)}). "
         "Never recommend a weapon from another family."
     ]
+    overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat or ""), {})
+    if overlay.get("weapon"):
+        lines.append(
+            f"Player overlay weapon for {class_name} {stat}: "
+            f"[item:{overlay['weapon']}]. Prefer this over hub On Equip "
+            "ranking below."
+        )
+    named: list[str] = []
     if stat and rows:
         top = _top_stat_items(rows, stat, limit=limit, include_t7=True)
         if top:
@@ -994,6 +1020,7 @@ async def retrieve_weapon_brief(
                 lines.append(
                     f"  [item:{row['name']}] ({row.get('tier') or '?'}) {shown}"
                 )
+                named.append(row["name"])
         else:
             t7 = [r for r in rows if _tier_bucket(r) == "t7"][:1]
             if t7:
@@ -1002,6 +1029,10 @@ async def retrieve_weapon_brief(
                     f"{stat} on these weapons. Still prefer high-tier {label} "
                     f"such as [item:{t7[0]['name']}]."
                 )
+                named.append(t7[0]["name"])
+    notes = upgrade_notes_for(named)
+    if notes:
+        lines.append(notes)
     return "\n".join(lines)
 
 
@@ -1113,7 +1144,23 @@ async def top_build_items(
     if match:
         picks["ring"] = match.group(1)
 
-    return picks
+    try:
+        from .realmshark import shark_slot_picks
+
+        shark = await shark_slot_picks(
+            redis,
+            class_name,
+            stat,
+            ttl_seconds=ttl_seconds,
+            cache_only=cache_only,
+        )
+        picks = {**picks, **shark}
+    except Exception as e:
+        logger.bind(error=str(e), class_name=class_name, stat=stat).warning(
+            "RealmShark slot picks unavailable"
+        )
+
+    return overlay_slot_picks(class_name, stat, picks)
 
 
 async def retrieve_stat_gear(
@@ -1177,6 +1224,11 @@ async def retrieve_wiki_scaling(
     umi = await retrieve_umi_bis(redis, class_name, ttl_seconds=ttl_seconds)
     if umi:
         parts.append(umi)
+    max_stats = await retrieve_class_max_stats(
+        redis, class_name, ttl_seconds=ttl_seconds, stat=stat
+    )
+    if max_stats:
+        parts.append(max_stats)
     return "\n\n".join(parts)
 
 
@@ -1220,6 +1272,18 @@ async def warm_all_class_scaling(
                 "Could not warm class wiki scaling"
             )
             counts[class_name] = 0
+        try:
+            await retrieve_class_max_stats(
+                redis,
+                class_name,
+                ttl_seconds=ttl_seconds,
+                cache_only=False,
+                force=True,
+            )
+        except Exception as e:
+            logger.bind(class_name=class_name, error=str(e)).warning(
+                "Could not warm class max-stats table"
+            )
     return counts
 
 
@@ -1247,11 +1311,91 @@ async def retrieve_umi_bis(
             return ""
         await redis.setex(cache_key, ttl_seconds, json.dumps([text, url]))
     return (
-        f"SUPPLEMENTARY ONLY — UmiEnjoyers community BIS ({class_name}, "
-        f"general tab). The general tab is often a generic or Attack "
-        f"loadout. Do not use it as the armor, ring, or ability pick when "
-        f"RealmEye lists a higher matching-stat item (e.g. do not pick "
-        f"Vesture of Duality for a Wisdom robe build). RealmEye is the "
-        f"source of truth; Umi and RealmShark are extra context.\n"
+        f"UmiEnjoyers community BIS ({class_name}, general tab). One of "
+        f"three sources used together: RealmShark DPS boards first when a "
+        f"board exists, this Umi page in synergy, RealmEye class-page "
+        f"Maximum Achievable Stats last (that table is a max-stat stack, "
+        f"not the best playstyle build). The general tab is often a generic "
+        f"or Attack loadout. Do not use it as the armor, ring, or ability "
+        f"pick for a non-Attack ask (e.g. do not pick Vesture of Duality "
+        f"for a Wisdom robe build). For Attack robe classes, name "
+        f"Diplomatic Robe and Vesture of Duality, with Flowering Kimono as "
+        f"an honorable mention.\n"
         f"Source: {url}\n\n{text}"
     )
+
+
+def format_class_max_stats(
+    payload: dict,
+    *,
+    stat: Optional[str] = None,
+) -> str:
+    """Candidate items from the class wiki table. Last in the source rank."""
+    rows = list(payload.get("rows") or [])
+    if stat:
+        want = stat.lower()
+        rows = [row for row in rows if str(row.get("stat") or "").lower() == want]
+    lines: list[str] = []
+    for row in rows:
+        items = []
+        seen: set[str] = set()
+        for name in row.get("items") or []:
+            if not name or _SKIP_NAME.search(name) or _LE_CLONE.search(name):
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(name)
+        if not items:
+            continue
+        tagged = ", ".join(f"[item:{name}]" for name in items[:6])
+        lines.append(f"  {row.get('stat')}: {tagged}")
+    if not lines:
+        return ""
+    class_name = payload.get("class_name") or "this class"
+    wanted = f" ({stat})" if stat else ""
+    header = (
+        f"RealmEye class-page Maximum Achievable Stats for {class_name}{wanted}. "
+        "Grain of salt: this table is a max-stat stack, not the best playstyle "
+        "build. Rank it last after RealmShark (top 5 sets plus on-character "
+        "enchants), the player overlay, and UmiEnjoyers BIS in synergy. "
+        "Skip Limited Edition reskins. Example: Bard Attack on this table is "
+        "often Wavecrest Concertina + Diplomatic Robe; the playstyle best is "
+        "The Triangle + Vesture of Duality."
+    )
+    url = payload.get("url") or ""
+    parts = [header, *lines]
+    if url:
+        parts.append(f"Source: {url}")
+    return "\n".join(parts)
+
+
+async def retrieve_class_max_stats(
+    redis: aioredis.Redis,
+    class_name: str,
+    *,
+    ttl_seconds: int,
+    stat: Optional[str] = None,
+    cache_only: bool = False,
+    force: bool = False,
+) -> str:
+    """Stored Maximum Achievable Stats table for a class wiki page."""
+    cache_key = f"{CLASS_MAXSTATS_PREFIX}:{class_name.lower()}"
+    payload: dict | None = None
+    if not force:
+        cached = await redis.get(cache_key)
+        if cached:
+            payload = json.loads(cached)
+        elif cache_only:
+            return ""
+    if payload is None:
+        try:
+            payload = await scrape_class_max_stats(class_name)
+        except Exception as e:
+            logger.bind(class_name=class_name, error=str(e)).warning(
+                "Class max-stats table unavailable"
+            )
+            return ""
+        await redis.setex(cache_key, ttl_seconds, json.dumps(payload))
+    return format_class_max_stats(payload, stat=stat)

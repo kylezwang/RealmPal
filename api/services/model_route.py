@@ -56,7 +56,7 @@ def pick_chat_model(
     if (
         dungeon_only
         or player_only
-        or is_skin_visualize_query(message)
+        or is_skin_visualize_query(message, history=history)
         or is_set_visualize_query(message)
     ):
         return haiku

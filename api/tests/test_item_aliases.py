@@ -9,6 +9,7 @@ from api.services import item_aliases
 from api.services.item_aliases import (
     CATALOG_PREFIX,
     CatalogItem,
+    community_canonical,
     extract_set_item_names,
     generated_aliases,
     is_set_visualize_query,
@@ -18,6 +19,7 @@ from api.services.item_aliases import (
     resolve_item_query_with_trim,
     retrieve_set_visualizer,
     score_nickname,
+    extract_mentioned_items,
 )
 
 
@@ -85,6 +87,33 @@ def test_short_word_typos_do_not_fuzzy_match_unrelated_items():
     fuzzy tolerance."""
     orb = CatalogItem(name="Sacred Orb", slot="ability", aliases=generated_aliases("Sacred Orb"))
     assert score_nickname("sacred org", orb) < 40
+
+
+def test_community_nicknames_for_bows_and_triangle():
+    """Sep 16: in-game questions use cbow/lbow/dbow/triangle, and
+    extract_enchant_item only consults community_canonical, not the hub
+    catalog, so these must live in COMMUNITY_ALIASES."""
+    assert community_canonical("cbow") == "Coral Bow"
+    assert community_canonical("lbow") == "Leaf Bow"
+    assert community_canonical("dbow") == "Doom Bow"
+    assert community_canonical("triangle") == "The Triangle"
+    assert community_canonical("the triangle") == "The Triangle"
+    assert community_canonical("lean crown") == "Chrysalis of Eternity"
+    assert community_canonical("kage") == "Kagenohikari"
+
+
+def test_extract_mentioned_items_returns_cbow_and_lbow():
+    """Enchant/DPS comparison needs every nickname, not just the first."""
+    assert extract_mentioned_items(
+        "is cbow awakening or lbow awakening better"
+    ) == ["Coral Bow", "Leaf Bow"]
+
+
+def test_extract_mentioned_items_does_not_treat_get_as_gem():
+    """'get' is 1-edit from the gem nickname; that must not fire."""
+    assert extract_mentioned_items(
+        "what enchants should I get on Cackling Straitjacket"
+    ) == ["Cackling Straitjacket"]
 
 
 def test_plain_sentence_with_no_shiny_divine_or_with_is_not_a_set():

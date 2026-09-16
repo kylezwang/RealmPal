@@ -67,3 +67,15 @@ def test_message_with_its_own_class_and_stat_ignores_history_entirely():
     assert class_name == "Ninja"
     assert stat == "Attack"
     assert buildish is True
+
+
+def test_one_letter_class_typo_still_resolves():
+    """Closed-vocab: brd is unique 1-edit from Bard. Slot nouns stay exact."""
+    class_name, stat, buildish = parse_query("best att brd")
+    assert class_name == "Bard"
+    assert stat == "Attack"
+    assert buildish is True
+    class_name, _stat, _buildish = parse_query("best spell wizard")
+    assert class_name == "Wizard"
+    class_name, _stat, _buildish = parse_query("what about spel")
+    assert class_name is None

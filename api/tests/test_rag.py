@@ -18,3 +18,12 @@ def test_system_prompt_does_not_teach_lotus_berserk_as_a_global_rule():
     prompt = build_system_prompt("Source: https://example.test\nunused")
     assert "Lifebringing Lotus" not in prompt
     assert "never invent Berserk" in prompt.lower() or "Never invent Berserk" in prompt
+
+
+def test_system_prompt_ranks_realmshark_first():
+    prompt = build_system_prompt("Source: https://example.test\nunused")
+    assert "RealmEye wiki infoboxes and hub tables are the source of truth" not in prompt
+    assert "RealmShark first" in prompt
+    assert "player overlay" in prompt
+    assert "The Triangle" in prompt
+    assert "SET VISUALIZER PICKS" in prompt

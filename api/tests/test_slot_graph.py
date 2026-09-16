@@ -42,3 +42,24 @@ def test_plain_build_ask_with_no_shiny_divine_wording_stays_on_gear_agents():
 def test_shiny_divine_with_no_resolved_class_stat_does_not_force_set_agent():
     slots, _depth = route_slots("shiny divine please", None, None)
     assert "set" not in slots
+
+
+def test_enchant_comparison_of_two_nicknames_also_routes_dps():
+    slots, depth = route_slots(
+        "is cbow awakening or lbow awakening better", None, None
+    )
+    assert slots == ["enchantment", "dps"]
+    assert depth == "deep"
+
+
+def test_skin_followup_with_history_routes_to_skin_agent():
+    slots, depth = route_slots(
+        "And small sentinel cloth too",
+        "Archer",
+        None,
+        history=[
+            "What does Vampire Slayer Archer look like with sentinel cloth?",
+        ],
+    )
+    assert slots == ["skin"]
+    assert depth == "deep"

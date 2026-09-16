@@ -46,6 +46,7 @@ from ..identity import AuthenticatedUser
 USER_SCOPE = "user"
 ANONYMOUS_SCOPE = "ip"
 LOOKUP_SCOPE = "lookup"
+CHAT_BURST_SCOPE = "chatburst"
 
 # Quota windows roll every 24h. Kept as a constant (still the right ceiling
 # for a "how long could this TTL possibly be" assertion) even though the
@@ -215,6 +216,30 @@ def lookup_quota_for(
         key=f"ratelimit:{LOOKUP_SCOPE}:{ANONYMOUS_SCOPE}:{hashed}",
         limit=settings.lookup_rate_limit_anonymous,
         window_seconds=settings.lookup_rate_window_seconds,
+        label=hashed[:12],
+    )
+
+
+def chat_burst_quota_for(
+    user: Optional[AuthenticatedUser],
+    request: Request,
+    settings: Settings,
+) -> WindowedQuota:
+    """Short-window cap on every chat turn, stored answers included."""
+    if user is not None:
+        label = hash_identifier(user.subject, settings)
+        return WindowedQuota(
+            key=f"ratelimit:{CHAT_BURST_SCOPE}:{USER_SCOPE}:{user.subject}",
+            limit=settings.chat_burst_limit_user,
+            window_seconds=settings.chat_burst_window_seconds,
+            label=label[:12],
+        )
+
+    hashed = hash_identifier(client_ip(request, settings), settings)
+    return WindowedQuota(
+        key=f"ratelimit:{CHAT_BURST_SCOPE}:{ANONYMOUS_SCOPE}:{hashed}",
+        limit=settings.chat_burst_limit_anonymous,
+        window_seconds=settings.chat_burst_window_seconds,
         label=hashed[:12],
     )
 

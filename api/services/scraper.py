@@ -1538,6 +1538,75 @@ async def scrape_enchanting_page() -> dict:
             raise ScraperError(f"Failed to scrape wiki page 'enchanting': {e}") from e
 
 
+_CLASS_MAX_STATS_JS = """() => {
+  const root = document.querySelector('.wiki-page, #mw-content-text, main') || document.body;
+  const headings = [...root.querySelectorAll('h2, h3')];
+  const h = headings.find((el) => /maximum achievable stats/i.test(el.innerText || ''));
+  if (!h) return { rows: [] };
+  let el = h.nextElementSibling;
+  let table = null;
+  for (let i = 0; i < 8 && el; i++) {
+    if ((el.tagName || '').toUpperCase() === 'TABLE') { table = el; break; }
+    const inner = el.querySelector && el.querySelector('table');
+    if (inner) { table = inner; break; }
+    el = el.nextElementSibling;
+  }
+  if (!table) return { rows: [] };
+  const labels = [
+    ['Hit Points', 'HP'],
+    ['Magic Points', 'MP'],
+    ['Attack', 'Attack'],
+    ['Defense', 'Defense'],
+    ['Speed', 'Speed'],
+    ['Dexterity', 'Dexterity'],
+    ['Vitality', 'Vitality'],
+    ['Wisdom', 'Wisdom'],
+  ];
+  const rows = [];
+  for (const tr of table.querySelectorAll('tr')) {
+    const cells = [...tr.querySelectorAll('th,td')];
+    if (!cells.length) continue;
+    const label = (cells[0].innerText || '').replace(/\\s+/g, ' ').trim();
+    const hit = labels.find(([name]) => new RegExp('^' + name, 'i').test(label));
+    if (!hit) continue;
+    const items = [...tr.querySelectorAll('a')]
+      .map((a) => (a.getAttribute('title') || a.innerText || '').replace(/\\s+/g, ' ').trim())
+      .filter((name) => name && name.length < 60 && !/^edit/i.test(name));
+    const unique = [];
+    const seen = new Set();
+    for (const name of items) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(name);
+    }
+    rows.push({ stat: hit[1], items: unique.slice(0, 8) });
+  }
+  return { rows };
+}"""
+
+
+async def scrape_class_max_stats(class_name: str) -> dict:
+    """RealmEye /wiki/{class} Maximum Achievable Stats table.
+
+    Candidate items for a max-stat stack, not the best playstyle build.
+    """
+    slug = class_name.strip().lower()
+    url = f"{REALMEYE_BASE}/wiki/{slug}"
+    logger.bind(class_name=class_name, url=url).info("Scraping class max-stats table")
+    async with _playwright_browser() as browser:
+        page = await _new_page(browser)
+        await _goto_with_retry(
+            page, url, ready_selector=".wiki-page, #mw-content-text, main", timeout=20_000
+        )
+        payload = await page.evaluate(_CLASS_MAX_STATS_JS)
+        return {
+            "class_name": class_name,
+            "url": url,
+            "rows": list((payload or {}).get("rows") or []),
+        }
+
+
 async def scrape_umi_bis(class_name: str) -> tuple[str, str]:
     """Community best-in-slot page for a class. Stats still come from RealmEye."""
     slug = class_name.strip().lower()

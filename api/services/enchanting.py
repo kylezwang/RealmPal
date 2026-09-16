@@ -22,7 +22,7 @@ SOURCE_URL = f"{REALMEYE_BASE}/wiki/enchanting"
 MAX_ROLLS = 36
 
 _ENCHANT_WORD = re.compile(
-    r"\b(enchant(?:s|ed|ing|ments?)?|enchanter|rerolls?|awakened)\b",
+    r"\b(enchant(?:s|ed|ing|ments?)?|enchanter|rerolls?|awakened|awakenings?)\b",
     re.I,
 )
 _STAT_ROLL = re.compile(
@@ -90,9 +90,12 @@ def infer_gear_slot(name: str) -> Optional[str]:
 
 def extract_enchant_item(message: str) -> Optional[str]:
     """Best-effort item mention after on/for, else a trailing proper name."""
-    from .item_aliases import community_canonical
+    from .item_aliases import community_canonical, extract_mentioned_items
 
     text = (message or "").strip()
+    mentioned = extract_mentioned_items(text)
+    if mentioned:
+        return mentioned[0]
     match = _ON_ITEM.search(text)
     candidate = (match.group(1) if match else "").strip(" ?.!")
     if candidate:
@@ -430,6 +433,15 @@ async def retrieve_enchanting_brief(
     )
     rolls = list((store or {}).get("rolls") or [])
     item_name = extract_enchant_item(message)
+    mentioned = []
+    try:
+        from .item_aliases import extract_mentioned_items
+
+        mentioned = extract_mentioned_items(message)
+    except Exception:
+        mentioned = [item_name] if item_name else []
+    if mentioned:
+        item_name = mentioned[0]
     if item_name:
         from .item_aliases import community_canonical, resolve_item_query
 
@@ -442,6 +454,20 @@ async def retrieve_enchanting_brief(
         )
         if resolved:
             item_name = resolved
+            mentioned[0] = resolved
+
+    if len(mentioned) > 1:
+        extra = []
+        for name in mentioned[1:]:
+            resolved = community_canonical(name) or await resolve_item_query(
+                redis,
+                name,
+                ttl_seconds=ttl_seconds,
+                class_name=class_name,
+                allow_scrape=False,
+            )
+            extra.append(resolved or name)
+        mentioned = [item_name, *extra] if item_name else extra
 
     # No stat named ("what enchants on Cackling Straitjacket")? Infer one
     # from the item's own On Equip bonus | a +20 Attack robe implies an
@@ -475,6 +501,12 @@ async def retrieve_enchanting_brief(
     ]
     if item_name:
         parts.append(f"Item: {item_name}" + (f" ({slot})" if slot else ""))
+    if len(mentioned) > 1:
+        names = ", ".join(f"[item:{name}]" for name in mentioned)
+        parts.append(
+            f"Compare awakened / unique enchants across these items: {names}. "
+            "Name a winner only from the table rows in this chunk."
+        )
     if inferred_stat:
         parts.append(
             f"No stat was named. {item_name}'s own On Equip bonus is "
