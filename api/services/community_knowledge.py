@@ -116,9 +116,10 @@ def slot_alternatives_note(
         "SLOT ALTERNATIVES. After the recommended loadout, list 2-3 "
         "alternatives for each slot that has extras: Weapon, Ability, "
         "Armor, and Ring. Those names come only from the UmiEnjoyers "
-        "general-tab BIS page for this class "
+        "BIS tabs for this class "
         "(https://umienjoyers.com/guides/best-in-slot/"
-        f"{(class_name or 'class').lower()}?tab=general). "
+        f"{(class_name or 'class').lower()}?tab=general, plus tabs like "
+        "?tab=speed-wizard). Prefer the tab that matches the asked stat. "
         "Skip a slot if that page has no extra names. Never list a T7 "
         "tiered armor or robe as an alternative. T7 rings stay allowed."
     ]

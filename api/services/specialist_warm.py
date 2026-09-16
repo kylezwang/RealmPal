@@ -33,9 +33,10 @@ from .wiki_scaling import (
     retrieve_umi_bis,
     specialist_store_status,
     warm_all_class_scaling,
+    UMI_BIS_PREFIX,
 )
 
-UMI_PREFIX = "umi:bis:v1:"
+UMI_PREFIX = UMI_BIS_PREFIX
 LOADOUT_PREFIX = "dps:top:"
 ITEM_CHUNK = 25
 # Category pages, not item tables. Warm the index; do not scrape every link.

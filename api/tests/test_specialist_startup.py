@@ -122,7 +122,7 @@ async def test_startup_does_not_warm_when_every_store_is_full(
         CATALOG_KEY, json.dumps({"classes": [{"name": "Wizard"}], "clothing": [], "accessory": []})
     )
     for name in CLASS_ABILITY_HUB:
-        await redis_client.set(f"umi:bis:v1:{name.lower()}", json.dumps(["t", "u"]))
+        await redis_client.set(f"umi:bis:v2:{name.lower()}", json.dumps(["t", "u"]))
     await redis_client.set(
         ENCHANTING_CACHE_KEY,
         json.dumps({"rolls": [{"name": "Attack Bonus", "eligible": "ALL", "effects": "+1 ATT"}]}),

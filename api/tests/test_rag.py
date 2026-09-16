@@ -27,5 +27,5 @@ def test_system_prompt_ranks_realmshark_first():
     assert "player overlay" in prompt
     assert "The Triangle" in prompt
     assert "SET VISUALIZER PICKS" in prompt
-    assert "UmiEnjoyers general-tab" in prompt
+    assert "UmiEnjoyers BIS tabs" in prompt or "?tab=speed-wizard" in prompt
     assert "Never list a T7 robe" in prompt

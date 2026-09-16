@@ -27,8 +27,10 @@ export interface ChangelogEntry {
     items: [
       "Build alternatives now come from UmiEnjoyers best-in-slot lists for every slot, not just armor and rings.",
       "Attack robe builds name Vesture of Duality next to Diplomatic Robe, and skip filler T7 robes.",
+      "Umi best-in-slot now reads every build tab, like Speed Wizard, not only General.",
     ],
   },
+  {
     version: "2026.09.16-4",
     date: "Sep 16, 2026",
     items: [
