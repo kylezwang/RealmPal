@@ -32,6 +32,7 @@ interface Props {
   onSubmitPrompt: (message: string) => void;
   usage: ChatUsage | null;
   onOpenPaywall: () => void;
+  onRegister?: () => void;
   isSignedIn: boolean;
   questPercent: number;
   onOpenQuests: () => void;
@@ -76,6 +77,7 @@ export function ChatSidebar({
   onSubmitPrompt,
   usage,
   onOpenPaywall,
+  onRegister,
   isSignedIn,
   questPercent,
   onOpenQuests,
@@ -255,7 +257,7 @@ export function ChatSidebar({
           percent={questPercent}
           onClick={onOpenQuests}
         />
-        <SidebarAccount pet={playerProfile?.top_pet} />
+        <SidebarAccount pet={playerProfile?.top_pet} onRegister={onRegister} />
       </div>
     </div>
   );

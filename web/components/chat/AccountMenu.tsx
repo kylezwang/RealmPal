@@ -53,6 +53,60 @@ function SignInIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+function AboutIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  );
+}
+
+function AboutModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="about-title"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/60" />
+      <div
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-[#404040] bg-[#1e1e1e] p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="about-title" className="mb-3 text-lg font-semibold text-[#ececec]">
+          About
+        </h2>
+        <p className="text-sm leading-relaxed text-[#a3a3a3]">
+          Data via{" "}
+          <a href="https://www.realmeye.com" target="_blank" rel="noreferrer" className="text-[#ececec] hover:underline">
+            realmeye.com
+          </a>
+          ,{" "}
+          <a href="https://realmshark.cc" target="_blank" rel="noreferrer" className="text-[#ececec] hover:underline">
+            realmshark.cc
+          </a>
+          , and{" "}
+          <a href="https://umienjoyers.com" target="_blank" rel="noreferrer" className="text-[#ececec] hover:underline">
+            umienjoyers.com
+          </a>
+          . RealmPal is not affiliated with DECA Games.
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-5 w-full rounded-lg bg-white py-2.5 text-sm font-semibold text-[#1a1a1a] hover:bg-[#e5e5e5] cursor-pointer"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RegisterIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -101,6 +155,8 @@ interface Props {
   align?: "left" | "right";
   /** Extra classes for the trigger button, e.g. sidebar hover/padding. */
   triggerClassName?: string;
+  /** Guest Register opens the paywall signup slide instead of leaving chat. */
+  onRegister?: () => void;
 }
 
 /**
@@ -116,9 +172,11 @@ export function AccountMenu({
   openDirection = "down",
   align = "right",
   triggerClassName = "",
+  onRegister,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [ign, setIgn] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -159,8 +217,12 @@ export function AccountMenu({
 
   const goToRegister = useCallback(() => {
     setOpen(false);
+    if (onRegister) {
+      onRegister();
+      return;
+    }
     router.push("/auth/signin?mode=register");
-  }, [router]);
+  }, [onRegister, router]);
 
   function handleLogout() {
     clearAuthToken();
@@ -221,6 +283,7 @@ export function AccountMenu({
               <MenuItem icon={<SettingsIcon />} label="Settings" onClick={() => { setOpen(false); router.push("/account/settings"); }} />
               <MenuItem icon={<BillingIcon />} label="Billing" onClick={() => { setOpen(false); setShowBilling(true); }} />
               <MenuItem icon={<BellIcon />} label="Notifications" onClick={() => { setOpen(false); router.push("/account/notifications"); }} />
+              <MenuItem icon={<AboutIcon />} label="About" onClick={() => { setOpen(false); setShowAbout(true); }} />
               <div className="border-t border-[#303030] my-1" />
               <MenuItem icon={<LogoutIcon />} label="Log out" onClick={handleLogout} danger />
             </>
@@ -228,12 +291,15 @@ export function AccountMenu({
             <>
               <MenuItem icon={<SignInIcon />} label="Sign in" onClick={goToSignIn} />
               <MenuItem icon={<RegisterIcon />} label="Register" onClick={goToRegister} />
+              <div className="border-t border-[#303030] my-1" />
+              <MenuItem icon={<AboutIcon />} label="About" onClick={() => { setOpen(false); setShowAbout(true); }} />
             </>
           )}
         </div>
       )}
 
       {showBilling && <BillingModal onClose={() => setShowBilling(false)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
   );
 }
