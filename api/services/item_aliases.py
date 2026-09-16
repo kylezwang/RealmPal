@@ -210,10 +210,9 @@ _COMPOUND_SUFFIXES = (
 _QUALIFIED_TAIL = frozenset({"breastplate"})
 _TAIL_ABBREV = {"breastplate": "bp", "wakizashi": "waki", "quiver": "quiv"}
 
-_SET_INTENT = re.compile(
-    r"\b(?:set|loadout|build me|show me|visualize|equip(?:ped)?)\b",
-    re.I,
-)
+_BARE_QUALITY_WORDS = {
+    "rare", "epic", "legendary", "mythic", "godly", "common", "uncommon", "fabled",
+}
 _SHINY = re.compile(r"\b(?:all\s+)?shiny\b", re.I)
 _DIVINE = re.compile(r"\b(?:all\s+)?divine\b", re.I)
 _WITH_ITEMS = re.compile(r"\bwith\s+([\s\S]+?)(?:[.!?]|$)", re.I)
@@ -471,6 +470,14 @@ def extract_set_item_names(prompt: str) -> list[str]:
         cleaned = _SHINY_DIVINE_WORDS.sub("", part)
         cleaned = _LEADING_AND.sub("", cleaned).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
+        # A stray comma can split a rarity word off its own item, e.g.
+        # "...rare diplomatic robe, shiny rare, the twilight gemstone"
+        # (found live Sep 15) yields a bare "rare" segment once "shiny" is
+        # stripped. That is never a real item name on its own and, left
+        # in, consumes one of the 4 SET_SLOT_COUNT slots below and pushes
+        # the real trailing item (here, the ring) out of the result.
+        if cleaned.lower() in _BARE_QUALITY_WORDS:
+            continue
         if 3 <= len(cleaned) <= 60:
             names.append(cleaned)
     # A real set names 2+ items. This guard used to only apply to the
@@ -492,10 +499,19 @@ def is_set_visualize_query(message: str) -> bool:
     text = message or ""
     if not extract_set_item_names(text):
         return False
+    # extract_set_item_names already required a shiny/divine trigger word
+    # immediately followed by 2+ clean, short (3-60 char) names split on
+    # commas/"and" - that parse succeeding is itself strong enough signal,
+    # even when the user never says an explicit "set"/"loadout"/"visualize"
+    # verb. Found live Sep 15: "Rare Shiny bogwood croak, rare shiny genesis
+    # spell, rare diplomatic robe, shiny rare, the twilight gemstone" (a
+    # literal loadout list, shiny only, no "divine" and no "set" word) fell
+    # through to generic chat, which had no item data and asked the user to
+    # clarify instead of rendering the set. Previously this required either
+    # an explicit intent verb or both shiny AND divine together.
     shiny = bool(_SHINY.search(text))
     divine = bool(_DIVINE.search(text))
-    wants_set = bool(_SET_INTENT.search(text))
-    return bool((wants_set or (shiny and divine)) and (shiny or divine))
+    return shiny or divine
 
 
 def set_visualize_flags(message: str) -> tuple[bool, bool]:

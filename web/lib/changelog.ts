@@ -31,6 +31,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       "The menu now has a New chat button above your chat list.",
       "The in-game name field now tells you to enter your IGN to find your pet.",
       "Finding your pet by IGN is much faster, and shows a clear message if your pet yard is hidden.",
+      "Fixed a rare case where looking up the same player twice in a row could show a plain text summary with no character card and no explanation.",
+      "Listing out a shiny loadout (weapon, ability, armor, ring) now renders the visual set preview even without saying \"set\" or \"loadout.\"",
     ],
   },
   {
