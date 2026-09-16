@@ -33,6 +33,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Finding your pet by IGN is much faster, and shows a clear message if your pet yard is hidden.",
       "Fixed a rare case where looking up the same player twice in a row could show a plain text summary with no character card and no explanation.",
       "Listing out a shiny loadout (weapon, ability, armor, ring) now renders the visual set preview even without saying \"set\" or \"loadout.\"",
+      "Item names now resolve even with a small typo, and rarity words like rare, legendary, or uncommon no longer confuse the lookup.",
     ],
   },
   {

@@ -8,12 +8,16 @@ import json
 from api.services import item_aliases
 from api.services.item_aliases import (
     CATALOG_PREFIX,
+    CatalogItem,
     extract_set_item_names,
+    generated_aliases,
     is_set_visualize_query,
     is_stat_class_shiny_divine_query,
+    resolve_against_catalog,
     resolve_item_query,
     resolve_item_query_with_trim,
     retrieve_set_visualizer,
+    score_nickname,
 )
 
 
@@ -64,6 +68,25 @@ def test_full_shiny_divine_list_without_with_routes_to_set_visualizer():
     )
 
 
+def test_single_letter_typo_still_resolves_to_the_real_item():
+    """Regression: found live Sep 15 - user intentionally misspelled
+    "Bogwood Crook" as "bogwood croak" (a single substituted letter) and
+    it failed to resolve at all, so the set visualizer asked for
+    clarification instead of rendering. A 1-edit typo on a real 4+ letter
+    word should score as strongly as an exact match."""
+    item = CatalogItem(name="Bogwood Crook", slot="weapon", aliases=generated_aliases("Bogwood Crook"))
+    assert score_nickname("bogwood croak", item) >= 40
+    assert resolve_against_catalog("bogwood croak", [item]) == "Bogwood Crook"
+
+
+def test_short_word_typos_do_not_fuzzy_match_unrelated_items():
+    """A coincidental 1-edit hit on a short (<4 char) word is common and
+    should not be treated as a typo signal - only 4+ letter words earn
+    fuzzy tolerance."""
+    orb = CatalogItem(name="Sacred Orb", slot="ability", aliases=generated_aliases("Sacred Orb"))
+    assert score_nickname("sacred org", orb) < 40
+
+
 def test_plain_sentence_with_no_shiny_divine_or_with_is_not_a_set():
     assert extract_set_item_names("How to do moonlight village?") == []
     assert not is_set_visualize_query("How to do moonlight village?")
@@ -83,11 +106,23 @@ def test_shiny_only_item_list_with_no_set_intent_verb_routes_to_set_visualizer()
     )
     assert extract_set_item_names(message) == [
         "bogwood croak",
-        "rare genesis spell",
-        "rare diplomatic robe",
+        "genesis spell",
+        "diplomatic robe",
         "the twilight gemstone",
     ]
     assert is_set_visualize_query(message)
+
+
+def test_rarity_word_stripped_from_inside_a_segment_not_just_when_bare():
+    """Regression, same live Sep 15 message: "rare genesis spell" and
+    "rare diplomatic robe" used to keep their "rare" prefix (only a fully
+    bare "rare" segment was dropped), so they never matched the real wiki
+    titles ("Genesis Spell", "Diplomatic Robe") downstream. Also covers
+    "uncommon"/"legendary" as the user asked these be recognized the same
+    way as shiny/divine already were."""
+    assert extract_set_item_names(
+        "shiny set with legendary war bow, uncommon quiver, rare robe, and divine ring"
+    ) == ["war bow", "quiver", "robe", "ring"]
 
 
 def test_with_phrasing_naming_only_one_item_is_not_a_set():
