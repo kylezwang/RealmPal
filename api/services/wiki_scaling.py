@@ -845,10 +845,12 @@ def format_stat_gear(
         f"RealmEye hub On Equip ranks for {stat} {kind} from {hub_url} "
         "(last in the source list after RealmShark, the player overlay, and "
         "Umi). This class's armor type only; ignore Umi general-tab armor "
-        "if it is for a different stat, e.g. Vesture of Duality is Attack."
+        "if it is for a different stat, e.g. Vesture of Duality is Attack. "
+        "Armor alternatives come from the Umi general-tab chunk, not this "
+        "hub list. Never list a T7 robe or armor as an alternative."
     )
     if brief:
-        header += " Give 2-3 armor options as part of a balanced loadout."
+        header += " Give 2-3 armor alternatives from Umi, not T7 filler."
     lines = [header]
     for row in rows:
         ranked = f"+{row.get('stat_value')} {stat}"
@@ -952,7 +954,10 @@ async def retrieve_armor_brief(
             "RealmEye armor hub unavailable"
         )
         return ""
-    top_armor = _top_stat_items(armor_rows, stat, limit=limit, include_t7=True)
+    ranked = _top_stat_items(
+        armor_rows, stat, limit=max(limit, 8), include_t7=False
+    )
+    top_armor = [row for row in ranked if _tier_bucket(row) != "t7"][:limit]
     text = format_stat_gear(
         "armors",
         f"{REALMEYE_BASE}/wiki/{armor_slug}",
@@ -961,12 +966,22 @@ async def retrieve_armor_brief(
         brief=brief,
     )
     overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat), {})
-    if overlay.get("armor") and text:
-        text = (
+    prefixes: list[str] = []
+    if overlay.get("armor"):
+        prefixes.append(
             f"Player overlay armor for {class_name} {stat}: "
             f"[item:{overlay['armor']}]. Prefer this over hub On Equip "
-            f"ranking below.\n{text}"
+            "ranking below."
         )
+    if stat == "Attack" and armor_slug == "robes":
+        prefixes.append(
+            "Attack robe cores: [item:Diplomatic Robe] and "
+            "[item:Vesture of Duality], with [item:Flowering Kimono] as "
+            "an honorable mention. If Diplomatic is the pick, Vesture is "
+            "the first alternative. Never list a T7 robe as an alternative."
+        )
+    if prefixes and text:
+        text = "\n".join(prefixes) + "\n" + text
     return text
 
 
@@ -1012,7 +1027,10 @@ async def retrieve_weapon_brief(
         top = _top_stat_items(rows, stat, limit=limit, include_t7=True)
         if top:
             if brief:
-                lines.append(f"Give 2-3 {label} alternatives for a {stat} build.")
+                lines.append(
+                    f"Give 2-3 {label} alternatives from the Umi general-tab "
+                    f"chunk for a {stat} build, not extra hub T7s."
+                )
             for row in top:
                 ranked = f"+{row.get('stat_value')} {stat}"
                 extra = row.get("bonus") or ""
@@ -1065,8 +1083,16 @@ async def retrieve_ability_brief(
     prefix = "ABILITY AGENT — this slot only. "
     if brief:
         prefix += (
-            "On a full build, name the scaling ability plus at most one "
-            "alternative. Do not expand into rings or armor here.\n"
+            "On a full build, name the scaling ability plus 2-3 "
+            "alternatives from the Umi general-tab chunk when that page "
+            "lists extras. Do not expand into rings or armor here.\n"
+        )
+    overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat or ""), {})
+    if overlay.get("ability"):
+        prefix += (
+            f"Player overlay ability for {class_name} {stat}: "
+            f"[item:{overlay['ability']}]. Prefer this over the wiki "
+            "scaling list below.\n"
         )
     return prefix + text
 

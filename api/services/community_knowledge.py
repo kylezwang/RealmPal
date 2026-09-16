@@ -28,7 +28,7 @@ SOURCE_RANK = ("realmshark", "player_overlay", "umi", "realmeye")
 # and any other class+stat where the wiki row is the wrong playstyle.
 CLASS_STAT_SLOT_OVERRIDES: dict[tuple[str, str], dict[str, str]] = {
     ("Bard", "Attack"): {
-        "weapon": "The Triangle",
+        "ability": "The Triangle",
         "armor": "Vesture of Duality",
     },
 }
@@ -108,6 +108,35 @@ def always_mention_rings_note() -> str:
     )
 
 
+def slot_alternatives_note(
+    class_name: str | None = None, stat: str | None = None
+) -> str:
+    """Weapon/ability/armor/ring alts come from Umi, not T7 hub filler."""
+    lines = [
+        "SLOT ALTERNATIVES. After the recommended loadout, list 2-3 "
+        "alternatives for each slot that has extras: Weapon, Ability, "
+        "Armor, and Ring. Those names come only from the UmiEnjoyers "
+        "general-tab BIS page for this class "
+        "(https://umienjoyers.com/guides/best-in-slot/"
+        f"{(class_name or 'class').lower()}?tab=general). "
+        "Skip a slot if that page has no extra names. Never list a T7 "
+        "tiered armor or robe as an alternative. T7 rings stay allowed."
+    ]
+    if (
+        stat == "Attack"
+        and class_name
+        and CLASS_ARMOR_HUB.get(class_name) == "robes"
+    ):
+        core = " and ".join(f"[item:{name}]" for name in ATTACK_ROBE_CORE)
+        honor = ", ".join(f"[item:{name}]" for name in ATTACK_ROBE_HONORABLE)
+        lines.append(
+            f"Attack robe classes: name {core}. If one is the pick, the "
+            f"other is the first armor alternative. {honor} is an "
+            "honorable mention. Do not substitute a T7 robe."
+        )
+    return "\n".join(lines)
+
+
 def store_ranking_brief(
     class_name: str | None = None, stat: str | None = None
 ) -> str:
@@ -137,16 +166,5 @@ def store_ranking_brief(
             "often Concertina + Diplomatic; the playstyle best is The "
             "Triangle + Vesture of Duality)."
         )
-    if (
-        stat == "Attack"
-        and class_name
-        and CLASS_ARMOR_HUB.get(class_name) == "robes"
-    ):
-        core = " and ".join(f"[item:{name}]" for name in ATTACK_ROBE_CORE)
-        honor = ", ".join(f"[item:{name}]" for name in ATTACK_ROBE_HONORABLE)
-        lines.append(
-            f"Attack robe classes: name {core}, with {honor} as an "
-            "honorable mention. Do not use an Attack robe as the pick for "
-            "a non-Attack ask."
-        )
+    lines.append(slot_alternatives_note(class_name, stat))
     return "\n".join(lines)

@@ -42,7 +42,7 @@ from .item_aliases import (
 from .skin_visualizer import is_skin_visualize_query
 from .player_lookup import extract_player_ign
 from .slot_graph import run_slot_agents
-from .community_knowledge import store_ranking_brief
+from .community_knowledge import slot_alternatives_note, store_ranking_brief
 from .wiki_scaling import (
     cached_class_wiki_scaling,
     infer_class_primary_stat,
@@ -880,6 +880,23 @@ async def _in_depth_build_extras(
                 "If the answer is a recommended loadout, copy these tokens: "
                 f"{tokens}"
             )
+    if class_name:
+        try:
+            from .wiki_scaling import retrieve_umi_bis
+
+            umi = await retrieve_umi_bis(
+                redis,
+                class_name,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+            )
+        except Exception as e:
+            logger.bind(error=str(e), class_name=class_name).warning(
+                "Umi BIS alternatives unavailable"
+            )
+            umi = ""
+        alt_note = slot_alternatives_note(class_name, stat)
+        bits.append(f"{alt_note}\n{umi}" if umi else alt_note)
     try:
         graph = await load_graph(redis, ttl_seconds, cache_only=True)
     except Exception as e:
