@@ -55,7 +55,7 @@ class UsageResponse(BaseModel):
 
 class PaywallResponse(BaseModel):
     upgrade: bool = True
-    message: str = "You've run out of free messages."
+    message: str = "You've run out of free in-depth responses."
     checkout_url: Optional[str] = None
     # Anonymous callers get a sign-in prompt; signed-in ones get checkout.
     scope: str = "ip"

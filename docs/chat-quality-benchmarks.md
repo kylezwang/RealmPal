@@ -56,7 +56,51 @@ The table above was the full base-case set as of Sep 13. Row added below
 from a real Sep 14 production session, found while reviewing live logs
 after the skin-visualizer scraper fix.
 
-## Quota/meter depletion policy, confirmed Sep 14, 2026
+## Quota/meter depletion policy, confirmed Sep 16, 2026
+
+A turn that never calls Claude does not spend quota for any of the three
+roles. Only a real model call meters.
+
+| Account type | Stored answer (no Claude) | Real Claude call |
+|---|---|---|
+| Anonymous (no account) | Does not deplete | Depletes the daily 3 in-depth responses |
+| Free (signed in) | Does not deplete | Depletes the daily free-message quota |
+| Paid | Does not deplete the Claude included-reply meter | Depletes |
+
+Logic: `api/routers/chat.py`'s `chat_stream()` returns a stored hit before
+`_enforce_quota()` and `consume_claude_reply()`. Those run only on the
+Claude branch.
+
+Tests: `test_drop_question_never_hits_the_llm` (anonymous, `peek() == 0`),
+`test_anonymous_at_daily_limit_still_gets_stored_answer`,
+`test_anonymous_claude_turn_still_spends_daily_quota`,
+`test_signed_in_stored_answer_skips_daily_quota` (free, `peek() == 0`),
+`test_paid_stored_hit_does_not_increment_claude_meter` (paid meter
+untouched, `used == 0`) - all in `api/tests/test_stored_answers.py`.
+
+Guest UI copy for that daily 3 is "in-depth responses" as of later Sep 16
+(only Claude turns spend it). Stored (no-Claude) turns stay free of that
+daily meter for every role, even after it is spent, but every `/chat/stream`
+turn including those stored hits is burst-capped at 20/min guest and
+60/min signed-in (`chat_burst_quota_for`). Player lookups are stored
+(scrape + fact bullets, no Claude). The in-depth paywall modal opens every time a spent in-depth try 402s.
+Later Claude 402s still keep the user message and pin leftover
+suggestions above the input (guest: create an account; signed-in: RealmPal
+Pro) until the user hides them.
+
+## History
+### Until Sep 16, 2026 (later same day)
+The current-policy table said "Depletes the daily 3-message quota" for
+anonymous Claude turns. Copy was then "AI-powered responses", then
+"in-depth prompts". Depletion rules did not change. Stored answers after
+the daily cap had no burst ceiling, and every 402 re-opened the paywall.
+Later leftover suggestions after a 402 were injected into the chat
+transcript instead of sitting above the input. Player lookups still called
+Claude (or 402'd) after the cap. For a stretch the same day, the paywall
+modal showed only on the first 402 per quota window.
+
+### Until Sep 16, 2026
+Quota/meter depletion policy, confirmed Sep 14, 2026:
 
 Verified against live test runs (not just reading the code) that stored
 answers (no Claude call) deplete quota differently by account type, and

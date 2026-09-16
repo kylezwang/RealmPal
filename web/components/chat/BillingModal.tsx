@@ -10,6 +10,7 @@ import {
   type OnDemandUsage,
 } from "@/lib/api";
 import { SpendingLimitModal } from "./SpendingLimitModal";
+import { freeInDepthPromptsLeft } from "@/lib/usageCopy";
 
 interface Props {
   onClose: () => void;
@@ -247,8 +248,8 @@ export function BillingModal({ onClose }: Props) {
                   </div>
                   <p className="text-xs text-[#737373] mt-1">
                     {usage
-                      ? `${usage.remaining} free message${usage.remaining === 1 ? "" : "s"} left today`
-                      : "Limited daily messages"}
+                      ? `${freeInDepthPromptsLeft(usage.remaining)} today`
+                      : "Limited daily in-depth responses"}
                     {usage?.resets_in_seconds ? (
                       <>
                         {" · refreshes in "}

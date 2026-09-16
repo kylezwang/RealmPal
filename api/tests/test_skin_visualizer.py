@@ -236,3 +236,20 @@ async def test_compose_skin_stored_reply_includes_token(redis_client, anon_setti
     )
     assert "[skin:Archer|Vampire Slayer|Large Crown Cloth|]" in text
     assert "RealmEye" in text
+
+
+def test_followup_and_small_sentinel_cloth_too_is_skin_query():
+    """Live Sep 16: first visualize was stored; 'And small sentinel cloth too'
+    fell through to Sonnet because leftover 'And too' looked like a skin name."""
+    history = [
+        "What does Vampire Slayer Archer look like with sentinel cloth?",
+        "[skin:Archer|Vampire Slayer|Large Sentinel Cloth|]",
+    ]
+    msg = "And small sentinel cloth too"
+    assert is_skin_visualize_query(msg, history=history)
+    query = extract_outfit_query(msg, history=history)
+    assert query.class_name == "Archer"
+    assert query.skin_name == "Vampire Slayer"
+    assert query.clothing and "sentinel" in query.clothing.lower()
+    assert query.accessory and "small" in query.accessory.lower()
+    assert "too" not in (query.skin_name or "").lower()

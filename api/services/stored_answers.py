@@ -32,7 +32,11 @@ from .item_aliases import (
     resolve_item_query,
     resolve_item_query_with_trim,
 )
-from .player_lookup import extract_player_ign
+from .player_lookup import (
+    extract_player_ign,
+    format_player_stored_reply,
+    get_or_scrape_player,
+)
 from .realmshark import parse_query
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
 from .wiki_scaling import HUB_PREFIX, read_cached_item
@@ -590,12 +594,41 @@ async def _compose_guide_brief(
     return text[:GUIDE_MAX_CHARS] if text else None
 
 
+async def _player_reply(
+    redis: aioredis.Redis,
+    message: str,
+    *,
+    history: Optional[list[str]] = None,
+    ttl_seconds: int,
+) -> Optional[StoredReply]:
+    """Scrape/cache the RealmEye row. No Claude. Lookup after the in-depth
+    cap still works because this never reaches `_enforce_quota`."""
+    ign = extract_player_ign(message, history=history)
+    if not ign:
+        return None
+    try:
+        profile = await get_or_scrape_player(
+            redis, ign, ttl_seconds=ttl_seconds
+        )
+    except Exception as e:
+        logger.bind(username=ign, error=str(e)).warning(
+            "Stored player lookup could not load a profile"
+        )
+        return None
+    return StoredReply(
+        text=format_player_stored_reply(profile),
+        kind="player",
+        key=f"player:profile:v3:{ign.lower()}",
+    )
+
+
 async def try_stored_reply(
     redis: aioredis.Redis,
     message: str,
     *,
     history: Optional[list[str]] = None,
     ttl_seconds: int,
+    player_ttl_seconds: int = 120,
     has_attachment: bool = False,
 ) -> Optional[StoredReply]:
     """Return a ready reply, or None if this turn still needs Claude."""
@@ -603,8 +636,14 @@ async def try_stored_reply(
         return None
     if is_constrained(message):
         return None
-    if extract_player_ign(message):
-        return None
+    player = await _player_reply(
+        redis,
+        message,
+        history=history,
+        ttl_seconds=player_ttl_seconds,
+    )
+    if player:
+        return player
     skin = await _skin_reply(
         redis, message, history=history, ttl_seconds=ttl_seconds
     )

@@ -8,6 +8,8 @@ import { ExamplePrompt } from "./ExamplePrompt";
 import { PetCompanion } from "./PetCompanion";
 import { QuestProgressMeter } from "./QuestProgressMeter";
 import { SidebarAccount } from "./SidebarAccount";
+import { freeInDepthPromptsLeft } from "@/lib/usageCopy";
+import { ChevronToggle } from "./ChevronToggle";
 
 interface Props {
   className?: string;
@@ -194,28 +196,12 @@ export function ChatSidebar({
 
       <div className="mt-3 flex-shrink-0">
         <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={onToggleSuggestions}
-            aria-label={showSuggestions ? "Hide quick suggestions" : "Show quick suggestions"}
-            aria-expanded={showSuggestions}
-            className="flex h-5 w-6 items-center justify-center rounded text-[#525252] hover:text-[#a3a3a3] hover:bg-[#333333] transition-colors cursor-pointer"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`transition-transform duration-150 ${showSuggestions ? "" : "rotate-180"}`}
-              aria-hidden="true"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
+          <ChevronToggle
+            expanded={showSuggestions}
+            onToggle={onToggleSuggestions}
+            hideLabel="Hide quick suggestions"
+            showLabel="Show quick suggestions"
+          />
         </div>
         {showSuggestions && (
           <div className="space-y-2 min-h-0 overflow-y-auto mt-1">
@@ -240,9 +226,7 @@ export function ChatSidebar({
             className="group w-full text-left px-2 py-1 -mx-2 rounded-lg hover:bg-[#333333] transition-colors cursor-pointer"
           >
             <span className="block text-sm text-[#a3a3a3] group-hover:text-[#ececec]">
-              {usage.remaining === 1
-                ? "1 free message left"
-                : `${usage.remaining} free messages left`}
+              {freeInDepthPromptsLeft(usage.remaining)}
             </span>
             {!isSignedIn && (
               <span className="block text-xs leading-tight text-[#737373] group-hover:text-[#a3a3a3]">

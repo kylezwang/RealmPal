@@ -2,10 +2,10 @@
 Chat streaming endpoint with rate limiting and paywall.
 
 Rate limiting design:
-- Redis key: `ratelimit:{session_id}` -> integer count
-- 3 free messages per session (TTL 24h from first message)
+- Daily in-depth quota: guests 3, signed-in free 5. Stored answers skip this.
+- After the daily in-depth cap: 402 on Claude turns. Stored answers still serve.
+- Burst cap on every /chat/stream turn (stored included): 20/min guest, 60/min signed-in. 429 when exceeded.
 - After limit: return 402 with {"upgrade": true, "checkout_url": ...}
-- Paid users: JWT token in Authorization header bypasses limit
 
 Streaming design (learned from Certio improvements):
 - Uses FastAPI StreamingResponse with proper disconnect handling
@@ -50,7 +50,9 @@ from ..services.dev_access import is_debug_unlimited
 from ..services.rate_limit import (
     USER_SCOPE,
     Quota,
+    chat_burst_quota_for,
     consume,
+    consume_windowed,
     hash_identifier,
     peek,
     peek_ttl,
@@ -153,6 +155,34 @@ def _quest_subject(user: Optional[AuthenticatedUser], quota: Quota) -> str:
     return quota.key
 
 
+async def _enforce_chat_burst(
+    user: Optional[AuthenticatedUser],
+    request: Request,
+    redis: aioredis.Redis,
+    settings: Settings,
+) -> None:
+    """Cap every chat turn, including stored answers, so the daily in-depth
+    skip cannot be used as an unthrottled flood."""
+    if await is_debug_unlimited(user, settings):
+        return
+    burst = chat_burst_quota_for(user, request, settings)
+    try:
+        count = await consume_windowed(redis, burst)
+    except Exception:
+        logger.exception("Could not enforce chat burst limit")
+        return
+    if count <= burst.limit:
+        return
+    logger.bind(bucket=burst.label, used=count, limit=burst.limit).info(
+        "Chat burst limit exceeded"
+    )
+    raise HTTPException(
+        status_code=429,
+        detail="Too many questions. Try again in a minute.",
+        headers={"Retry-After": str(burst.window_seconds)},
+    )
+
+
 async def _enforce_quota(
     quota: Quota,
     redis: aioredis.Redis,
@@ -183,13 +213,13 @@ async def _enforce_quota(
     # back to the checkout prompt rather than a dead end.
     if quota.is_anonymous and settings.auth_configured:
         message = (
-            f"You've used your {quota.limit} free messages. "
+            f"You've used your {quota.limit} free in-depth responses. "
             "Sign in to keep going."
         )
         checkout_url = None
     else:
         message = (
-            f"You've used your {quota.limit} free messages. "
+            f"You've used your {quota.limit} free in-depth responses. "
             "Join Realm Pal for $7/month to continue."
         )
         checkout_url = _checkout_url_for(quota, settings, auth_header)
@@ -534,6 +564,8 @@ async def chat_stream(
     if unavailable:
         raise HTTPException(status_code=503, detail=unavailable)
 
+    await _enforce_chat_burst(user, request, redis, settings)
+
     quota = quota_for(user, request, settings)
 
     user_history = [
@@ -553,16 +585,15 @@ async def chat_stream(
             body.message,
             history=outfit_history,
             ttl_seconds=settings.wiki_ttl_seconds,
+            player_ttl_seconds=settings.player_ttl_seconds,
             has_attachment=body.attachment is not None,
         )
     except Exception:
         logger.exception("Stored-answer lookup failed; falling through to Claude")
         stored = None
     if stored:
-        # Guests still spend a daily message so they hit the sign-in slides.
-        # Signed-in free (and Pro) accounts keep stored answers off the meter.
-        if quota.is_anonymous:
-            await _enforce_quota(quota, redis, settings, authorization, user)
+        # No Claude call. Daily quota and the paid Claude meter stay put
+        # for guests, free accounts, and Pro. Only a real model turn spends.
         logger.bind(
             session_id=body.session_id[:8],
             kind=stored.kind,
@@ -615,7 +646,9 @@ async def chat_stream(
         enchant_only = is_enchant_query(query_text) and not (class_name and stat)
         # Specialists already inject the right chunk. Extra wiki RAG pads
         # the bill and, if we glue on the previous user turn, mixes topics
-        # (player lookup + Bard attack → off-class bows).
+        # (player lookup + Bard attack → off-class bows). Class+stat and
+        # class-only build asks go through slot agents plus a compact
+        # set-visualizer / RealmShark top-5 slice; skip the vector dump.
         if (
             dungeon_only
             or player_only
@@ -623,6 +656,8 @@ async def chat_stream(
             or is_skin_visualize_query(query_text, history=outfit_history)
             or is_set_visualize_query(query_text)
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
+            or (class_name and stat)
+            or (buildish and class_name)
         ):
             context = ""
         else:

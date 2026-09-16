@@ -14,8 +14,13 @@ import { loadSavedAccountProfile, saveSavedAccountProfile } from "@/lib/accountP
 import { SWORD_SPRITE } from "@/lib/sprites";
 import { PetSprite } from "./PetCompanion";
 import { SpendingLimitModal } from "./SpendingLimitModal";
+import {
+  freeInDepthPromptsHaveLeft,
+  freeInDepthPromptsStillLeftToday,
+  freeInDepthPromptsUsed,
+} from "@/lib/usageCopy";
 
-/** Extra free messages a guest gets by creating an account. */
+/** Extra free in-depth responses a guest gets by creating an account. */
 export const ACCOUNT_BONUS_MESSAGES = 2;
 
 const LAST_STEP = 2;
@@ -108,9 +113,8 @@ function PasswordField({
 
 function freeMessagesHeading(remaining: number | null, limit: number): string {
   if (remaining == null) return "Upgrade to RealmPal Pro";
-  if (remaining <= 0) return `You've used your ${limit} free messages`;
-  if (remaining === 1) return "You have 1 free message left";
-  return `You have ${remaining} free messages left`;
+  if (remaining <= 0) return freeInDepthPromptsUsed(limit);
+  return freeInDepthPromptsHaveLeft(remaining);
 }
 
 function CheckRow({
@@ -428,11 +432,11 @@ export function PaywallModal({
               RealmPal Pro
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              Instant set-building with enchanting guides
+              This type of question can be answered with in-depth responses, such as item set-building & enchanting guides
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
-              Ask for a class and a stat. Get a real loadout, not vibes. Enchant rolls that
-              matter for your build land next to the gear, so you stop guessing which UT to
+              Ask for a class and a stat. Get a real loadout tailored to your playstyle. Enchant rolls that
+              matter for your build land next to the gear, so you stop guessing which UTs to
               keep.
             </p>
             <VideoPlaceholder
@@ -448,7 +452,7 @@ export function PaywallModal({
               See it before you farm it
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              Set and skin visualizers
+              Set skin, and item visualizers. See it before you decide if it's worth the farm.
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Shiny and divine sets render as a four-slot loadout. Dye a class skin with cloths
@@ -471,7 +475,7 @@ export function PaywallModal({
               Make a free account
             </h2>
             <p className="mb-5 text-sm leading-relaxed text-[#a3a3a3]">
-              A free RealmPal account increases your message limit to{" "}
+              A free RealmPal account increases your in-depth response limit to{" "}
               {limit + ACCOUNT_BONUS_MESSAGES}/day and saves your chat history.
             </p>
             <div className="space-y-3">
@@ -633,9 +637,7 @@ export function PaywallModal({
             {remaining != null && remaining > 0 ? (
               <>
                 <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
-                  {remaining === 1
-                    ? "You still have 1 free message left today"
-                    : `You still have ${remaining} free messages left today`}
+                  {freeInDepthPromptsStillLeftToday(remaining)}
                 </h2>
                 <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
                   Keep chatting for free, or go Pro for $7/month whenever
@@ -645,11 +647,11 @@ export function PaywallModal({
             ) : (
               <>
                 <h2 id="paywall-title" className="mb-2 text-center text-lg font-semibold text-[#ececec]">
-                  Your {limit} daily messages refresh in <br />{" "}
+                  Your {limit} daily in-depth responses refresh in <br />{" "}
                   <span className="text-[#D4AF37]">{formatResetWait(resetsInSeconds)}</span>
                 </h2>
                 <p className="text-center text-sm leading-relaxed text-[#a3a3a3]">
-                  Come back then for another {limit} free chats. Pro is $7/month if you
+                  Come back then for another {limit} free in-depth responses. Pro is $7/month if you
                   want to keep going now.
                 </p>
               </>

@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     lookup_rate_limit_user: int = 40
     lookup_rate_window_seconds: int = 60
 
+    # Burst limit on /chat/stream itself, including stored (no-Claude) turns.
+    # The daily in-depth quota only meters model calls; without this, a
+    # guest at that cap could hammer stored lookups with no ceiling.
+    chat_burst_limit_anonymous: int = 20
+    chat_burst_limit_user: int = 60
+    chat_burst_window_seconds: int = 60
+
     # --- Cost ceilings ---
     # Per-identity quotas stop one abuser; they don't stop a crowd. Once the
     # day's recorded spend reaches this, chat refuses new work until tomorrow.

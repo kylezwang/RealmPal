@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RealmPal | Your RotMG AI Companion",
+  title: "RealmPal | Your AI Guide for RotMG",
   description: "AI-powered Realm of the Mad God companion. Look up players, guilds, items, and dungeon strategies.",
   openGraph: {
     title: "RealmPal",
-    description: "Your RotMG AI companion powered by Claude",
+    description: "Your AI Guide for RotMG",
     siteName: "RealmPal",
   },
 };

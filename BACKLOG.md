@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/14/26 (10:55 PM)
+Last updated: 9/16/26 (11:05 AM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -9,19 +9,20 @@ rules out serverless), Entra External ID for identity, Key Vault for secrets.
 SQLite on a mounted volume until billing lands, then Azure Postgres.
 **Claude via Microsoft Foundry**, not a generic Anthropic API key (see below).
 
-**See `.cursor/rules/development-workflow.mdc`:** Completed work moves from here → CHANGELOG.md (technical details) → git history. BACKLOG looks forward only; don't keep stale copy.
+**See** `.cursor/rules/development-workflow.mdc`**:** Completed work moves from here → CHANGELOG.md (technical details) → git history. BACKLOG looks forward only; don't keep stale copy.
 
 Resume order when context is fresh:
 
 1. **Not yet fixed - every chat message unconditionally scrapes+ingests the signed-in user's own IGN profile**, even for messages with nothing to do with the player (`api/routers/chat.py`, `if body.ign:` block, ~line 588 - "Player profiles change constantly, scrape on lookup" comment explains the *intent* but this fires on every uncached message regardless of whether the message needs it, e.g. a pure "how to do X dungeon" question). Confirmed Sep 14: asking about Moonlight Village still triggered a 14s `Scraping player profile {'username': 'Turbine'}` call. This adds unnecessary load to the shared Playwright semaphore. Worth reconsidering: only scrape when `player_only`/`buildish` is true for *this* message (the router already computes these flags for the RAG-skip logic right below it), not unconditionally whenever `body.ign` is set.
-2. **Build/loadout quality - feed responses from UmiEnjoyers + RealmShark, not just RealmEye hub rankings.** Live Sep 14 post-PR #15: shiny/divine full-build asks now render as a set visualizer (`wiki_scaling.top_build_items()`), but the four picks still come from warmed RealmEye hub stat sorting only. Gaps seen in playtesting:
-   - **RealmShark**: some class+stat combos have no dedicated board (e.g. Attack Huntress falls back to Archer bow loadouts in text briefs). `top_build_items()` does not consult RealmShark at all yet - only hub `_top_stat_items`. Wire `load_top_loadouts()` / graph edges into slot picks where a board exists; document honest fallback when it does not (sister-class weapon family, not wrong ability slot).
-   - **UmiEnjoyers**: `retrieve_umi_bis()` already scraped and injected for enchantment specialist + armor context, but not for weapon/ability/ring picks or the set-visualizer derived path. Umi general-tab BIS is community-curated and often names the items players actually wear - good tie-breaker when RealmEye hub order and RealmShark disagree.
-   - **Stored briefs vs visualizer**: minted `wiki:build:v1:{class}:{stat}` text briefs and `top_build_items()` can diverge (different code paths). Goal: one ranking source per slot, reused by text reply, set visualizer, and Claude context.
-   - **Claude synthesis**: even with good chunks, replies sometimes drop item names from tables (empty Weapon/Ability columns) or merge prior-turn context. Tighten set-visualizer header / stored-reply path so `[item:...]` tokens are emitted directly without relying on Claude to copy a table.
-   - Tests: assert Attack Huntress set-visualizer picks include a Huntress-scaling trap (not Archer quiver), and that Umi/RealmShark signals change the pick when hub data alone would differ.
-3. **Azure Static Web App for `web/`, in Static (not Hybrid) mode**: no
-   frontend hosting existed yet, only the API backend is deployed. Chose
+2. **Build/loadout quality - remaining after Sep 16 store work.** Ranking is RealmShark first (top 5 plus on-character enchants), then the player overlay, Umi in synergy, RealmEye class-page Maximum Achievable Stats last (max-stat stack, not best playstyle). That table is now scraped (`scrape_class_max_stats`, `wiki:class-maxstats:v1:{class}`) and injected cache-only into specialists. `top_build_items()` now majority-picks RealmShark slots (skips Limited Edition reskins) then applies the overlay. Closed-vocab typos work for classes (`brd` → Bard), dungeon names (`moonlite`/`shaters`), and nickname keys. Enchant/DPS comparison extracts every mentioned nickname (`cbow` vs `lbow`). In-depth Claude turns now use `run_slot_agents` plus SET VISUALIZER PICKS and one matching RealmShark top-5, not the old full Umi/wiki/max-stats dump.
+  - **More player overlays** in the same shape as Attack Bard: class + stat + exact wiki titles for weapon / ability / armor / ring. Next worth writing down: Dex Bard, Attack Archer, and any combo where the wiki row is the wrong playstyle.
+  - **UmiEnjoyers**: still not used for weapon/ability/ring visualizer picks.
+  - **Stored briefs vs visualizer** can still diverge (`wiki:build:v1:{class}:{stat}` vs `top_build_items()`).
+  - **RealmShark** missing boards still fall back to a sister-class weapon family in text briefs (Attack Huntress → Archer bows). Document that fallback as sister-class, not the wrong ability slot.
+  - **Full DPS formula agent** is still later. This overlay/store work is not that agent.
+  - Attack Bard overlay stays Triangle + Vesture. Doom Bow may stay in a top 5; briefs must also name Clockwork Repeater. Attack robes: Diplomatic Robe and Vesture of Duality, Flowering Kimono honorable mention. Ring briefs always name Kagenohikari with Lean, Crown, and Gemstone.
+3. **Azure Static Web App for** `web/`**, in Static (not Hybrid) mode**: no
+  frontend hosting existed yet, only the API backend is deployed. Chose
    Azure Static Web Apps over Vercel (Sep 13, decided to stay fully on
    Azure for the portfolio story) and over a second Container App (simpler
    free tier + built-in GitHub CI vs. hand-rolling ingress/scaling for a
@@ -36,15 +37,14 @@ Resume order when context is fresh:
    Container App's Application URL, and update the API's `app_url` setting
    (`Settings.cors_allowed_origins`) to the Static Web App's URL so CORS
    isn't stuck on `localhost:3000`.
-
-   **Done as of Sep 14 - see CHANGELOG.md `[2026.09.13]`.** Kept here (not
+   **Done as of Sep 14 - see CHANGELOG.md** `[2026.09.13]`**.** Kept here (not
    deleted) per `doc-history.mdc` since this was the original plan text,
    not just a status update.
 4. **Key Vault**: move the env vars pasted into the Container App (JWT
-   secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
+  secret, Stripe key, `DATABASE_URL`, `REDIS_URL`) into Key Vault
    references instead of plaintext. Priority 5 in the deploy guide.
 5. **Production secrets review**: the deployed Container App's log stream
-   shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
+  shows `PII_HASH_SECRET is unset` and `MAGIC_LINK_SECRET is unset`
    warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
    both explicitly and rotate `JWT_SECRET` off its local-dev value before
    real launch.
@@ -54,18 +54,54 @@ Resume order when context is fresh:
 
 **Shipped live Sep 14 (late evening):** PR #14 + PR #15 merged to `master`, API redeployed, Static Web App live at realmpal.com. Webapp is fairly usable for core chat, item lookup, shiny/divine set visualizer, and build asks. Remaining rough edges (quota/paywall UX, quest timer, prompt mixing on delayed replies) and data-quality tuning tracked above.
 
-**Done as of Sep 14 (later same day) - see CHANGELOG.md `[2026.09.14]`.** Item 8 (`parse_query` history-inheritance fragility) fixed at the root with `_has_own_topic()`; a matching frontend duplicate of the "with A, B, C" set-extraction bug (`web/lib/loadoutShowcase.ts`) was found and fixed too; real items missing a RealmEye wiki page now negative-cache instead of re-paying a ~30s scrape timeout every lookup; server-side chat history sync shipped for signed-in accounts (fixes chats appearing to vanish after an incognito session ends); the sidebar IGN/pet now falls back to the JWT's IGN so it prefills on any device; and the "item name glued to trailing free text" bug (multiple regex patches, same day) got a durable root fix - `resolve_item_query_with_trim` validates against the real item catalog with trailing-word trimming instead of ever handing a raw, unresolved capture to a scrape attempt. Two more variants of the same "build request read as an item name" bug turned up live in production right after: "set for full dexterity huntress" (bare preposition left behind after stripping "set") and "attack huntress" (a bare stat+class pair, no preposition or "set"/"build" left to catch) both went to doomed wiki scrapes before being fixed with a preposition check and a stat/class-vocabulary check in `_shiny_divine_item_name`. Once that stopped 404ing, "show me full shiny divine attack huntress" surfaced a follow-on gap: the message fell through to the generic weapon/ability/armor/ring text brief instead of the shiny/divine item-circle loadout the wording actually asked for, since that visual only existed for explicitly-named sets. Added `wiki_scaling.top_build_items()` (single best item per gear slot for a class+stat, reusing the same ranking the text briefs already compute) and `item_aliases.is_stat_class_shiny_divine_query()`, wired into `retrieve_set_visualizer`/`route_slots`/`retrieve_build_knowledge`/`routers/chat.py` everywhere the named-set check already gated routing - see CHANGELOG.md `[2026.09.14]`.
+**Done as of Sep 14 (later same day) - see CHANGELOG.md** `[2026.09.14]`**.** Item 8 (`parse_query` history-inheritance fragility) fixed at the root with `_has_own_topic()`; a matching frontend duplicate of the "with A, B, C" set-extraction bug (`web/lib/loadoutShowcase.ts`) was found and fixed too; real items missing a RealmEye wiki page now negative-cache instead of re-paying a ~30s scrape timeout every lookup; server-side chat history sync shipped for signed-in accounts (fixes chats appearing to vanish after an incognito session ends); the sidebar IGN/pet now falls back to the JWT's IGN so it prefills on any device; and the "item name glued to trailing free text" bug (multiple regex patches, same day) got a durable root fix - `resolve_item_query_with_trim` validates against the real item catalog with trailing-word trimming instead of ever handing a raw, unresolved capture to a scrape attempt. Two more variants of the same "build request read as an item name" bug turned up live in production right after: "set for full dexterity huntress" (bare preposition left behind after stripping "set") and "attack huntress" (a bare stat+class pair, no preposition or "set"/"build" left to catch) both went to doomed wiki scrapes before being fixed with a preposition check and a stat/class-vocabulary check in `_shiny_divine_item_name`. Once that stopped 404ing, "show me full shiny divine attack huntress" surfaced a follow-on gap: the message fell through to the generic weapon/ability/armor/ring text brief instead of the shiny/divine item-circle loadout the wording actually asked for, since that visual only existed for explicitly-named sets. Added `wiki_scaling.top_build_items()` (single best item per gear slot for a class+stat, reusing the same ranking the text briefs already compute) and `item_aliases.is_stat_class_shiny_divine_query()`, wired into `retrieve_set_visualizer`/`route_slots`/`retrieve_build_knowledge`/`routers/chat.py` everywhere the named-set check already gated routing - see CHANGELOG.md `[2026.09.14]`.
 
 ## History
+
+
+
+### Until Sep 16, 2026 (10:40 AM)
+
+UI NOTE  
+Get the app while you wait to get a notification when your request is ready should pop up if the AI is thinking... for more than 3 seconds, shouldnt actually be a modal popup but it should be a container within the AI's response above the Thinking... (which its rotations with other phrases needs to slow down slightly as well).
+
+
+
+
+
+Item 2 read: "**Build/loadout quality - no single source is the best build.** Sep 16: class wiki pages (`/wiki/bard`, same pattern for every class) have a **Maximum Achievable Stats** table that names items for the highest possible number on each stat. That table is useful as a candidate list, not as "the best build." Example from the [Bard wiki](https://www.realmeye.com/wiki/bard): Attack row is Wavecrest Concertina + Diplomatic Robe (a potential ATT stack). Actual best Attack Bard (player-confirmed) is Triangle + Vesture of Duality. Same grain of salt for [UmiEnjoyers BIS](https://umienjoyers.com/guides/best-in-slot/bard?tab=general) and RealmShark DPS boards. Recommendation rule: items that show up across RealmEye class-page max-stats, RealmEye hub stat ranks, Umi general BIS, and RealmShark are the top candidates; when they disagree, do not let the wiki max-stat row win by default.
+
+- **Not scraped yet:** `/wiki/{class}` Maximum Achievable Stats. We scrape ability/armor/ring hubs and item infoboxes, not the class page table.
+- **RealmShark**: some class+stat combos have no dedicated board (e.g. Attack Huntress falls back to Archer bow loadouts in text briefs). `top_build_items()` does not consult RealmShark at all yet - only hub `_top_stat_items`. Wire `load_top_loadouts()` / graph edges into slot picks where a board exists; document honest fallback when it does not (sister-class weapon family, not wrong ability slot).
+- **UmiEnjoyers**: `retrieve_umi_bis()` is scraped and injected for enchantment specialist + armor context, but not for weapon/ability/ring picks or the set-visualizer derived path.
+- **Stored briefs vs visualizer**: minted `wiki:build:v1:{class}:{stat}` text briefs and `top_build_items()` can diverge (different code paths). Goal: one ranking source per slot, reused by text reply, set visualizer, and Claude context.
+- **Confirmed ranking (Sep 16, player):** RealmShark first (top 5 sets plus on-character enchants; most accurate of the three). Then this player overlay. Umi in synergy. RealmEye class-page Maximum Achievable Stats last. Even RealmShark can miss a ceiling: Doom Bow showing in a top 5 is fine, but the brief must also name its upgrade Clockwork Repeater. Skip Limited Edition items when they are a reskin of a real item. Attack robe classes: Diplomatic Robe and Vesture of Duality, Flowering Kimono as honorable mention.
+- **Player overlay (started Sep 16):** `api/services/community_knowledge.py` + aliases in `COMMUNITY_ALIASES`. Attack Bard weapon/armor forced to The Triangle + Vesture of Duality. Nicknames: triangle, cbow (Coral Bow), lbow (Leaf Bow), dbow (Doom Bow), lean crown (Chrysalis of Eternity). `top_build_items` applies the overlay. Weapon briefs mention upgrades when the base item is listed. `retrieve_umi_bis()` prompt now matches the ranking above (no longer "RealmEye is the source of truth"). Every ring brief always names Kagenohikari with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone (`TOP_RINGS`) — Kage is usually missing from all three scrapers unless a RealmShark top 5 happens to wear it.
+- Tests: Attack Bard overlay beats hub Concertina/Diplomatic; Doom Bow brief names Clockwork Repeater; triangle/cbow/lbow/dbow resolve; Attack Huntress picks include a Huntress-scaling trap (not Archer quiver)."
+
+
+
+### Until Sep 16, 2026
+
+Item 2 read: "**Build/loadout quality - feed responses from UmiEnjoyers + RealmShark, not just RealmEye hub rankings.** Live Sep 14 post-PR #15: shiny/divine full-build asks now render as a set visualizer (`wiki_scaling.top_build_items()`), but the four picks still come from warmed RealmEye hub stat sorting only. Gaps seen in playtesting:
+
+- **RealmShark**: some class+stat combos have no dedicated board (e.g. Attack Huntress falls back to Archer bow loadouts in text briefs). `top_build_items()` does not consult RealmShark at all yet - only hub `_top_stat_items`. Wire `load_top_loadouts()` / graph edges into slot picks where a board exists; document honest fallback when it does not (sister-class weapon family, not wrong ability slot).
+- **UmiEnjoyers**: `retrieve_umi_bis()` already scraped and injected for enchantment specialist + armor context, but not for weapon/ability/ring picks or the set-visualizer derived path. Umi general-tab BIS is community-curated and often names the items players actually wear - good tie-breaker when RealmEye hub order and RealmShark disagree.
+- **Stored briefs vs visualizer**: minted `wiki:build:v1:{class}:{stat}` text briefs and `top_build_items()` can diverge (different code paths). Goal: one ranking source per slot, reused by text reply, set visualizer, and Claude context.
+- **Claude synthesis**: even with good chunks, replies sometimes drop item names from tables (empty Weapon/Ability columns) or merge prior-turn context. Tighten set-visualizer header / stored-reply path so `[item:...]` tokens are emitted directly without relying on Claude to copy a table.
+- Tests: assert Attack Huntress set-visualizer picks include a Huntress-scaling trap (not Archer quiver), and that Umi/RealmShark signals change the pick when hub data alone would differ."
+
+
+
 ### Until Sep 14, 2026 (later same day)
-Item 8 read: "**Not yet fixed - `realmshark.parse_query`'s history-based
+
+Item 8 read: "**Not yet fixed -** `realmshark.parse_query`**'s history-based
 class/stat inheritance is still fragile.** Found live Sep 14 (see
 CHANGELOG.md `[2026.09.14]`, the "snake eye ring" enchant trace): when the
 *current* message has no class/stat of its own, `parse_query` scans
 backward through the entire conversation history and glues in the first
 class/stat it finds, from however many turns back, regardless of topic.
-Patched three symptoms of this around the edges (`stored_answers.
-_build_reply`/`maybe_mint_brief` now refuse on `is_enchant_query`; `chat.py`
+Patched three symptoms of this around the edges (`stored_answers. _build_reply`/`maybe_mint_brief` now refuse on `is_enchant_query`; `chat.py`
 and `realmshark.retrieve_build_knowledge`'s `enchant_only` gates now check
 `class_name and stat` instead of the coarser `buildish` flag), but the root
 inheritance function itself is unchanged and could still misfire for a
@@ -75,7 +111,9 @@ reconsidering: only inherit from the immediately-preceding turn, not the
 whole history, and/or require the current message to look like a genuine
 thin follow-up ("what other rings", "any other options") rather than
 inheriting whenever the current message merely lacks its own class/stat."
+
 ### Until Sep 14, 2026, 10:15 AM (this revision)
+
 Resume order's top items were, in this order: (1) embeddings backend
 unreachable in production (CRITICAL, silently breaking all RAG), (2) a
 frontend bug causing doomed item scrapes (already fixed same day), (3) Azure
@@ -95,7 +133,9 @@ Container App was bumped to 1.0 vCPU/2 GiB. Full technical detail for all of
 these moved to `CHANGELOG.md` `[2026.09.14]` per `development-workflow.mdc`.
 Item 5 (unconditional IGN scrape) is carried forward unchanged, still not
 fixed, now item 1 in the current list above.
+
 ### Until Sep 14, 2026, 12:21 AM (earlier same day)
+
 Resume order was, in this order: (1) Azure Static Web App for `web/` in
 Static mode, (2) Key Vault, (3) Production secrets review, (4) Stripe live
 mode, (5) Entra External ID, (6) Launch on `ANTHROPIC_API_KEY`. Superseded
@@ -109,8 +149,11 @@ underneath the CPU-contention item that already existed in the Sep 13
 CHANGELOG.md "Internal" section ("Diagnosed: live scrapes queue behind
 specialist warming in production") but hadn't been copied into BACKLOG.md's
 forward-looking resume list yet.
+
 ### Until Sep 13, 2026 (later same day, second revision)
+
 Resume order was:
+
 1. Container Apps Step 2 onward: registry created and the API image is built + pushed; Qdrant Cloud also done. Still need: the Azure Managed Redis instance (Priority 4 Step 1.7 in `docs/DEPLOYMENT_GUIDE.md`), then the Container Apps Environment + Container App itself (Step 2 onward, same doc).
 2. Provision the real Postgres server: code side done; Azure resource itself not created yet. `docs/DEPLOYMENT_GUIDE.md` Priority 6, before or alongside item 1's Container App env vars since `DATABASE_URL` needs a real value before that container can boot clean.
 3. Key Vault, Stripe live mode, Entra External ID, `ANTHROPIC_API_KEY` launch: unchanged, see current list above.
@@ -151,7 +194,7 @@ BYTEA blob round-trip). All 353 existing backend tests still pass unchanged
 against the SQLite default. The actual Azure resource still needs
 provisioning, see resume order item 2 above.
 
-**`api/Dockerfile` created and the API image built + pushed** (Sep 13): there
+`api/Dockerfile` **created and the API image built + pushed** (Sep 13): there
 was no Dockerfile at all before this (docker-compose referenced one that
 didn't exist). Built on `mcr.microsoft.com/playwright/python` so Chromium +
 every OS-level dep the scraper needs ships in the image. Registry created as
@@ -170,10 +213,14 @@ build cache and two unrelated old images, back to a healthy ~12 GB free.
 
 **Azure infra provisioned and the API is fully live** (Sep 13): Azure Managed Redis (`realmpal-cache`), Azure Database for PostgreSQL Flexible Server (`realmpal-db`), and the Container Apps Environment + Container App (`realmpal-api`) all created in `rg-realmpal`, East US 2. Took 7 revisions to get clean: a missing `ANTHROPIC_API_KEY` (crashed on startup with a clear pydantic error), `scan_iter` not being classified in `api/redis_namespace.py` (a real code bug, raised in every namespaced deployment since local dev's default namespace is empty and never exercised this path until `DEPLOYMENT_NAMESPACE=prod` was actually set), then four straight `DATABASE_URL` connection-string issues in a row (password's `@` breaking DSN parsing, missing firewall rule for the Container App's outbound IP, missing `:5432/realmpal?sslmode=require` suffix, and the `realmpal` database itself never having been created). `/health` returns `200`, Postgres/Redis/Qdrant all connect clean, specialist warming is scraping RealmEye and populating stores in the background. See `CHANGELOG.md` [2026.09.13] for full technical detail on each bug.
 
-**`web/` simplified to a pure static export before its first deploy** (Sep 13): found and deleted two dead-code server dependencies (`app/api/chat/route.ts` proxy, `/api/sprite` rewrite) that were the only reason `output: "standalone"` (hybrid hosting) looked necessary; the frontend already calls the Container App directly for everything, including chat streaming. Switched to `output: "export"`. See `CHANGELOG.md` [2026.09.13] for detail.
+`web/` **simplified to a pure static export before its first deploy** (Sep 13): found and deleted two dead-code server dependencies (`app/api/chat/route.ts` proxy, `/api/sprite` rewrite) that were the only reason `output: "standalone"` (hybrid hosting) looked necessary; the frontend already calls the Container App directly for everything, including chat streaming. Switched to `output: "export"`. See `CHANGELOG.md` [2026.09.13] for detail.
 
 ## History
+
+
+
 ### Until Sep 13, 2026 (later same day, fifth revision)
+
 Resume order was: (1) Container Apps + Key Vault for the actual Azure
 deploy, exact portal steps already in `docs/DEPLOYMENT_GUIDE.md` Priority
 4/5; (2) Stripe live mode repeat-setup before real launch; (3) Entra
@@ -188,28 +235,42 @@ Redis/Qdrant/SQLite live once the API isn't running via docker-compose
 anymore. Those turned into their own resume-order items above.
 
 ### Until Sep 13, 2026 (later same day, fourth revision)
+
 Resume order was:
+
 1. Entra External ID - MSAL sign-in built (Sep 13) on `feature/entra-auth` (branched off `master`, `dev` untouched). Next: manually test the real redirect round-trip with real `.env.local` values, build IGN collection for a first-time Entra sign-up, then merge.
 2. Launch on a direct `ANTHROPIC_API_KEY` now (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
 3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
 4. Container Apps + Key Vault for the actual Azure deploy, once Entra sign-in is merged.
 
+
+
 ### Until Sep 13, 2026 (later same day, third revision)
+
 Resume order was:
+
 1. Entra External ID - portal setup done (Sep 13): tenant, both app registrations, user flow, `.env` values all in place. Next: MSAL SPA sign-in code + swap (or complement) local email+password with Entra tokens.
 2. Foundry - blocked, see Blocked section below. Don't retry deployment until billing clears.
 3. Enable the Stripe Customer Portal in the Dashboard (Settings → Billing → Customer portal), one-time toggle, so the new "Manage subscription" button in `BillingModal.tsx` works outside test mocks.
 4. Container Apps + Key Vault for the actual Azure deploy, once Entra code integration lands.
 
+
+
 ### Until Sep 13, 2026 (later same day)
+
 Resume order was:
+
 1. Entra External ID - portal values collected (Sep 13). Next: MSAL SPA + swap local email+password for Entra tokens.
 2. Foundry - blocked, see Blocked section below. Don't retry deployment until billing clears.
 3. Audit the Stripe checkout → webhook → entitlement flow end to end (no known bug, just unverified since Link was added).
 
 ---
 
+
+
 ## Blocked
+
+
 
 ### Azure Foundry — code done, blocked on Azure billing account review
 
@@ -218,6 +279,7 @@ Chat client is finished in `api/services/llm.py` and doesn't need more work. `_s
 **Deployment fails in the portal**: both `claude-sonnet-4-6` and `claude-sonnet-4-5` deployments show `Provisioning state: Failed`, with "This purchase cannot be completed" from Azure Marketplace. Root cause found: **the Azure billing account (Kyle Wang) is "Under Review" / inactive** — Cost Management + Billing → Billing scopes → that account shows "Your account is under review... buying new products and services... will be restricted until the review is complete." Marketplace can't fulfill any paid model purchase while that's true. This is Microsoft-side, not a RealmPal config problem — resource providers, region (confirm East US 2 / Sweden Central), and subscription type are all fine; the account itself is locked.
 
 Do not keep retrying deployments — each attempt just fails the same way. Resume when:
+
 1. Billing account review clears (check Cost Management + Billing → Billing scopes → account status), or
 2. Support resolves it directly.
 
@@ -225,13 +287,18 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 
 ---
 
+
+
 ## Next Up
+
+
 
 ### Entra External ID — portal done, MSAL sign-in built on a side branch, not merged yet
 
 **Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true, and already tried first (before the local session JWT) in `api/dependencies.py`'s `get_optional_user` - no backend changes were needed for any of this.
 
-**Built on `feature/entra-auth` (branched off `master`, Sep 13), not merged into `dev` or `master` yet:**
+**Built on** `feature/entra-auth` **(branched off** `master`**, Sep 13), not merged into** `dev` **or** `master` **yet:**
+
 1. `web/lib/msal.ts`: MSAL (PKCE) `PublicClientApplication` against the SPA client + `ciamlogin.com` authority + user flow. Lazy singleton, only touches `window` client-side, no-ops if `NEXT_PUBLIC_ENTRA_*` env vars are unset
 2. `web/app/auth/callback/page.tsx`: handles the redirect back from Entra, stores the Entra access token under the same `AUTH_TOKEN_KEY` the local session JWT uses (so every existing `authHeaders()` call site needs zero changes)
 3. `web/app/auth/signin/page.tsx`: "Continue with Microsoft" now triggers a real `loginRedirect()` when Entra is configured, instead of always hitting the old 501 stub. Google is untouched (deferred, silent-renewal bug)
@@ -239,18 +306,26 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 5. `web/.env.local.example`: documents the `NEXT_PUBLIC_ENTRA_*` values needed (same non-secret IDs already in the root `.env`, just re-exposed for the browser bundle)
 
 **Still to build before merging:**
+
 1. **Manual test against the real tenant**: fill in `web/.env.local` with the real (non-secret) tenant ID / SPA client ID / API scope, run `npm run dev`, click "Continue with Microsoft", confirm the redirect round-trip and that `/chat` calls succeed with the Entra token
 2. **IGN collection after first Entra sign-up**: the user flow only collects email, so a brand-new Entra account has no IGN and `decodeAuthIgn()` correctly returns `null` for it (no crash), but there's no UI yet prompting for one and no backend endpoint to attach it to that Entra `sub`. Local email+password's `registerAccount` collects IGN inline; Entra's hosted page can't, so this needs its own small flow post-redirect
 3. Defer Google (silent-renewal bug); add later if wanted
 
 **Findings kept:**
+
 - Two app registrations (API + SPA), not one
 - Authority: `ciamlogin.com` (not `login.microsoftonline.com`) for CIAM
 - No SPA client secret (public client + PKCE)
 - `@azure/msal-browser` 5.21.0's `CacheOptions` no longer has `storeAuthStateInCookie` (that was an IE11-era option); only `cacheLocation` and `cacheRetentionDays` remain
 
+
+
 #### History
+
+
+
 ##### Until Sep 13, 2026 - Entra External ID
+
 Researched, not yet built. User will provide portal values (tenant ID, client IDs, JWKS URL). Sign-in methods: **Google + email OTP** (known Google bug; decision to make: keep Google and force `prompt=select_account`, or use email OTP only).
 
 What's needed from you: portal setup in `docs/DEPLOYMENT_GUIDE.md`, copy 7 values into `.env`, code integration once values are in place.
@@ -262,6 +337,8 @@ Findings: two app registrations; `ciamlogin.com` authority; Google silent-renewa
 Portal values to collect: tenant ID, SPA client ID, API client ID / Application ID URI, JWKS URL, issuer, audience.
 
 ---
+
+
 
 ## Done (Sep 13, 2026) — See CHANGELOG.md for Technical Details
 
@@ -303,7 +380,11 @@ See `CHANGELOG.md` [2026.09.13] for commits, migrations, tests, and technical de
 
 ---
 
+
+
 ## Future (Planned, Lower Priority)
+
+
 
 ### DPS specialist (started)
 
@@ -391,23 +472,29 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 
 ---
 
+
+
 ## Documentation & Rules
 
 **Changelog structure:**
+
 - `CHANGELOG.md` — Developer changelog (technical, breaking changes, migrations)
 - `web/lib/changelog.ts` — User-facing changelog (app UI only)
 - `.cursor/rules/changelog.mdc` — Enforce user-facing entries on every deploy
 - `.cursor/rules/development-workflow.mdc` — NEW: Separates BACKLOG (forward), CHANGELOG (completed), UI changelog
 
 **Doc history:**
+
 - `.cursor/rules/doc-history.mdc` — Keep dated prior text when updating BACKLOG, CHANGELOG, README, or docs/
 
 **Project structure:**
+
 - `BACKLOG.md`, `README.md` at root (high-level, visible)
 - All other docs in `docs/` folder
 - `docs/pricing.md` and `docs/business.md` gitignored (business logic)
 
 **Related references:**
+
 - `docs/DEPLOYMENT_GUIDE.md` — Exact Azure portal steps
 - `docs/DEPLOYMENT_QUICK_REFERENCE.md` — Commands & timeline
 - `docs/DEPLOYMENT_ARCHITECTURE.md` — Infrastructure diagrams
@@ -417,9 +504,12 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 
 ---
 
+
+
 ## Historical Notes
 
 **Last session decisions:**
+
 - Chat sidebar ordering: Don't re-order on view; only move to top when message count increases
 - Cost model: $7/mo + PAYG at $0.08/reply; included pool 68 (~$2.50), daily fuse 50 msgs
 - Free tier: Guest 3/24h, signed-in 5/24h (metered, not token-based)
@@ -429,12 +519,15 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 - Deploy: Azure Container Apps + Key Vault + Postgres (after Foundry)
 
 **Known issues:**
+
 - Google SSO silent renewal bug in Entra (12–24h after first sign-in). Decision pending.
 - Infrastructure lockdown pending (Redis/Qdrant credentials, docker-compose → Container Apps)
 - Prompt-injection defense weak (regex denylist; should be stronger)
 - Entra MSAL sign-in on `feature/entra-auth` (Sep 13) throws a "failed to fetch" error on the redirect callback when manually tested; not diagnosed yet, deprioritized behind Container Apps. Likely candidates whenever this gets picked back up: `knownAuthorities` mismatch, the JWKS/token endpoint not actually reachable at the `ciamlogin.com` path MSAL is calling, or a redirect URI that doesn't exactly match what's registered on the SPA app
 
 ---
+
+
 
 ## Running Locally
 
@@ -457,4 +550,3 @@ python -m api.scripts.refresh_wiki
 ```
 
 API: `http://localhost:8001`, Web: `http://localhost:3000`
-

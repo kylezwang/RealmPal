@@ -4,6 +4,7 @@ from api.services.dungeon_guide import (
     _focus_text,
     _merge_media,
     extract_dungeon_query,
+    match_index_pages,
     portal_for_dungeon,
 )
 
@@ -88,3 +89,16 @@ def test_hardmode_focus_skips_the_contents_listing():
     assert "extremely dangerous" not in player
     assert "secret Hard Mode was added" in player
     assert "Kill the Source" in player
+
+
+def test_one_letter_dungeon_typos_still_match_the_index():
+    assert extract_dungeon_query("how to do moonlite village") == "moonlite village"
+    assert extract_dungeon_query("how to do shaters") == "shaters"
+    entries = [
+        {"title": "Moonlight Village", "slug": "moonlight-village", "kind": "guide"},
+        {"title": "The Shatters", "slug": "the-shatters", "kind": "guide"},
+    ]
+    mv = match_index_pages("moonlite village", entries)
+    assert mv and mv[0]["title"] == "Moonlight Village"
+    shatts = match_index_pages("shaters", entries)
+    assert shatts and shatts[0]["title"] == "The Shatters"

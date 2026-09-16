@@ -149,7 +149,8 @@ _AMBIGUOUS_CLOTH = re.compile(
 )
 _FOLLOWUP_INTENT = re.compile(
     r"\b(?:let me see|show me|can i see|i want to see|how about|what about|"
-    r"try(?:\s+it)?|now(?:\s+with)?|also)\b",
+    r"try(?:\s+it)?|now(?:\s+with)?|also|too)\b|"
+    r"^(?:and|&)\b",
     re.I,
 )
 _SEE_WITH = re.compile(
@@ -228,6 +229,7 @@ def is_skin_visualize_query(message: str, history: Optional[list[str]] = None) -
             or _TO_ACCESSORY.search(text)
             or _TO_CLOTHING.search(text)
             or _DYE_THEN_SLOT.search(text)
+            or _named_cloth_or_dye(text)
             or not _looks_like_skin(_extract_outfit_from_text(text).skin_name)
         ):
             return True
@@ -267,7 +269,7 @@ def _looks_like_skin(name: Optional[str]) -> bool:
         return False
     if re.fullmatch(
         r"(?:on|onto|the|slot|with|and|a|an|to|for|as|it|this|that|"
-        r"clothing|accessory|cloth|dye|large|small|\s)+",
+        r"too|also|please|now|clothing|accessory|cloth|dye|large|small|\s)+",
         text,
         re.I,
     ):
@@ -311,6 +313,19 @@ def _history_has_outfit(history: list[str]) -> bool:
         if prior.skin_name or prior.class_name:
             return True
     return False
+
+
+def _named_cloth_or_dye(text: str) -> bool:
+    """True when this turn names a sized cloth, dye, or ambiguous cloth."""
+    return bool(
+        _CLOTH_OR_DYE.search(text or "")
+        or _LARGE_CLOTH.search(text or "")
+        or _SMALL_CLOTH.search(text or "")
+        or _BARE_DYE.search(text or "")
+        or _AMBIGUOUS_CLOTH.search(text or "")
+        or _CLOTHING_DYE.search(text or "")
+        or _ACCESSORY_DYE.search(text or "")
+    )
 
 
 def _mentions_outfit_piece(text: str) -> bool:
@@ -511,8 +526,10 @@ def _extract_outfit_from_text(message: str, class_name: Optional[str] = None) ->
         if label:
             rest = re.sub(re.escape(label), " ", rest, flags=re.I)
     rest = _LEAD_IN.sub("", rest)
+    rest = _LEADING_JUNK.sub("", rest)
     rest = re.sub(
-        r"\b(?:skin|outfit|visuali[sz]er?|preview|clothing|accessory|dye|cloth)\b",
+        r"\b(?:skin|outfit|visuali[sz]er?|preview|clothing|accessory|dye|cloth|"
+        r"too|also|please)\b",
         " ",
         rest,
         flags=re.I,
@@ -624,6 +641,7 @@ def _is_outfit_followup(
         or _SEE_WITH.search(message or "")
         or _LOOK_LIKE.search(message or "")
         or _USE_DYE.search(message or "")
+        or _named_cloth_or_dye(message or "")
     ):
         return piece
     if not current.skin_name and not current.class_name:

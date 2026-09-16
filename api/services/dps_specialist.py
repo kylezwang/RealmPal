@@ -102,8 +102,11 @@ def estimate_weapon_dps(
 
 
 def extract_dps_item(message: str) -> Optional[str]:
-    from .item_aliases import community_canonical
+    from .item_aliases import community_canonical, extract_mentioned_items
 
+    mentioned = extract_mentioned_items(message)
+    if mentioned:
+        return mentioned[0]
     text = (message or "").strip()
     match = _ON_ITEM.search(text)
     candidate = (match.group(1) if match else "").strip(" ?.!")
@@ -184,7 +187,7 @@ async def retrieve_dps_brief(
     stat: Optional[str] = None,
     cache_only: bool = True,
 ) -> str:
-    from .item_aliases import community_canonical, resolve_item_query
+    from .item_aliases import community_canonical, extract_mentioned_items, resolve_item_query
     from .realmshark import format_loadouts, load_graph, load_top_loadouts
 
     parts = [
@@ -192,26 +195,32 @@ async def retrieve_dps_brief(
         "RealmShark boards are a 5s / 8-ability potential-DPS reference, "
         "not live combat. Do not invent numbers missing from this chunk."
     ]
-    item_name = extract_dps_item(message)
-    if item_name:
-        resolved = community_canonical(item_name) or await resolve_item_query(
+    mentioned = extract_mentioned_items(message)
+    item_name = mentioned[0] if mentioned else extract_dps_item(message)
+    names = mentioned or ([item_name] if item_name else [])
+    for raw in names:
+        resolved = community_canonical(raw) or await resolve_item_query(
             redis,
-            item_name,
+            raw,
             ttl_seconds=ttl_seconds,
             class_name=class_name,
             allow_scrape=False,
         )
-        if resolved:
-            item_name = resolved
-        item = await _cached_item(redis, item_name)
+        lookup = resolved or raw
+        item = await _cached_item(redis, lookup)
         if item:
             estimate = estimate_weapon_dps(item.stats or {})
             parts.append(format_wiki_estimate(item, estimate))
         else:
             parts.append(
-                f"No stored wiki profile for {item_name}. "
+                f"No stored wiki profile for {lookup}. "
                 "Do not invent Damage / Shots / Rate of Fire."
             )
+    if len(names) > 1:
+        parts.append(
+            "Compare the wiki estimates above and pick a winner only from "
+            "those numbers. Do not invent a third item."
+        )
 
     try:
         graph = await load_graph(redis, ttl_seconds, cache_only=True)

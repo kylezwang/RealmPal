@@ -9,6 +9,7 @@ from api.dependencies import get_optional_user, get_qdrant, get_redis
 from api.identity import AuthenticatedUser
 from api.main import create_app
 from api.models.item import ItemProfile
+from api.models.player import PlayerProfile
 from api.services import entitlements
 from api.services.claude_billing import peek_claude_usage
 from api.services.rate_limit import peek, quota_for
@@ -362,6 +363,137 @@ async def test_drop_question_never_hits_the_llm(stream_app, redis_client, anon_s
     assert calls == []
     assert "The Shatters" in text
     assert "[item:Doom Bow]" in text
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    assert await peek(redis_client, quota) == 0
+
+
+async def test_anonymous_at_daily_limit_still_gets_stored_answer(
+    stream_app, redis_client, anon_settings
+):
+    """A guest who already spent their Claude turns can still get a
+    no-model reply. The daily cap only meters real AI calls."""
+    client, calls = stream_app
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Doom Bow",
+            drop_locations=["The Shatters"],
+        ),
+        anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={"message": "Where does Doom Bow drop?", "session_id": "s1-limit"},
+        )
+        assert response.status_code == 200
+        text = await _read_sse_text(response)
+    assert calls == []
+    assert "The Shatters" in text
+    assert await peek(redis_client, quota) == anon_settings.anonymous_message_limit
+
+
+async def test_stored_answers_are_burst_limited_even_after_daily_in_depth_is_spent(
+    stream_app, redis_client, anon_settings
+):
+    """The daily Claude cap no longer blocks stored replies. A short-window
+    burst cap still stops a flood of those free lookups."""
+    client, calls = stream_app
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Doom Bow",
+            drop_locations=["The Shatters"],
+        ),
+        anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        for i in range(anon_settings.chat_burst_limit_anonymous):
+            response = await http.post(
+                "/chat/stream",
+                json={
+                    "message": "Where does Doom Bow drop?",
+                    "session_id": f"s-burst-{i}",
+                },
+            )
+            assert response.status_code == 200, response.status_code
+            await _read_sse_text(response)
+        blocked = await http.post(
+            "/chat/stream",
+            json={"message": "Where does Doom Bow drop?", "session_id": "s-burst-over"},
+        )
+    assert blocked.status_code == 429
+    assert "Try again in a minute" in blocked.json()["detail"]
+    assert calls == []
+    assert await peek(redis_client, quota) == anon_settings.anonymous_message_limit
+
+
+async def test_claude_turn_at_daily_limit_still_returns_402(
+    stream_app, redis_client, anon_settings
+):
+    client, calls = stream_app
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "Tell me a fun fact about the weather",
+                "session_id": "s-claude-capped",
+            },
+        )
+    assert response.status_code == 402
+    assert calls == []
+
+
+async def test_player_lookup_at_daily_limit_is_stored_not_claude(
+    stream_app, redis_client, anon_settings, monkeypatch
+):
+    """Look up player never calls Claude, so it still works after the
+    in-depth cap. Live Sep 16: Nutz 402'd then the frontend scrape still
+    attached a character card onto the leftover copy."""
+    client, calls = stream_app
+
+    async def fake_scrape(_redis, username, *, ttl_seconds):
+        return PlayerProfile(username=username, fame=10, account_fame=20)
+
+    monkeypatch.setattr(
+        "api.services.stored_answers.get_or_scrape_player", fake_scrape
+    )
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={"message": "Look up player Nutz", "session_id": "s-player-capped"},
+        )
+        assert response.status_code == 200, response.status_code
+        text = await _read_sse_text(response)
+    assert calls == []
+    assert "Fame" in text
+    assert "Copy these" not in text
+    assert await peek(redis_client, quota) == anon_settings.anonymous_message_limit
+
+
+async def test_anonymous_claude_turn_still_spends_daily_quota(
+    stream_app, redis_client, anon_settings
+):
+    client, calls = stream_app
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "Tell me a fun fact about the weather",
+                "session_id": "s-claude",
+            },
+        )
+        assert response.status_code == 200
+        await _read_sse_text(response)
+    assert calls
     quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
     assert await peek(redis_client, quota) == 1
 

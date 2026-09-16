@@ -586,6 +586,16 @@ export async function* streamChat(
     throw Object.assign(new Error("Rate limited"), { paywall: body.detail as PaywallInfo });
   }
 
+  if (res.status === 429) {
+    const body = await res.json().catch(() => ({}));
+    const detail = (body as { detail?: unknown }).detail;
+    const message =
+      typeof detail === "string" && detail.trim()
+        ? detail
+        : "Too many questions. Try again in a minute.";
+    throw Object.assign(new Error(message), { tooMany: true });
+  }
+
   if (!res.ok) {
     throw new Error(`Chat error: ${res.statusText}`);
   }

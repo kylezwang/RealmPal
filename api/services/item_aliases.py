@@ -21,6 +21,7 @@ from ..models.build import (
     WEAPON_FAMILIES,
     weapon_family,
 )
+from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
 from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME, top_build_items
 
 SET_SLOT_COUNT = 4
@@ -31,6 +32,7 @@ CATALOG_PREFIX = "item:alias-catalog:v7"
 # letters (Lean, Cult staff). Letter nicknames still generate from hubs.
 COMMUNITY_ALIASES: dict[str, str] = {
     "lean": "Chrysalis of Eternity",
+    "lean crown": "Chrysalis of Eternity",
     "oreo": "Seal of Blasphemous Prayer",
     "tablet": "Tablet of the King's Avatar",
     "vest": "Vest of Abandoned Shadows",
@@ -112,7 +114,52 @@ COMMUNITY_ALIASES: dict[str, str] = {
     "void quiver": "Quiver of Shadows",
     "qot": "Quiver of Thunder",
     "leaf bow": "Leaf Bow",
+    "lbow": "Leaf Bow",
+    "cbow": "Coral Bow",
+    "coral bow": "Coral Bow",
+    "dbow": "Doom Bow",
+    "doom bow": "Doom Bow",
+    "clockwork": "Clockwork Repeater",
+    "clockwork repeater": "Clockwork Repeater",
+    "triangle": "The Triangle",
+    "the triangle": "The Triangle",
 }
+
+_EXTRACT_STOP = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "is",
+        "it",
+        "on",
+        "for",
+        "to",
+        "of",
+        "get",
+        "got",
+        "vs",
+        "better",
+        "best",
+        "what",
+        "which",
+        "should",
+        "i",
+        "me",
+        "my",
+        "you",
+        "we",
+        "this",
+        "that",
+        "with",
+        "from",
+        "do",
+        "does",
+        "how",
+    }
+)
 
 _STOP = frozenset({"of", "the", "a", "an", "and", "to", "for", "s"})
 _GENERIC = frozenset(
@@ -272,35 +319,11 @@ def _stem(text: str) -> str:
 
 
 def _levenshtein(a: str, b: str) -> int:
-    """Edit distance between two short words. No fuzzy-matching library
-    needed for single-typo tolerance - this is a ~10 line DP table."""
-    if a == b:
-        return 0
-    if not a or not b:
-        return max(len(a), len(b))
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        curr = [i] + [0] * len(b)
-        for j, cb in enumerate(b, 1):
-            cost = 0 if ca == cb else 1
-            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
-        prev = curr
-    return prev[-1]
+    return levenshtein(a, b)
 
 
 def _fuzzy_word_match(query_word: str, name_word: str) -> bool:
-    """Tolerate one dropped/swapped/substituted letter on a real word,
-    e.g. "croak" vs the real item word "crook" (found live Sep 15: user
-    intentionally misspelled "Bogwood Crook" and it failed to resolve).
-    Gated to longer words so a coincidental short-word match (e.g. "orb"
-    vs "org") doesn't misfire - a random 1-edit hit on a 3-letter word is
-    common; on a 4+ letter word it is a real signal of a typo."""
-    if len(query_word) < 4 or len(name_word) < 4:
-        return False
-    if abs(len(query_word) - len(name_word)) > 1:
-        return False
-    max_edits = 1 if max(len(query_word), len(name_word)) <= 7 else 2
-    return _levenshtein(query_word, name_word) <= max_edits
+    return fuzzy_word_match(query_word, name_word)
 
 
 def _type_words_in(name: str) -> list[str]:
@@ -401,7 +424,46 @@ def community_canonical(query: str) -> Optional[str]:
     for nick, canonical in COMMUNITY_ALIASES.items():
         if _compact(nick) == compact or _compact(nick) == _compact(_stem(key)):
             return canonical
-    return None
+    return fuzzy_closed_vocab(key, COMMUNITY_ALIASES.items())
+
+
+def extract_mentioned_items(message: str) -> list[str]:
+    """Every community nickname in the message, left to right.
+
+    "is cbow awakening or lbow awakening better" must return both Coral
+    Bow and Leaf Bow so the enchant/DPS agents can compare them. Phrase
+    keys (lean crown, leaf bow) win over their shorter pieces.
+    """
+    text = message or ""
+    lower = text.lower()
+    hits: list[tuple[int, int, str]] = []
+    for key, canon in sorted(COMMUNITY_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        for match in re.finditer(rf"\b{re.escape(key)}\b", lower):
+            hits.append((match.start(), match.end(), canon))
+    for match in re.finditer(r"\b[A-Za-z][A-Za-z']+\b", text):
+        token = match.group(0)
+        if token.lower() in _EXTRACT_STOP:
+            continue
+        # Exact keys already matched above. This pass is typos of 4+ letter
+        # nicknames only; min_len=3 would map "get" -> "gem".
+        canon = fuzzy_closed_vocab(
+            token, COMMUNITY_ALIASES.items(), min_len=4
+        )
+        if canon:
+            hits.append((match.start(), match.end(), canon))
+    hits.sort(key=lambda row: (row[0], -(row[1] - row[0])))
+    found: list[str] = []
+    seen: set[str] = set()
+    covered: list[tuple[int, int]] = []
+    for start, end, canon in hits:
+        if any(start >= a and end <= b for a, b in covered):
+            continue
+        covered.append((start, end))
+        key = canon.lower()
+        if key not in seen:
+            seen.add(key)
+            found.append(canon)
+    return found
 
 
 def score_nickname(

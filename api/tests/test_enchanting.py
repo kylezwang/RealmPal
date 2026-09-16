@@ -219,7 +219,6 @@ async def test_full_build_enchant_infers_class_primary_stat_without_named_stat(
     async def fake_graph(*args, **kwargs):
         return StatScalingGraph(season="test", edges=[])
 
-    monkeypatch.setattr(realmshark, "run_slot_agents", boom)
     monkeypatch.setattr(realmshark, "load_graph", fake_graph)
     monkeypatch.setattr(wiki_scaling, "load_class_wiki_scaling", boom)
 
@@ -232,3 +231,22 @@ async def test_full_build_enchant_infers_class_primary_stat_without_named_stat(
     assert "Kensei's abilities mostly scale with Dexterity" in text
     assert "Dexterity Bonus" in text
     assert "Attack Bonus" not in text
+
+
+async def test_retrieve_enchanting_brief_compares_cbow_and_lbow(redis_client):
+    await redis_client.set(enchanting.CACHE_KEY, json.dumps(_rolls_store()))
+    text = await enchanting.retrieve_enchanting_brief(
+        redis_client,
+        "is cbow awakening or lbow awakening better",
+        ttl_seconds=60,
+        cache_only=True,
+    )
+    assert "[item:Coral Bow]" in text
+    assert "[item:Leaf Bow]" in text
+    assert "Compare" in text
+
+
+def test_awakening_counts_as_an_enchant_question():
+    assert enchanting.is_enchant_query(
+        "is cbow awakening or lbow awakening better"
+    )

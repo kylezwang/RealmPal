@@ -22,11 +22,13 @@ from typing import Annotated, Any, Literal, Optional, TypedDict
 import redis.asyncio as aioredis
 from loguru import logger
 
+from .community_knowledge import store_ranking_brief
 from .chunks import wrap_slot_chunk
 from .dps_specialist import is_dps_query, retrieve_dps_brief
 from .dungeon_guide import extract_dungeon_query, retrieve_dungeon_guide
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .item_aliases import (
+    extract_mentioned_items,
     is_set_visualize_query,
     is_stat_class_shiny_divine_query,
     retrieve_set_visualizer,
@@ -77,6 +79,7 @@ def route_slots(
     stat: Optional[str],
     player_ign: Optional[str] = None,
     dungeon_name: Optional[str] = None,
+    history: Optional[list[str]] = None,
 ) -> tuple[list[SlotName], Depth]:
     """Full builds use every gear slot. Named-slot follow-ups stay narrow.
     A named shiny/divine set uses the set visualizer instead of the four
@@ -97,7 +100,7 @@ def route_slots(
         if dungeon_name:
             extras.append("dungeon")
         return ["set", *extras], "deep"
-    if is_skin_visualize_query(message):
+    if is_skin_visualize_query(message, history=history):
         extras: list[SlotName] = []
         if player_ign:
             extras.append("player")
@@ -129,6 +132,8 @@ def route_slots(
     depth: Depth = "brief"
     if enchant_only and not buildish and not named:
         slots = ["enchantment"]
+        if len(extract_mentioned_items(message)) >= 2:
+            slots.append("dps")
         depth = "deep"
     elif dps_only and not buildish and not named:
         slots = ["dps"]
@@ -173,7 +178,12 @@ def _intent(state: SlotState) -> dict:
         state["message"], state.get("user_history")
     )
     slots, depth = route_slots(
-        state["message"], class_name, stat, player_ign, dungeon_name
+        state["message"],
+        class_name,
+        stat,
+        player_ign,
+        dungeon_name,
+        history=state.get("user_history"),
     )
     return {
         "class_name": class_name,
@@ -417,11 +427,13 @@ def _join_reports(state: SlotState) -> str:
         )
     elif depth == "brief":
         header = (
-            f"BALANCED LOADOUT ({stat} {class_name}). Cover Weapon, Ability, "
-            "Armor, Ring, and Enchantments in similar depth — 2-3 alternatives "
-            "each. Do not open with a rings-only table or list five rings. "
-            "Rings are one slot, same weight as the others. Enchant rolls "
-            "come from the enchantment chunk only."
+            f"BALANCED LOADOUT ({stat} {class_name}). Lead with the SET "
+            "VISUALIZER PICKS tokens (weapon, ability, armor, ring) as the "
+            "recommended loadout, then the single RealmShark top-5 table "
+            "if it is in context. Use slot chunks only for a short why and "
+            "for overlay / Umi / wiki disagreements. Do not recap every "
+            "source or list five rings. Enchant rolls come from the "
+            "enchantment chunk only."
         )
     else:
         header = (
@@ -439,6 +451,13 @@ def _join_reports(state: SlotState) -> str:
         "Superior/Exalted/Unbound ...) are filtered out on purpose; never "
         "reintroduce them."
     )
+    ranking = ""
+    real_class = state.get("class_name")
+    real_stat = state.get("stat")
+    if real_class and real_stat and any(slot in slots for slot in (*_GEAR_SLOTS, "enchantment", "dps")):
+        ranking = store_ranking_brief(real_class, real_stat)
+    if ranking:
+        return header + "\n\n" + ranking + "\n\n" + "\n\n".join(reports)
     return header + "\n\n" + "\n\n".join(reports)
 
 

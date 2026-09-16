@@ -17,8 +17,10 @@ from api.services.rate_limit import (
     ANONYMOUS_SCOPE,
     QUOTA_TTL_SECONDS,
     USER_SCOPE,
+    chat_burst_quota_for,
     client_ip,
     consume,
+    lookup_quota_for,
     peek,
     quota_for,
     seconds_until_daily_reset,
@@ -249,3 +251,21 @@ async def test_anonymous_allowance_is_exhausted_at_the_limit(
     assert counts == list(range(1, quota.limit + 1))
     # The next request is the one that should be refused.
     assert await consume(redis_client, quota) == quota.limit + 1
+
+
+def test_chat_burst_bucket_is_not_daily_quota_or_lookup(anon_settings):
+    request = build_request(peer="198.51.100.7")
+    burst = chat_burst_quota_for(None, request, anon_settings)
+    daily = quota_for(None, request, anon_settings)
+    lookup = lookup_quota_for(None, request, anon_settings)
+    assert burst.key != daily.key
+    assert burst.key != lookup.key
+    assert burst.limit == anon_settings.chat_burst_limit_anonymous
+    assert burst.window_seconds == anon_settings.chat_burst_window_seconds
+
+
+def test_signed_in_chat_burst_is_higher_than_guest(anon_settings):
+    request = build_request()
+    guest = chat_burst_quota_for(None, request, anon_settings)
+    user = chat_burst_quota_for(SIGNED_IN, request, anon_settings)
+    assert user.limit > guest.limit

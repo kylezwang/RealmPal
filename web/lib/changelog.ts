@@ -23,6 +23,43 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-4",
+    date: "Sep 16, 2026",
+    items: [
+      "The upgrade popup shows again whenever you try an in-depth response after you are out for the day.",
+    ],
+  },
+  {
+    version: "2026.09.16-3",
+    date: "Sep 16, 2026",
+    items: [
+      "Outfit follow-ups, like asking for the small cloth too, stay on the free visualizer.",
+      "Looking up a player no longer spends an in-depth response.",
+      "The free counter now says in-depth responses.",
+      "When those run out, leftover suggestions sit above the message box until you hide them, and the tab title is Your AI Guide for RotMG.",
+    ],
+  },
+  {
+    version: "2026.09.16-2",
+    date: "Sep 16, 2026",
+    items: [
+      "Answers that do not use the AI no longer count toward your daily messages, even before you sign in.",
+      "The free counter now says in-depth prompts, so lookups that skip the AI stay free.",
+      "In-depth answers now lead with the recommended set and one RealmShark top 5, not a dump of every source.",
+      "When in-depth prompts run out, lookups still work, and the upgrade popup only shows once.",
+    ],
+  },
+  {
+    version: "2026.09.16",
+    date: "Sep 16, 2026",
+    items: [
+      "Attack Bard recommendations now follow the real best set, not just the wiki max-stat row.",
+      "Common nicknames like cbow, lbow, dbow, triangle, and lean crown now resolve to the real items.",
+      "Kagenohikari is always listed with Crown, Lean, and Gemstone when talking about rings.",
+      "Small typos in class and dungeon names still resolve, and cbow vs lbow awakening now compares both.",
+    ],
+  },
+  {
     version: "2026.09.15",
     date: "Sep 15, 2026",
     timestamp: "2026-09-15T10:49:50-07:00",
