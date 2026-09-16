@@ -100,6 +100,12 @@ def test_community_nicknames_for_bows_and_triangle():
     assert community_canonical("the triangle") == "The Triangle"
     assert community_canonical("lean crown") == "Chrysalis of Eternity"
     assert community_canonical("kage") == "Kagenohikari"
+    assert community_canonical("snake ring") == "Snake Eye Ring"
+    assert community_canonical("enforcer") == "Enforcer"
+    assert community_canonical("valor") == "Valor"
+    assert community_canonical("tarnished") == "Tools of the Tarnished"
+    assert community_canonical("maka") == "Makakoyumi"
+    assert community_canonical("lumi") == "Lumiaire"
 
 
 def test_extract_mentioned_items_returns_cbow_and_lbow():

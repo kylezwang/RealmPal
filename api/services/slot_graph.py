@@ -40,6 +40,7 @@ from .wiki_scaling import (
     retrieve_armor_brief,
     retrieve_universal_rings,
     retrieve_weapon_brief,
+    resolve_source_rank,
 )
 
 SlotName = Literal[
@@ -65,6 +66,10 @@ class SlotState(TypedDict, total=False):
     stat: Optional[str]
     player_ign: Optional[str]
     dungeon_name: Optional[str]
+    unique_build: bool
+    community_full_build: bool
+    community_source: str
+    primary_stat: Optional[str]
     slots: list[str]
     depth: Depth
     ttl_seconds: int
@@ -222,11 +227,30 @@ async def run_slot_agents(
         "stat": stat,
         "player_ign": player_ign,
         "dungeon_name": dungeon_name,
+        "unique_build": False,
+        "community_full_build": False,
+        "community_source": "",
+        "primary_stat": None,
         "ttl_seconds": ttl_seconds,
         "player_ttl_seconds": player_ttl_seconds,
         "reports": [],
         "combined": "",
     }
+    if class_name and stat:
+        try:
+            rank = await resolve_source_rank(
+                redis,
+                class_name,
+                stat,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+            )
+            seed["unique_build"] = bool(rank.get("unique_build"))
+            seed["community_full_build"] = bool(rank.get("community_full_build"))
+            seed["community_source"] = rank.get("community_source") or ""
+            seed["primary_stat"] = rank.get("primary_stat")
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Source rank flags unavailable")
     try:
         graph = _compile_graph(redis)
         result = await graph.ainvoke(seed)
@@ -426,18 +450,39 @@ def _join_reports(state: SlotState) -> str:
             "Source URL in the chunk."
         )
     elif depth == "brief":
-        header = (
-            f"BALANCED LOADOUT ({stat} {class_name}). Lead with the SET "
-            "VISUALIZER PICKS tokens (weapon, ability, armor, ring) as the "
-            "recommended loadout, then the single RealmShark top-5 table "
-            "if it is in context. After that, SLOT ALTERNATIVES for every "
-            "slot that has extras, taken only from the UmiEnjoyers "
-            "general-tab chunk. Never list a T7 robe or armor as an "
-            "alternative. Use slot chunks only for a short why and "
-            "for overlay / Umi / wiki disagreements. Do not recap every "
-            "source or list five rings. Enchant rolls come from the "
-            "enchantment chunk only."
-        )
+        unique = bool(state.get("unique_build"))
+        community = bool(state.get("community_full_build"))
+        if unique and not community:
+            header = (
+                f"UNIQUE LOADOUT ({stat} {class_name}). Ability, armor, and "
+                "ring stack the highest "
+                f"{stat} from the RealmEye Maximum Achievable Stats row. "
+                "Weapon may use the overlay family base. Do not use general "
+                "robe or leather cores. After the recommended set, SLOT "
+                "ALTERNATIVES from a matching Umi tab if one exists. Never "
+                "list a T7 robe or armor as an alternative."
+            )
+        elif unique:
+            header = (
+                f"UNIQUE LOADOUT ({stat} {class_name}). A RealmShark top 5 "
+                "or matching Umi tab already has this full set. Copy that "
+                "community loadout. Overlay family cores are general "
+                "gameplay only. After that, SLOT ALTERNATIVES from Umi. "
+                "Never list a T7 robe or armor as an alternative."
+            )
+        else:
+            header = (
+                f"BALANCED LOADOUT ({stat} {class_name}). Lead with the SET "
+                "VISUALIZER PICKS tokens (weapon, ability, armor, ring) as the "
+                "recommended loadout, then the single RealmShark top-5 table "
+                "if it is in context. After that, SLOT ALTERNATIVES for every "
+                "slot that has extras, taken only from the UmiEnjoyers "
+                "general-tab chunk. Never list a T7 robe or armor as an "
+                "alternative. Use slot chunks only for a short why and "
+                "for overlay / Umi / wiki disagreements. Do not recap every "
+                "source or list five rings. Enchant rolls come from the "
+                "enchantment chunk only."
+            )
     else:
         header = (
             f"SLOT FOLLOW-UP ({stat} {class_name}). The user asked about a "
@@ -458,7 +503,13 @@ def _join_reports(state: SlotState) -> str:
     real_class = state.get("class_name")
     real_stat = state.get("stat")
     if real_class and real_stat and any(slot in slots for slot in (*_GEAR_SLOTS, "enchantment", "dps")):
-        ranking = store_ranking_brief(real_class, real_stat)
+        ranking = store_ranking_brief(
+            real_class,
+            real_stat,
+            primary_stat=state.get("primary_stat"),
+            community_full_build=bool(state.get("community_full_build")),
+            community_source=state.get("community_source") or "",
+        )
     if ranking:
         return header + "\n\n" + ranking + "\n\n" + "\n\n".join(reports)
     return header + "\n\n" + "\n\n".join(reports)

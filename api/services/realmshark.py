@@ -46,6 +46,8 @@ from .community_knowledge import slot_alternatives_note, store_ranking_brief
 from .wiki_scaling import (
     cached_class_wiki_scaling,
     infer_class_primary_stat,
+    resolve_source_rank,
+    retrieve_class_max_stats,
 )
 
 REALMSHARK_API = "https://tracker.realmshark.cc/api/v1"
@@ -834,13 +836,27 @@ async def retrieve_build_knowledge(
         logger.bind(error=str(e)).warning("Slot specialists unavailable")
         slots_text = ""
 
+    rank = await resolve_source_rank(
+        redis,
+        class_name,
+        effective_stat,
+        ttl_seconds=ttl_seconds,
+        cache_only=True,
+    )
     extras = await _in_depth_build_extras(
         redis,
         class_name,
         effective_stat,
         ttl_seconds=ttl_seconds,
+        rank=rank,
     )
-    ranking = store_ranking_brief(class_name, effective_stat)
+    ranking = store_ranking_brief(
+        class_name,
+        effective_stat,
+        primary_stat=rank.get("primary_stat"),
+        community_full_build=bool(rank.get("community_full_build")),
+        community_source=rank.get("community_source") or "",
+    )
     if ranking and slots_text and ranking in slots_text:
         ranking = ""
     parts = [p for p in (inferred_note, ranking, slots_text, *extras) if p]
@@ -853,9 +869,30 @@ async def _in_depth_build_extras(
     stat: Optional[str],
     *,
     ttl_seconds: int,
+    rank: Optional[dict] = None,
 ) -> list[str]:
     """Set-visualizer four-slot picks plus one RealmShark top-5 table."""
+    rank = rank or {}
+    unique = bool(rank.get("unique_build"))
+    community = bool(rank.get("community_full_build"))
     bits: list[str] = []
+    max_stats = ""
+    if unique and class_name:
+        try:
+            max_stats = await retrieve_class_max_stats(
+                redis,
+                class_name,
+                ttl_seconds=ttl_seconds,
+                stat=stat,
+                cache_only=True,
+                unique_build=True,
+                community_full_build=community,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Class max-stats unavailable")
+            max_stats = ""
+        if max_stats and not community:
+            bits.append(max_stats)
     if class_name and stat:
         try:
             from .wiki_scaling import top_build_items
@@ -874,11 +911,21 @@ async def _in_depth_build_extras(
             f"[item:{picks[slot]}]" for slot in SET_SLOTS if picks.get(slot)
         )
         if tokens:
-            bits.append(
+            pick_note = (
                 "SET VISUALIZER PICKS in weapon, ability, armor, ring order. "
                 "Already ranked RealmShark majority, then the player overlay. "
-                "If the answer is a recommended loadout, copy these tokens: "
-                f"{tokens}"
+            )
+            if unique and not community:
+                pick_note += (
+                    "This unique build has no RealmShark/Umi full set. "
+                    "Ability, armor, and ring should follow the Maximum "
+                    "Achievable Stats row above, not these tokens, unless a "
+                    "token is the overlay family weapon. "
+                )
+            bits.append(
+                pick_note
+                + "If the answer is a recommended loadout, copy these tokens: "
+                + tokens
             )
     if class_name:
         try:
@@ -896,14 +943,24 @@ async def _in_depth_build_extras(
                 "Umi BIS alternatives unavailable"
             )
             umi = ""
-        alt_note = slot_alternatives_note(class_name, stat)
+        umi = umi or rank.get("umi_text") or ""
+        alt_note = slot_alternatives_note(
+            class_name,
+            stat,
+            unique_build=unique,
+            community_full_build=community,
+        )
         bits.append(f"{alt_note}\n{umi}" if umi else alt_note)
     try:
         graph = await load_graph(redis, ttl_seconds, cache_only=True)
     except Exception as e:
         logger.bind(error=str(e)).warning("RealmShark graph unavailable")
+        if unique and community and max_stats:
+            bits.append(max_stats)
         return bits
     if not class_name:
+        if unique and community and max_stats:
+            bits.append(max_stats)
         return bits
     matched = [
         edge
@@ -922,6 +979,8 @@ async def _in_depth_build_extras(
         formatted = format_loadouts(matched[0].label, loadouts)
         if formatted:
             bits.append(formatted)
+        if unique and community and max_stats:
+            bits.append(max_stats)
         return bits
     if stat:
         sister = await _sister_weapon_loadouts(
@@ -934,4 +993,6 @@ async def _in_depth_build_extras(
         )
         if sister:
             bits.append(sister)
+    if unique and community and max_stats:
+        bits.append(max_stats)
     return bits
