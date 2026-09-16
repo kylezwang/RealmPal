@@ -23,6 +23,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from loguru import logger
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeout
@@ -1607,22 +1608,150 @@ async def scrape_class_max_stats(class_name: str) -> dict:
         }
 
 
-async def scrape_umi_bis(class_name: str) -> tuple[str, str]:
-    """Community best-in-slot page for a class. Stats still come from RealmEye."""
+def umi_bis_url(class_name: str, tab: str = "general") -> str:
+    """Umi tab pages are query params, e.g. ?tab=speed-wizard not just general."""
     slug = class_name.strip().lower()
-    url = f"{UMI_BASE}/guides/best-in-slot/{slug}?tab=general"
-    logger.bind(class_name=class_name, url=url).info("Scraping UmiEnjoyers BIS")
+    tab_slug = re.sub(r"\s+", "-", (tab or "general").strip().lower())
+    return f"{UMI_BASE}/guides/best-in-slot/{slug}?tab={tab_slug}"
+
+
+_BUILD_TAB = re.compile(
+    r"^(general|attack|speed|dexterity|dex|wisdom|wis|defense|def|"
+    r"vitality|vit|life|hp|mana|mp)\b",
+    re.I,
+)
+
+
+def parse_umi_tab_labels(labels: list[str]) -> list[tuple[str, str]]:
+    """Button/role=tab text when the SPA does not put ?tab= on an <a>."""
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in labels:
+        name = re.sub(r"\s+", " ", (raw or "").strip())
+        if not name or not _BUILD_TAB.search(name):
+            continue
+        slug = re.sub(r"\s+", "-", name.lower())
+        if slug in seen:
+            continue
+        seen.add(slug)
+        found.append((slug, name))
+    return found
+
+
+def parse_umi_tab_links(
+    page_url: str, links: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """Same-path ?tab= links. Class-switch nav uses a different path."""
+    base_path = urlparse(page_url).path.rstrip("/")
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for href, label in links:
+        try:
+            parsed = urlparse(urljoin(page_url, href))
+        except ValueError:
+            continue
+        if parsed.path.rstrip("/") != base_path:
+            continue
+        slugs = parse_qs(parsed.query).get("tab") or []
+        if not slugs:
+            continue
+        tab = slugs[0].strip().lower()
+        if not tab or tab in seen:
+            continue
+        seen.add(tab)
+        name = re.sub(r"\s+", " ", (label or tab).strip()) or tab
+        found.append((tab, name))
+    if "general" not in seen:
+        found.insert(0, ("general", "General"))
+    return found
+
+
+async def _umi_visible_panel(page) -> str:
+    panel = page.locator("[role='tabpanel']:visible")
+    if await panel.count():
+        try:
+            return await panel.first.inner_text(timeout=5000)
+        except Exception:
+            pass
+    try:
+        return await page.locator("main, article").first.inner_text(timeout=8000)
+    except Exception:
+        return await page.locator("body").inner_text(timeout=8000)
+
+
+async def _umi_open_tab(page, tab_slug: str, tab_name: str) -> None:
+    """Query param often is not enough. The panel hydrates after a click."""
+    try:
+        await page.get_by_text("Main build", exact=False).first.wait_for(
+            timeout=4000
+        )
+        return
+    except Exception:
+        pass
+    loc = page.get_by_role("tab", name=re.compile(rf"^{re.escape(tab_name)}$", re.I))
+    if await loc.count() == 0:
+        loc = page.get_by_role(
+            "link", name=re.compile(rf"^{re.escape(tab_name)}$", re.I)
+        )
+    if await loc.count() == 0:
+        loc = page.get_by_text(tab_name, exact=True)
+    if await loc.count():
+        await loc.first.click()
+    await page.get_by_text("Main build", exact=False).first.wait_for(timeout=8000)
+
+
+async def scrape_umi_bis(class_name: str) -> tuple[str, str]:
+    """Every Umi BIS tab (general, speed-wizard, attack-wizard, ...)."""
+    landing = umi_bis_url(class_name, "general")
+    logger.bind(class_name=class_name, url=landing).info("Scraping UmiEnjoyers BIS")
     async with _playwright_browser() as browser:
         page = await _new_page(browser)
-        await _goto_with_retry(page, url, ready_selector="main, article, body", timeout=20_000)
-        try:
-            text = await page.locator("main, article").first.inner_text(timeout=8000)
-        except Exception:
-            text = await page.locator("body").inner_text(timeout=8000)
-        cleaned = re.sub(r"\n{3,}", "\n\n", (text or "").strip())
-        if len(cleaned) > 10_000:
-            cleaned = cleaned[:10_000] + "\n…"
-        return cleaned, url
+        await _goto_with_retry(
+            page, landing, ready_selector="main, article, body", timeout=20_000
+        )
+        raw_links = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('a[href]')).map(
+                 (a) => [a.getAttribute('href') || '', (a.textContent || '').trim()]
+               )"""
+        )
+        tabs = parse_umi_tab_links(page.url, [(h, n) for h, n in raw_links])
+        raw_labels = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('[role=tab], button'))
+                 .map((el) => (el.textContent || '').trim())
+                 .filter(Boolean)"""
+        )
+        have = {slug for slug, _name in tabs}
+        for slug, name in parse_umi_tab_labels(raw_labels):
+            if slug not in have:
+                tabs.append((slug, name))
+                have.add(slug)
+        sections: list[str] = []
+        for tab_slug, tab_name in tabs:
+            url = umi_bis_url(class_name, tab_slug)
+            await _goto_with_retry(
+                page, url, ready_selector="main, article, body", timeout=20_000
+            )
+            try:
+                await _umi_open_tab(page, tab_slug, tab_name)
+            except Exception as e:
+                logger.bind(url=url, error=str(e)).warning(
+                    "Umi tab panel did not show Main build"
+                )
+            body = await _umi_visible_panel(page)
+            body = re.sub(r"\n{3,}", "\n\n", (body or "").strip())
+            if not body:
+                continue
+            sections.append(
+                f"## Umi tab: {tab_name} (?tab={tab_slug})\n{body}"
+            )
+        cleaned = "\n\n".join(sections).strip()
+        if not cleaned:
+            cleaned = await _umi_visible_panel(page)
+            cleaned = re.sub(r"\n{3,}", "\n\n", (cleaned or "").strip())
+        if len(cleaned) > 24_000:
+            cleaned = cleaned[:24_000] + "\n…"
+        return cleaned, landing
+
 
 
 # RealmEye's outfit chooser (top-characters-with-dyes.js) lists every class

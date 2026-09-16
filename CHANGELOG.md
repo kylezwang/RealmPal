@@ -28,6 +28,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Anonymous stored answers no longer spend the daily guest quota** (`api/routers/chat.py`): the stored-hit branch used to call `_enforce_quota()` only for `quota.is_anonymous` so guests would hit the sign-in wall after 3 no-model replies. Guest, free, and Pro now all skip the meter when the turn never calls Claude. A real Claude turn still consumes. A guest who already spent their Claude turns can still get stored replies.
 - **Claude uses the same store ranking as stored answers** (`api/services/rag.py`, `store_ranking_brief`): in-depth model turns were still told RealmEye hub tables were the source of truth. System prompt + injected chunk now rank RealmShark first, then the player overlay, Umi in synergy, class-page max-stats last. Weapon/armor briefs prepend overlay picks (Attack Bard Triangle + Vesture).
 - **In-depth Claude builds use slot agents instead of the wiki dump** (`retrieve_build_knowledge`): generic class+stat turns now call `run_slot_agents` (weapon / ability / armor / ring / enchantment), then compact extras from `top_build_items` (SET VISUALIZER PICKS), UmiEnjoyers general-tab BIS as the **only** source for weapon/ability/armor/ring alternatives (`slot_alternatives_note` + `retrieve_umi_bis` cache-only), and one matching RealmShark top-5 table (`format_loadouts`). Attack robe classes always name Diplomatic Robe and Vesture of Duality (Kimono honorable); T7 robes are dropped from armor hub lists. Attack Bard overlay puts The Triangle on **ability**, not weapon. Skips extra wiki RAG on those turns. Infer the class primary stat before the fan-out so "best kensei build" still gets Dexterity enchants.
+- **Umi BIS scraper reads every build tab** (`scrape_umi_bis`): Umi pages hide gear behind `?tab=speed-wizard` / `?tab=attack-wizard` / `?tab=general`. The old scrape only opened general and took `inner_text` of `main` before the panel hydrated. Now it follows each `?tab=` link (and `[role=tab]` labels), clicks if needed, waits for "Main build", and stores labeled sections in `umi:bis:v2:`. Claude prefers the tab matching the asked stat.
 - **Warm/refresh CLI uses the same Redis prefix as the API** (`api/scripts/warm_specialists.py`, `refresh_wiki.py`): wrap with `namespaced(..., settings.redis_key_prefix)`. `warm_specialists --drop-briefs` deletes minted `wiki:build:v1:*` essays so the next in-depth ask regenerates.
 - **Guest/free counter copy** (`web/lib/usageCopy.ts`): "in-depth responses" (only Claude turns spend this). Paywall and 402 copy match.
 - **Chat burst limiter** (`chat_burst_quota_for`, `_enforce_chat_burst`): every `/chat/stream` turn, including stored answers, counts against a 60s window (20/min guest, 60/min signed-in). 429 when exceeded. Separate Redis key from the daily in-depth quota and from lookup scrape limits.
@@ -54,6 +55,9 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_store_ranking_brief_attack_bard_names_triangle`
 - `test_in_depth_build_uses_slot_agents_set_picks_and_one_shark_top5`
 - `test_armor_brief_attack_robes_name_vesture_not_t7`
+- `test_umi_bis_url_uses_speed_wizard_tab`
+- `test_parse_umi_tab_links_keeps_build_tabs_not_class_nav`
+- `test_retrieve_umi_bis_prefers_matching_stat_tab`
 - `test_stored_answers_are_burst_limited_even_after_daily_in_depth_is_spent`
 - `test_claude_turn_at_daily_limit_still_returns_402`
 - `test_chat_burst_bucket_is_not_daily_quota_or_lookup`

@@ -889,6 +889,7 @@ async def _in_depth_build_extras(
                 class_name,
                 ttl_seconds=ttl_seconds,
                 cache_only=True,
+                stat=stat,
             )
         except Exception as e:
             logger.bind(error=str(e), class_name=class_name).warning(

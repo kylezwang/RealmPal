@@ -49,6 +49,7 @@ HUB_PREFIX = "wiki:hub-index:v8"
 ITEM_CACHE_PREFIX = "item:profile:v3"
 LEGACY_ITEM_CACHE_PREFIX = "item:profile:v2"
 CLASS_MAXSTATS_PREFIX = "wiki:class-maxstats:v1"
+UMI_BIS_PREFIX = "umi:bis:v2:"
 MAX_UT = 8
 
 _SKIP_NAME = re.compile(
@@ -1319,9 +1320,10 @@ async def retrieve_umi_bis(
     *,
     ttl_seconds: int,
     cache_only: bool = False,
+    stat: Optional[str] = None,
 ) -> str:
-    """UmiEnjoyers general BIS — weapon/slot ideas, not stat truth."""
-    cache_key = f"umi:bis:v1:{class_name.lower()}"
+    """UmiEnjoyers BIS tabs — weapon/slot ideas, not stat truth."""
+    cache_key = f"{UMI_BIS_PREFIX}{class_name.lower()}"
     cached = await redis.get(cache_key)
     if cached:
         text, url = json.loads(cached)
@@ -1336,17 +1338,23 @@ async def retrieve_umi_bis(
             )
             return ""
         await redis.setex(cache_key, ttl_seconds, json.dumps([text, url]))
+    tab_hint = ""
+    if stat:
+        tab_slug = re.sub(r"\s+", "-", f"{stat} {class_name}".strip().lower())
+        tab_hint = (
+            f"Prefer the Umi tab that matches {stat} {class_name} "
+            f"(?tab={tab_slug}, e.g. Speed Wizard at ?tab=speed-wizard). "
+        )
     return (
-        f"UmiEnjoyers community BIS ({class_name}, general tab). One of "
-        f"three sources used together: RealmShark DPS boards first when a "
-        f"board exists, this Umi page in synergy, RealmEye class-page "
-        f"Maximum Achievable Stats last (that table is a max-stat stack, "
-        f"not the best playstyle build). The general tab is often a generic "
-        f"or Attack loadout. Do not use it as the armor, ring, or ability "
-        f"pick for a non-Attack ask (e.g. do not pick Vesture of Duality "
-        f"for a Wisdom robe build). For Attack robe classes, name "
-        f"Diplomatic Robe and Vesture of Duality, with Flowering Kimono as "
-        f"an honorable mention.\n"
+        f"UmiEnjoyers community BIS ({class_name}). Tabs are separate "
+        f"pages such as ?tab=general, ?tab=speed-wizard, "
+        f"?tab=attack-wizard. {tab_hint}"
+        "Use General for alternatives and when no matching tab exists. "
+        "Do not use an Attack tab as the armor, ring, or ability pick "
+        "for a non-Attack ask (e.g. do not pick Vesture of Duality "
+        "for a Wisdom robe build). For Attack robe classes, name "
+        "Diplomatic Robe and Vesture of Duality, with Flowering Kimono as "
+        "an honorable mention.\n"
         f"Source: {url}\n\n{text}"
     )
 
