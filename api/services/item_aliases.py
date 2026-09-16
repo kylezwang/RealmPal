@@ -213,6 +213,16 @@ _TAIL_ABBREV = {"breastplate": "bp", "wakizashi": "waki", "quiver": "quiv"}
 _BARE_QUALITY_WORDS = {
     "rare", "epic", "legendary", "mythic", "godly", "common", "uncommon", "fabled",
 }
+# Same words as _BARE_QUALITY_WORDS, but stripped from *inside* a segment
+# (not just when the whole segment is nothing else) - "rare genesis spell"
+# and "legendary snake eye ring" name real items with a rarity tier glued
+# on the front, same as "shiny"/"divine" already were. Found live Sep 15:
+# "rare genesis spell" and "rare diplomatic robe" kept their "rare" prefix
+# and failed to resolve against the catalog ("Genesis Spell"/"Diplomatic
+# Robe" have no "rare" in their wiki titles).
+_QUALITY_WORDS_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_BARE_QUALITY_WORDS)) + r")\b", re.I
+)
 _SHINY = re.compile(r"\b(?:all\s+)?shiny\b", re.I)
 _DIVINE = re.compile(r"\b(?:all\s+)?divine\b", re.I)
 _WITH_ITEMS = re.compile(r"\bwith\s+([\s\S]+?)(?:[.!?]|$)", re.I)
@@ -259,6 +269,38 @@ def _stem(text: str) -> str:
     if word.endswith("s") and not word.endswith("ss") and len(word) > 4:
         return word[:-1]
     return word
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Edit distance between two short words. No fuzzy-matching library
+    needed for single-typo tolerance - this is a ~10 line DP table."""
+    if a == b:
+        return 0
+    if not a or not b:
+        return max(len(a), len(b))
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev = curr
+    return prev[-1]
+
+
+def _fuzzy_word_match(query_word: str, name_word: str) -> bool:
+    """Tolerate one dropped/swapped/substituted letter on a real word,
+    e.g. "croak" vs the real item word "crook" (found live Sep 15: user
+    intentionally misspelled "Bogwood Crook" and it failed to resolve).
+    Gated to longer words so a coincidental short-word match (e.g. "orb"
+    vs "org") doesn't misfire - a random 1-edit hit on a 3-letter word is
+    common; on a 4+ letter word it is a real signal of a typo."""
+    if len(query_word) < 4 or len(name_word) < 4:
+        return False
+    if abs(len(query_word) - len(name_word)) > 1:
+        return False
+    max_edits = 1 if max(len(query_word), len(name_word)) <= 7 else 2
+    return _levenshtein(query_word, name_word) <= max_edits
 
 
 def _type_words_in(name: str) -> list[str]:
@@ -386,7 +428,17 @@ def score_nickname(
         and sig[-1] in _QUALIFIED_TAIL
     )
     if not first_word_only:
-        if q_tokens and all(token in name_words for token in q_tokens):
+        # A single-letter typo on an otherwise-exact word match ("croak"
+        # for the real "crook") is as strong a signal as an exact match
+        # for our purposes, so it earns the same high-score tier instead
+        # of falling to the looser +25 branch below (which alone doesn't
+        # clear resolve_against_catalog's score-40 cutoff). Found live
+        # Sep 15: "bogwood croak" failed to resolve to "Bogwood Crook" at
+        # all.
+        if q_tokens and all(
+            token in name_words or any(_fuzzy_word_match(token, word) for word in name_words)
+            for token in q_tokens
+        ):
             score += 40 + 15 * len(q_tokens)
         elif q_tokens and all(
             any(
@@ -468,16 +520,15 @@ def extract_set_item_names(prompt: str) -> list[str]:
     names: list[str] = []
     for part in _NAME_SPLIT.split(candidate):
         cleaned = _SHINY_DIVINE_WORDS.sub("", part)
+        cleaned = _QUALITY_WORDS_RE.sub("", cleaned)
         cleaned = _LEADING_AND.sub("", cleaned).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
         # A stray comma can split a rarity word off its own item, e.g.
         # "...rare diplomatic robe, shiny rare, the twilight gemstone"
         # (found live Sep 15) yields a bare "rare" segment once "shiny" is
-        # stripped. That is never a real item name on its own and, left
-        # in, consumes one of the 4 SET_SLOT_COUNT slots below and pushes
-        # the real trailing item (here, the ring) out of the result.
-        if cleaned.lower() in _BARE_QUALITY_WORDS:
-            continue
+        # stripped. That is never a real item name on its own and, once
+        # _QUALITY_WORDS_RE above also strips it, is just empty - the
+        # length check below already drops it, no separate case needed.
         if 3 <= len(cleaned) <= 60:
             names.append(cleaned)
     # A real set names 2+ items. This guard used to only apply to the
