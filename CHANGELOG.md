@@ -27,6 +27,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Stored build briefs only match this turn's class+stat** (`stored_answers._build_reply`, `maybe_mint_brief`): `parse_query(..., history=...)` used to inherit Huntress/Dexterity (and `buildish`) from earlier turns, so an LLM-bound follow-up after a minted `wiki:build:v1:huntress:dexterity` brief streamed that same loadout instead of falling through to `_enforce_quota`. Live Sep 16 prod: a guest at 0 in-depth left sent a Claude-activating test prompt and got the prior Dexterity Huntress essay. Briefs now parse this message only. Asking the same class+stat again is still a cache hit. History inheritance stays on the Claude path for thin follow-ups.
 - **Guest Register opens the paywall signup slide** (`AccountMenu`, `PaywallModal` `reason=create_account`): the guest profile Register item used to `router.push("/auth/signin?mode=register")`, which left chat and did not show a modal. It now opens the same create-account slide as paywall step 3, prefills the sidebar IGN, and writes the IGN to account profile storage before and after `registerAccount` so the pet restore survives the auth-changed event.
 - **Composer footer attribution moved to About** (`AccountMenu`): "Data via realmeye.com..." no longer sits under the message box. Account menu About (guest and signed-in) opens a small modal with RealmEye, RealmShark, UmiEnjoyers, and the DECA disclaimer.
 - **Tab icon is the sword, then the saved pet** (`GET /sprite/crop`, `TabIcon.tsx`): default Next.js triangle `favicon.ico` replaced with `public/sprites/sword.png`. After a pet lookup, the tab icon points at a cropped PNG from the API (RealmEye sheets have no CORS, so an in-browser canvas crop stays tainted and never swaps). Account profile restore is case-insensitive, writes a last-used backup so JWT padding misses still reload the IGN/pet, and a silent pet refetch no longer wipes a cached pet.
@@ -71,6 +72,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_retrieve_umi_bis_prefers_matching_stat_tab`
 - `test_stored_answers_are_burst_limited_even_after_daily_in_depth_is_spent`
 - `test_claude_turn_at_daily_limit_still_returns_402`
+- `test_cached_build_does_not_resurface_on_an_unrelated_follow_up`
+- `test_guest_at_limit_gets_paywall_not_a_prior_build_brief`
 - `test_chat_burst_bucket_is_not_daily_quota_or_lookup`
 - `test_followup_and_small_sentinel_cloth_too_is_skin_query`
 - `test_skin_followup_with_history_routes_to_skin_agent`
