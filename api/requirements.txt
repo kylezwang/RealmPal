@@ -12,6 +12,7 @@ loguru==0.7.3
 PyJWT[crypto]==2.10.1
 stripe==11.4.1
 httpx==0.28.1
+Pillow==11.3.0
 llama-index==0.12.5
 llama-index-llms-anthropic==0.6.4
 llama-index-vector-stores-qdrant==0.4.3

@@ -23,6 +23,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-9",
+    date: "Sep 16, 2026",
+    items: [
+      "The browser tab now uses the RealmPal sword, or your pet once you have one set.",
+    ],
+  },
+  {
     version: "2026.09.16-8",
     date: "Sep 16, 2026",
     items: [

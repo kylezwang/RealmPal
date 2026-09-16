@@ -27,6 +27,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Tab icon is the sword, then the saved pet** (`GET /sprite/crop`, `TabIcon.tsx`): default Next.js triangle `favicon.ico` replaced with `public/sprites/sword.png`. After a pet lookup, the tab icon points at a cropped PNG from the API (RealmEye sheets have no CORS, so an in-browser canvas crop stays tainted and never swaps). Account profile restore is case-insensitive, writes a last-used backup so JWT padding misses still reload the IGN/pet, and a silent pet refetch no longer wipes a cached pet.
 - **Paywall demo videos** (`web/components/chat/PaywallModal.tsx`): first two slides play `/videos/paywall/set-building-demo.mp4` and `/videos/paywall/visualizer.mp4`. Slide 1 autoplays on open. Slide 2 pauses slide 1 if it is still playing and autoplays the visualizer once. Finished videos do not replay. Video slides use `max-w-3xl` and `object-cover`; signup/pricing stay `max-w-sm`.
 - **Named set visualizer uses catalog slot kinds and RealmEye URLs** (`item_aliases.retrieve_set_visualizer`, `chat.py`): Crown aliases to The Forgotten Crown; leftover "all" after a comma list is stripped; tokens order by real catalog slot (weapon/ability/armor/ring) not list order; each item gets a hub kind (Warmonger is a bow) plus RealmEye wiki URL. Chat no longer stamps the RealmShark leaderboard citation on set, skin, dungeon, player, or enchant turns.
 - **User-facing copy says overall, not overlay** (`community_knowledge.py`, `wiki_scaling.py`, `rag.py`, `slot_graph.py`, `realmshark.py`): Claude was copying "Player overlay" into leftover Why columns (Attack Bard Vesture). Prompt strings now say Overall / overall pick. `_first_visualizer_item` still skips those core lines (legacy "Player overlay" prefix too). System prompt: never say overlay to the user.
@@ -80,8 +81,13 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_overlay_slot_picks_kensei_dex_uses_tools_and_fungal`
 - `test_trailing_all_shiny_divine_does_not_stick_to_crown`
 - `test_named_bard_set_uses_realmeye_bow_kind_and_forgotten_crown`
+- `test_sprite_crop_endpoint_returns_png`
+- `test_sprite_crop_rejects_unknown_host`
 
 ### History
+#### Until Sep 16, 2026 (tab icon, unshipped)
+Tab icon used a client canvas crop with `crossOrigin=anonymous`. RealmEye taints that canvas, so `toDataURL` failed and the tab stayed on the sword after a pet was set.
+
 #### Until Sep 16, 2026 (1:20 PM)
 Source ranking treated Maximum Achievable Stats as last for every class+stat. Unique Dex/Vit Samurai and Kensei did not overlay Tools of the Tarnished + Fungal Breastplate. Heavy armor had no forced list.
 

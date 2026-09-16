@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { registerAccount, requestSignInLink, signInWithPassword, startOAuth } from "@/lib/api";
+import { saveSavedAccountProfile } from "@/lib/accountProfile";
 import { SWORD_SPRITE, SIGNIN_HERO_IMAGE } from "@/lib/sprites";
 
 type Mode = "signin" | "register";
@@ -361,6 +362,7 @@ export default function SignInPage() {
           ign: ign.trim(),
           confirmPassword,
         });
+        saveSavedAccountProfile({ ign: ign.trim() }, trimmed);
       } else {
         await signInWithPassword(trimmed, password, { persist: staySignedIn });
       }

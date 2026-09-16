@@ -16,6 +16,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "RealmPal | Your AI Guide for RotMG",
   description: "AI-powered Realm of the Mad God companion. Look up players, guilds, items, and dungeon strategies.",
+  icons: {
+    icon: "/sprites/sword.png",
+  },
   openGraph: {
     title: "RealmPal",
     description: "Your AI Guide for RotMG",
