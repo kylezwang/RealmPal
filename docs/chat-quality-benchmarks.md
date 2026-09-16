@@ -88,7 +88,19 @@ Later Claude 402s still keep the user message and pin leftover
 suggestions above the input (guest: create an account; signed-in: RealmPal
 Pro) until the user hides them.
 
+A minted class+stat build brief (`wiki:build:v1:{class}:{stat}`) only
+serves when *this* message names that class and stat again. Prior turns
+do not glue a stored loadout onto a later Claude-bound prompt. Found live
+Sep 16: a guest at 0 in-depth left asked a test prompt after a Dexterity
+Huntress brief and got the cached essay instead of the paywall.
+
 ## History
+### Until Sep 16, 2026 (later same day, build-brief history leak)
+`_build_reply` and `maybe_mint_brief` called `parse_query(message, history=...)`.
+Any later message that was not a known specialist topic inherited
+class/stat/`buildish` from an earlier build turn and could resurface that
+brief. The paywall path only ran when stored lookup returned None.
+
 ### Until Sep 16, 2026 (later same day)
 The current-policy table said "Depletes the daily 3-message quota" for
 anonymous Claude turns. Copy was then "AI-powered responses", then

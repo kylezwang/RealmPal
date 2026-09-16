@@ -23,6 +23,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-11",
+    date: "Sep 16, 2026",
+    items: [
+      "An earlier build answer no longer comes back when you ask something else. If you are out of in-depth replies, that new question opens the upgrade popup.",
+    ],
+  },
+  {
     version: "2026.09.16-10",
     date: "Sep 16, 2026",
     items: [

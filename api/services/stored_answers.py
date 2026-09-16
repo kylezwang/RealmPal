@@ -484,23 +484,24 @@ async def _slot_reply(redis: aioredis.Redis, message: str) -> Optional[StoredRep
 
 
 async def _build_reply(
-    redis: aioredis.Redis, message: str, history: Optional[list[str]]
+    redis: aioredis.Redis, message: str
 ) -> Optional[StoredReply]:
     if is_enchant_query(message):
         # An enchant question (e.g. "...insane with the awakened
         # enchantment?") almost always names a slot noun (ring/armor/weapon/
         # ability), which alone flips parse_query's weak `buildish` regex to
-        # True even with no class or stat in *this* message - and once
-        # buildish is True, class_name/stat get pulled in from history no
-        # matter how many turns back or how unrelated. Found live Sep 14: a
-        # follow-up about a Snake Eye Ring's awakened enchant got answered
-        # with a stale cached "Ninja Attack build" brief from several turns
-        # earlier because "ring" alone was enough to look buildish. Enchant
+        # True even with no class or stat in *this* message. Enchant
         # questions have their own specialist (is_enchant_query is the same
         # gate api/routers/chat.py uses to route to it) - never let the
         # generic class+stat build cache intercept them first.
         return None
-    class_name, stat, buildish = parse_query(message, history=history)
+    # Stored briefs are "ask this again" hits, not conversation memory.
+    # parse_query's history inheritance is for Claude follow-ups
+    # ("what other rings"). Found live Sep 16: after a Dexterity Huntress
+    # brief, a later LLM-bound test prompt inherited Huntress/Dexterity
+    # and slipped the same cached loadout out instead of 402ing the
+    # in-depth paywall. Only this turn's own class+stat may match a brief.
+    class_name, stat, buildish = parse_query(message)
     if not (buildish and class_name and stat):
         return None
     if class_name not in CLASS_ABILITY_HUB:
@@ -667,7 +668,7 @@ async def try_stored_reply(
     slot = await _slot_reply(redis, message)
     if slot:
         return slot
-    return await _build_reply(redis, message, history)
+    return await _build_reply(redis, message)
 
 
 async def maybe_mint_brief(
@@ -689,14 +690,11 @@ async def maybe_mint_brief(
         return None
     if is_enchant_query(message):
         # Same reasoning as _build_reply: a slot noun (ring/armor/weapon/
-        # ability) alone can flip buildish True and pull a stale class+stat
-        # in from history, which would mint *this* enchant answer over the
-        # general class+stat build brief - corrupting it for the next real
-        # "best attack ninja build" ask. Enchant answers are never a
-        # substitute for the general build brief.
+        # ability) alone can flip buildish True. Enchant answers are never
+        # a substitute for the general build brief.
         return None
     text = reply.strip()[:MAX_BRIEF_CHARS]
-    class_name, stat, buildish = parse_query(message, history=history)
+    class_name, stat, buildish = parse_query(message)
     if not (buildish and class_name and stat):
         return None
     key = build_brief_key(class_name, stat)

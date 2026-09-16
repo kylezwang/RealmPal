@@ -306,14 +306,9 @@ async def test_enchant_question_about_a_ring_does_not_reuse_a_cached_build_brief
         ttl_seconds=anon_settings.wiki_ttl_seconds,
     )
     assert await redis_client.get(build_brief_key("Ninja", "Attack"))
-    history = [
-        "Best attack ninja build",
-        "Would this be the bis attack ninja then?",
-    ]
     reply = await _build_reply(
         redis_client,
         "Shiny divine snake eye ring. Is it insane with the awakened enchantment?",
-        history,
     )
     assert reply is None
 
@@ -448,6 +443,68 @@ async def test_claude_turn_at_daily_limit_still_returns_402(
         )
     assert response.status_code == 402
     assert calls == []
+
+
+async def test_cached_build_does_not_resurface_on_an_unrelated_follow_up(
+    redis_client, anon_settings
+):
+    """Stored briefs only match when this turn asks for that class+stat
+    again. Found live Sep 16: after a Dexterity Huntress brief, a later
+    LLM-bound prompt inherited Huntress/Dexterity from history and
+    streamed the same loadout instead of falling through to Claude."""
+    await maybe_mint_brief(
+        redis_client,
+        "Best items for a dex huntress",
+        "Frozen Whisper and Lifebringing Lotus.",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert await redis_client.get(build_brief_key("Huntress", "Dexterity"))
+    same_ask = await _build_reply(
+        redis_client, "Best items for a dexterity huntress"
+    )
+    assert same_ask is not None
+    assert "Frozen Whisper" in same_ask.text
+    slipped = await _build_reply(
+        redis_client, "Tell me a fun fact about the weather"
+    )
+    assert slipped is None
+
+
+async def test_guest_at_limit_gets_paywall_not_a_prior_build_brief(
+    stream_app, redis_client, anon_settings
+):
+    """Guest spent in-depth, then sent an LLM prompt in the same Huntress
+    thread. Must 402 the paywall, not replay the cached loadout."""
+    client, calls = stream_app
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    await maybe_mint_brief(
+        redis_client,
+        "Best items for a dex huntress",
+        "Frozen Whisper and Lifebringing Lotus.",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "Tell me a fun fact about the weather",
+                "session_id": "s-cached-slip",
+                "history": [
+                    {
+                        "role": "user",
+                        "content": "Best items for a dex huntress",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Frozen Whisper and Lifebringing Lotus.",
+                    },
+                ],
+            },
+        )
+    assert response.status_code == 402
+    assert calls == []
+    assert "Frozen Whisper" not in (response.text or "")
 
 
 async def test_player_lookup_at_daily_limit_is_stored_not_claude(
