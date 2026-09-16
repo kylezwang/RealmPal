@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -26,6 +26,9 @@ export const ACCOUNT_BONUS_MESSAGES = 2;
 const LAST_STEP = 2;
 const REMINDER_STEP = 3;
 const MIN_PASSWORD_LENGTH = 8;
+
+export const PAYWALL_SET_BUILDING_DEMO = "/videos/paywall/set-building-demo.mp4";
+export const PAYWALL_VISUALIZER_DEMO = "/videos/paywall/visualizer.mp4";
 
 function formatResetWait(seconds: number): string {
   if (seconds <= 0) return "soon";
@@ -169,25 +172,53 @@ interface Props {
   visualizerDemoSrc?: string;
 }
 
+function PaywallDemoVideo({
+  src,
+  label,
+  videoRef,
+  onEnded,
+}: {
+  src: string;
+  label: string;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  onEnded: () => void;
+}) {
+  return (
+    <div className="relative w-full overflow-hidden rounded-xl border border-[#404040] bg-black h-[min(46vh,460px)] sm:h-[min(48vh,480px)]">
+      <video
+        ref={videoRef}
+        className="absolute inset-0 h-full w-full object-cover"
+        src={src}
+        controls
+        playsInline
+        muted
+        preload="auto"
+        aria-label={label}
+        onEnded={onEnded}
+      />
+    </div>
+  );
+}
+
 function VideoPlaceholder({
   src,
   label,
+  videoRef,
+  onEnded,
 }: {
   src?: string;
   label: string;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  onEnded?: () => void;
 }) {
-  if (src) {
+  if (src && videoRef && onEnded) {
     return (
-      <div className="relative w-full overflow-hidden rounded-xl border border-[#404040] bg-black aspect-video">
-        <video
-          className="h-full w-full object-cover"
-          src={src}
-          controls
-          playsInline
-          preload="metadata"
-          aria-label={label}
-        />
-      </div>
+      <PaywallDemoVideo
+        src={src}
+        label={label}
+        videoRef={videoRef}
+        onEnded={onEnded}
+      />
     );
   }
 
@@ -251,11 +282,15 @@ export function PaywallModal({
   spendCapUsd = 0,
   onDemandSpentUsd = 0,
   resetsInSeconds = 0,
-  setBuildingDemoSrc,
-  visualizerDemoSrc,
+  setBuildingDemoSrc = PAYWALL_SET_BUILDING_DEMO,
+  visualizerDemoSrc = PAYWALL_VISUALIZER_DEMO,
 }: Props) {
   const isOnDemand = reason === "claude_pool" || reason === "spend_cap";
   const [step, setStep] = useState(isOnDemand ? LAST_STEP : 0);
+  const setBuildingRef = useRef<HTMLVideoElement>(null);
+  const visualizerRef = useRef<HTMLVideoElement>(null);
+  const [setBuildingDone, setSetBuildingDone] = useState(false);
+  const [visualizerDone, setVisualizerDone] = useState(false);
   const [ign, setIgn] = useState("");
   const [email, setEmail] = useState(() => decodeAuthEmail() ?? "");
   const [password, setPassword] = useState("");
@@ -277,6 +312,7 @@ export function PaywallModal({
 
   const isLast = step === LAST_STEP;
   const isReminder = step === REMINDER_STEP;
+  const isVideoSlide = step === 0 || step === 1;
   const isSignup = isLast && !signedIn && !isOnDemand;
   const isPricing = isLast && signedIn && !isOnDemand;
 
@@ -284,6 +320,34 @@ export function PaywallModal({
     setStep(REMINDER_STEP);
     setError(null);
   }, []);
+
+  useEffect(() => {
+    if (isOnDemand || isReminder) return;
+
+    const first = setBuildingRef.current;
+    const second = visualizerRef.current;
+
+    if (step === 0) {
+      second?.pause();
+      if (first && !setBuildingDone) {
+        void first.play().catch(() => {});
+      }
+      return;
+    }
+
+    if (step === 1) {
+      if (first && !setBuildingDone) {
+        first.pause();
+      }
+      if (second && !visualizerDone) {
+        void second.play().catch(() => {});
+      }
+      return;
+    }
+
+    first?.pause();
+    second?.pause();
+  }, [step, setBuildingDone, visualizerDone, isOnDemand, isReminder]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -411,8 +475,12 @@ export function PaywallModal({
       />
 
       <div
-        className={`relative z-10 w-full rounded-2xl border border-[#404040] bg-[#1e1e1e] p-6 shadow-2xl animate-slide-up ${
-          isLast || isReminder ? "max-w-sm" : "max-w-md"
+        className={`relative z-10 w-full rounded-2xl border border-[#404040] bg-[#1e1e1e] shadow-2xl animate-slide-up ${
+          isLast || isReminder
+            ? "max-w-sm p-6"
+            : isVideoSlide
+              ? "max-w-3xl p-6 max-h-[94vh] overflow-y-auto"
+              : "max-w-md p-6"
         }`}
       >
         {(isLast || isReminder) && (
@@ -442,6 +510,8 @@ export function PaywallModal({
             <VideoPlaceholder
               src={setBuildingDemoSrc}
               label="Set-building and enchanting demo"
+              videoRef={setBuildingRef}
+              onEnded={() => setSetBuildingDone(true)}
             />
           </div>
         )}
@@ -462,6 +532,8 @@ export function PaywallModal({
             <VideoPlaceholder
               src={visualizerDemoSrc}
               label="Set and skin visualizer demo"
+              videoRef={visualizerRef}
+              onEnded={() => setVisualizerDone(true)}
             />
           </div>
         )}

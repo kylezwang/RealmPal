@@ -23,6 +23,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-8",
+    date: "Sep 16, 2026",
+    items: [
+      "The upgrade preview now plays short demo videos on the first two slides, in a larger modal.",
+    ],
+  },
+  {
     version: "2026.09.16-7",
     date: "Sep 16, 2026",
     items: [
