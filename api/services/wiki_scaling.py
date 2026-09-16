@@ -849,7 +849,7 @@ def format_stat_gear(
         return "\n".join(lines)
     header = (
         f"RealmEye hub On Equip ranks for {stat} {kind} from {hub_url} "
-        "(last in the source list after RealmShark, the player overlay, and "
+        "(last in the source list after RealmShark, overall picks, and "
         "Umi). This class's armor type only; ignore Umi general-tab armor "
         "if it is for a different stat, e.g. Vesture of Duality is Attack. "
         "Armor alternatives come from the Umi general-tab chunk, not this "
@@ -975,7 +975,7 @@ async def retrieve_armor_brief(
     prefixes: list[str] = []
     if overlay.get("armor"):
         prefixes.append(
-            f"Player overlay armor for {class_name} {stat}: "
+            f"Overall armor for {class_name} {stat}: "
             f"[item:{overlay['armor']}]. Prefer this over hub On Equip "
             "ranking below."
         )
@@ -1035,7 +1035,7 @@ async def retrieve_weapon_brief(
     overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat or ""), {})
     if overlay.get("weapon"):
         lines.append(
-            f"Player overlay weapon for {class_name} {stat}: "
+            f"Overall weapon for {class_name} {stat}: "
             f"[item:{overlay['weapon']}]. Prefer this over hub On Equip "
             "ranking below."
         )
@@ -1110,7 +1110,7 @@ async def retrieve_ability_brief(
     overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name, stat or ""), {})
     if overlay.get("ability"):
         prefix += (
-            f"Player overlay ability for {class_name} {stat}: "
+            f"Overall ability for {class_name} {stat}: "
             f"[item:{overlay['ability']}]. Prefer this over the wiki "
             "scaling list below.\n"
         )
@@ -1133,7 +1133,7 @@ _ITEM_TOKEN_RE = re.compile(r"\[item:([^\]]+)\]")
 
 
 def _first_visualizer_item(text: str) -> str | None:
-    """First [item:] that is not a player overlay base note.
+    """First [item:] that is not an overall-pick base note.
 
     Family cores (Makakoyumi, Enforcer, Vesture, Straitjacket, ...) are
     prepended onto slot briefs so Claude leads with them. They are not
@@ -1143,7 +1143,7 @@ def _first_visualizer_item(text: str) -> str | None:
     body = "\n".join(
         line
         for line in text.splitlines()
-        if not line.startswith("Player overlay")
+        if not line.startswith(("Player overlay", "Overall"))
     )
     match = _ITEM_TOKEN_RE.search(body)
     return match.group(1) if match else None
@@ -1471,7 +1471,7 @@ def format_class_max_stats(
             f"{class_name}{wanted}. This unique class+stat build has no "
             "RealmShark top 5 and no matching Umi tab. Stack the highest "
             f"{stat or 'asked'} on ability, armor, and ring from this row. "
-            "Weapon may still use the player overlay family base. Skip "
+            "Weapon may still use the overall family base. Skip "
             f"Limited Edition reskins.{overlay_note}"
         )
     elif unique_build:
@@ -1487,7 +1487,7 @@ def format_class_max_stats(
             f"RealmEye class-page Maximum Achievable Stats for {class_name}{wanted}. "
             "Grain of salt: this table is a max-stat stack, not the best playstyle "
             "build. Rank it last after RealmShark (top 5 sets plus on-character "
-            "enchants), the player overlay, and UmiEnjoyers BIS in synergy. "
+            "enchants), overall picks, and UmiEnjoyers BIS in synergy. "
             "Skip Limited Edition reskins. Example: Bard Attack on this table is "
             "often Wavecrest Concertina + Diplomatic Robe; the playstyle best is "
             "The Triangle + Vesture of Duality."

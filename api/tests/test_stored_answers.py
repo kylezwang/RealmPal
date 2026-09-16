@@ -137,7 +137,7 @@ async def test_shiny_divine_item_never_hits_the_llm(
     client, calls = stream_app
     await write_cached_item(
         redis_client,
-        ItemProfile(name="Crown", drop_locations=["Oryx's Castle"]),
+        ItemProfile(name="The Forgotten Crown", drop_locations=["Oryx's Castle"]),
         anon_settings.wiki_ttl_seconds,
     )
     async with client as http:
@@ -149,7 +149,7 @@ async def test_shiny_divine_item_never_hits_the_llm(
         text = await _read_sse_text(response)
     assert calls == []
     assert "[loadout shiny divine]" in text
-    assert "[item:Crown]" in text
+    assert "[item:The Forgotten Crown]" in text
 
 
 def test_shiny_alone_extracts_the_item_and_strips_look_like():

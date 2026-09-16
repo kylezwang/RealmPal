@@ -22,11 +22,52 @@ from ..models.build import (
     weapon_family,
 )
 from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
-from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME, top_build_items
+from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME, read_cached_item, top_build_items
 
 SET_SLOT_COUNT = 4
 SET_SLOTS = ("weapon", "ability", "armor", "ring")
-CATALOG_PREFIX = "item:alias-catalog:v7"
+CATALOG_PREFIX = "item:alias-catalog:v8"
+REALMEYE_WIKI = "https://www.realmeye.com/wiki"
+
+# RealmEye hub slug -> the noun Claude should use in prose. A Bard bow
+# must never be called a sword just because the item name sounds martial.
+_HUB_KIND: dict[str, str] = {
+    "bows": "bow",
+    "longbows": "bow",
+    "staves": "staff",
+    "spellblades": "spellblade",
+    "daggers": "dagger",
+    "dual-blades": "dagger",
+    "swords": "sword",
+    "flails": "flail",
+    "wands": "wand",
+    "morning-stars": "wand",
+    "katanas": "katana",
+    "tachis": "katana",
+    "lutes": "lute",
+    "cloaks": "cloak",
+    "quivers": "quiver",
+    "spells": "spell",
+    "tomes": "tome",
+    "helms": "helm",
+    "shields": "shield",
+    "seals": "seal",
+    "poisons": "poison",
+    "skulls": "skull",
+    "traps": "trap",
+    "orbs": "orb",
+    "prisms": "prism",
+    "scepters": "scepter",
+    "stars": "star",
+    "wakizashi": "wakizashi",
+    "maces": "mace",
+    "sheaths": "sheath",
+    "sigils": "sigil",
+    "robes": "robe",
+    "leather-armors": "leather armor",
+    "heavy-armors": "heavy armor",
+    "rings": "ring",
+}
 
 # Overlay for names that are ambiguous, too short, or not in the title
 # letters (Lean, Cult staff). Letter nicknames still generate from hubs.
@@ -92,6 +133,7 @@ COMMUNITY_ALIASES: dict[str, str] = {
     "mt waki": "Ryu's Blade",
     "mtwaki": "Ryu's Blade",
     "crown": "The Forgotten Crown",
+    "forgotten crown": "The Forgotten Crown",
     "gem": "The Twilight Gemstone",
     "gemstone": "The Twilight Gemstone",
     "bracer": "Bracer of the Guardian",
@@ -294,6 +336,12 @@ _LOOK_LIKE_TAIL = re.compile(r"\s+looks?\s+like\b.*$", re.I)
 _NAME_SPLIT = re.compile(r",\s*(?:and\s+)?|\s+and\s+", re.I)
 _SHINY_DIVINE_WORDS = re.compile(r"\b(?:all\s+)?(?:shiny|divine)\b", re.I)
 _LEADING_AND = re.compile(r"^(?:and|&)\s+", re.I)
+# "Crown all shiny divine" is the last comma-segment when the user puts
+# "all shiny divine" after the list. Shiny/divine words are stripped
+# separately; leftover "all"/"please" is not part of the item name.
+_FILLER_TAIL = re.compile(
+    r"\s+\b(?:all|please|pls|thanks|thank you)\b\s*$", re.I
+)
 _CATALOG_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -302,6 +350,7 @@ class CatalogItem:
     name: str
     slot: str
     aliases: frozenset[str]
+    hub: str = ""
 
 
 def _compact(text: str) -> str:
@@ -422,8 +471,60 @@ def generated_aliases(name: str) -> frozenset[str]:
     return frozenset(alias for alias in aliases if len(alias) >= 2)
 
 
-def catalog_item(name: str, slot: str) -> CatalogItem:
-    return CatalogItem(name=name, slot=slot, aliases=generated_aliases(name))
+def catalog_item(name: str, slot: str, hub: str = "") -> CatalogItem:
+    return CatalogItem(
+        name=name, slot=slot, aliases=generated_aliases(name), hub=hub
+    )
+
+
+def item_wiki_url(name: str) -> str:
+    slug = (name or "").strip().lower()
+    slug = slug.replace("'", "-").replace("\u2019", "-").replace("\u2018", "-")
+    slug = slug.replace(".", "").replace(":", "-").replace(";", "-")
+    slug = slug.replace("(", "-").replace(")", "-")
+    slug = slug.replace(" ", "-")
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return f"{REALMEYE_WIKI}/{slug}" if slug else REALMEYE_WIKI
+
+
+def hub_kind(slug: str, slot: str = "") -> str:
+    if slug in _HUB_KIND:
+        return _HUB_KIND[slug]
+    if slot == "ring" or (slug or "").endswith("-rings"):
+        return "ring"
+    return slot or "item"
+
+
+def _find_catalog_item(
+    catalog: list[CatalogItem], name: Optional[str]
+) -> Optional[CatalogItem]:
+    if not name:
+        return None
+    key = name.lower()
+    for item in catalog:
+        if item.name.lower() == key:
+            return item
+    return None
+
+
+def _item_kind(
+    item: Optional[CatalogItem],
+    slot: str,
+    class_name: Optional[str],
+) -> str:
+    if item and item.hub:
+        return hub_kind(item.hub, slot or item.slot)
+    if slot == "weapon" and class_name:
+        hubs, _label = weapon_family(class_name)
+        if hubs:
+            return hub_kind(hubs[0], slot)
+    if slot == "ability" and class_name:
+        return hub_kind(CLASS_ABILITY_HUB.get(class_name, ""), slot)
+    if slot == "armor" and class_name:
+        return hub_kind(CLASS_ARMOR_HUB.get(class_name, ""), slot)
+    if slot == "ring":
+        return "ring"
+    return hub_kind(item.hub if item else "", slot)
 
 
 def community_canonical(query: str) -> Optional[str]:
@@ -595,6 +696,7 @@ def extract_set_item_names(prompt: str) -> list[str]:
         cleaned = _SHINY_DIVINE_WORDS.sub("", part)
         cleaned = _QUALITY_WORDS_RE.sub("", cleaned)
         cleaned = _LEADING_AND.sub("", cleaned).strip()
+        cleaned = _FILLER_TAIL.sub("", cleaned).strip()
         cleaned = re.sub(r"\s+", " ", cleaned)
         # A stray comma can split a rarity word off its own item, e.g.
         # "...rare diplomatic robe, shiny rare, the twilight gemstone"
@@ -603,7 +705,7 @@ def extract_set_item_names(prompt: str) -> list[str]:
         # _QUALITY_WORDS_RE above also strips it, is just empty - the
         # length check below already drops it, no separate case needed.
         if 3 <= len(cleaned) <= 60:
-            names.append(cleaned)
+            names.append(community_canonical(cleaned) or cleaned)
     # A real set names 2+ items. This guard used to only apply to the
     # _AFTER_SHINY_DIVINE fallback (`match is None and ...`), so _WITH_ITEMS'
     # very permissive "with <anything>" still counted a single trailing noun
@@ -746,6 +848,7 @@ async def load_item_catalog(
                     name=row["name"],
                     slot=row["slot"],
                     aliases=frozenset(row["aliases"]),
+                    hub=row.get("hub") or "",
                 )
                 for row in rows
             ]
@@ -763,6 +866,7 @@ async def load_item_catalog(
                         name=row["name"],
                         slot=row["slot"],
                         aliases=frozenset(row["aliases"]),
+                        hub=row.get("hub") or "",
                     )
                     for row in rows
                 ]
@@ -782,12 +886,13 @@ async def load_item_catalog(
                 if key in seen:
                     continue
                 seen.add(key)
-                catalog.append(catalog_item(name, slot))
+                catalog.append(catalog_item(name, slot, hub=slug))
         payload = [
             {
                 "name": item.name,
                 "slot": item.slot,
                 "aliases": sorted(item.aliases),
+                "hub": item.hub,
             }
             for item in catalog
         ]
@@ -938,15 +1043,17 @@ async def retrieve_set_visualizer(
     shiny, divine = set_visualize_flags(message)
     flags = [flag for flag, on in (("shiny", shiny), ("divine", divine)) if on]
 
+    rows: list[tuple[str, str, Optional[str], str, str]] = []
+    catalog: list[CatalogItem] = []
     if derived_from_build:
         # Already real wiki titles from top_build_items (read straight off
         # the warmed hub data) - resolving them again through the nickname
         # catalog would be redundant and risks a miss on an item the
         # catalog hasn't indexed under its exact wiki title yet.
-        resolved: list[tuple[str, str, Optional[str]]] = [
-            (name, SET_SLOTS[i] if i < len(SET_SLOTS) else "item", name)
-            for i, name in enumerate(names)
-        ]
+        for i, name in enumerate(names):
+            slot = SET_SLOTS[i] if i < len(SET_SLOTS) else "item"
+            kind = _item_kind(None, slot, class_name)
+            rows.append((name, slot, name, kind, item_wiki_url(name)))
     else:
         catalog = await load_item_catalog(
             redis,
@@ -954,15 +1061,53 @@ async def retrieve_set_visualizer(
             class_name=class_name,
             allow_scrape=allow_scrape,
         )
-        resolved = []
+        if class_name and not any(item.hub for item in catalog):
+            wider = await load_item_catalog(
+                redis,
+                ttl_seconds=ttl_seconds,
+                class_name=None,
+                allow_scrape=False,
+            )
+            if wider:
+                catalog = wider
         for index, raw in enumerate(names):
-            slot = SET_SLOTS[index] if index < len(SET_SLOTS) else None
-            canonical = resolve_against_catalog(raw, catalog, slot_hint=slot)
-            resolved.append((raw, slot or "item", canonical))
+            canonical = resolve_against_catalog(raw, catalog)
+            item = _find_catalog_item(catalog, canonical)
+            slot = (
+                item.slot
+                if item and item.slot in SET_SLOTS
+                else SET_SLOTS[index] if index < len(SET_SLOTS) else "item"
+            )
+            kind = _item_kind(item, slot, class_name)
+            title = canonical or raw
+            url = item_wiki_url(title)
+            try:
+                profile = await read_cached_item(redis, title)
+            except Exception:
+                profile = None
+            if profile:
+                if profile.type:
+                    kind = profile.type.strip().lower() or kind
+                if profile.wiki_url:
+                    url = profile.wiki_url
+                if profile.name:
+                    canonical = canonical or profile.name
+            rows.append((raw, slot, canonical, kind, url))
 
+    by_slot: dict[str, str] = {}
+    extras: list[str] = []
+    for _raw, slot, canonical, _kind, _url in rows:
+        if not canonical:
+            continue
+        if slot in SET_SLOTS and slot not in by_slot:
+            by_slot[slot] = canonical
+        elif canonical not in by_slot.values():
+            extras.append(canonical)
     token_line = " ".join(
-        f"[item:{canonical}]" for _raw, _slot, canonical in resolved if canonical
+        f"[item:{by_slot[slot]}]" for slot in SET_SLOTS if slot in by_slot
     )
+    if extras:
+        token_line = (token_line + " " + " ".join(f"[item:{name}]" for name in extras)).strip()
     flag_token = " ".join(flags)
     if derived_from_build:
         lines = [
@@ -980,18 +1125,30 @@ async def retrieve_set_visualizer(
         lines = [
             "SET VISUALIZER. The user asked to show this exact named set.",
             "Copy the flags and wiki titles below. Do not substitute other items.",
-            "Keep the reply to a short confirmation.",
+            "Keep the reply to a short confirmation that uses each item's "
+            "real wiki title and the slot kind listed (bow, lute, robe, "
+            "ring). Never call a bow a sword. Crown means The Forgotten "
+            "Crown. Cite the RealmEye wiki URLs below under Sources. Do "
+            "not cite RealmShark; these sprites come from RealmEye.",
             f"[loadout {flag_token}]".strip() if flag_token else "[loadout]",
             token_line,
             "Resolved nicknames:",
         ]
-    for raw, slot, canonical in resolved:
+    wiki_urls: list[str] = []
+    for raw, slot, canonical, kind, url in rows:
         if canonical:
-            lines.append(f"  {slot}: {raw} → [item:{canonical}]")
+            lines.append(
+                f"  {slot}: {raw} → [item:{canonical}] ({kind}). {url}"
+            )
+            wiki_urls.append(url)
         else:
             lines.append(
                 f"  {slot}: {raw} → unresolved; do not guess a different item"
             )
+    if wiki_urls:
+        lines.append("RealmEye sources:")
+        for url in dict.fromkeys(wiki_urls):
+            lines.append(f"  {url}")
     if class_name:
         lines.append(
             f"Class context: {class_name}. Off-class abilities are allowed "

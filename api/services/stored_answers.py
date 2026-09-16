@@ -28,6 +28,7 @@ from .dungeon_guide import (
 from .enchanting import is_enchant_query
 from .item_aliases import (
     MAX_PLAUSIBLE_ITEM_NAME_WORDS,
+    community_canonical,
     extract_set_item_names,
     resolve_item_query,
     resolve_item_query_with_trim,
@@ -361,6 +362,7 @@ async def _shiny_divine_reply(
     name = _shiny_divine_item_name(message)
     if not name:
         return None
+    name = community_canonical(name) or name
     item = await read_cached_item(redis, name)
     if item is None:
         try:

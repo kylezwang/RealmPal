@@ -697,11 +697,16 @@ async def chat_stream(
             player_ttl_seconds=settings.player_ttl_seconds,
             history=history_texts,
         )
+        set_or_skin = (
+            is_skin_visualize_query(query_text, history=outfit_history)
+            or is_set_visualize_query(query_text)
+            or is_stat_class_shiny_divine_query(query_text, class_name, stat)
+        )
         if build_ctx:
-            if player_only or enchant_only:
-                # Enchant briefs cite RealmEye's own /wiki/enchanting URL
-                # inline; stamping the RealmShark leaderboard citation on
-                # top would misattribute the source.
+            if player_only or enchant_only or dungeon_only or set_or_skin:
+                # Named sets, skins, dungeon guides, player lookups, and
+                # enchant briefs scrape RealmEye. Stamping the RealmShark
+                # leaderboard citation on top would misattribute the source.
                 context = (
                     f"{context}\n\n---\n\n{build_ctx}" if context else build_ctx
                 )

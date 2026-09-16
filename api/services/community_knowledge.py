@@ -156,7 +156,7 @@ def weapon_core_note(class_name: str | None) -> str:
     if not cores:
         return ""
     return (
-        f"Player overlay base {label}: {_item_tokens(cores)}. "
+        f"Overall base {label}: {_item_tokens(cores)}. "
         "Lead with these. RealmShark, Umi, and wiki synergy may add more. "
         "Do not replace this base with a hub On Equip rank."
     )
@@ -175,12 +175,12 @@ def armor_core_note(
                 f"the {stat} armor."
             )
         return (
-            f"Player overlay base robes: {_item_tokens(ROBE_CORE)}. "
+            f"Overall base robes: {_item_tokens(ROBE_CORE)}. "
             f"Lead with these, then Umi/RealmShark synergy.{extra}"
         )
     if slug == "leather-armors":
         return (
-            f"Player overlay base leather: {_item_tokens(LEATHER_CORE)}. "
+            f"Overall base leather: {_item_tokens(LEATHER_CORE)}. "
             "Lead with these, then Umi/RealmShark synergy."
         )
     if slug == "heavy-armors":
@@ -188,7 +188,7 @@ def armor_core_note(
         if combo:
             return combo
         return (
-            "Player overlay has no forced heavy armor. Pick from "
+            "Overall: no forced heavy armor. Pick from "
             "RealmShark, then Umi, then wiki."
         )
     return ""
@@ -205,7 +205,7 @@ def combo_note(class_name: str | None, stat: str | None = None) -> str:
     )
     if not stat or stat in ("Dexterity", "Vitality"):
         return (
-            f"Player overlay combo for {class_name} "
+            f"Overall combo for {class_name} "
             f"{stat or 'Dexterity/Vitality'}: {pair} Lead with this pair "
             "on those sets. Other heavy armor still depends on the ask."
         )
@@ -262,13 +262,13 @@ def ability_source_note(*, unique_build: bool = False) -> str:
             "board when one exists. If it does not, pick the ability from "
             "the RealmEye Maximum Achievable Stats row for this stat, then "
             "the ability specialist scaling infobox. Do not invent an "
-            "ability overlay except where CLASS_STAT_SLOT_OVERRIDES names "
+            "ability overall pick except where CLASS_STAT_SLOT_OVERRIDES names "
             "one (Attack Bard: The Triangle)."
         )
     return (
         "Abilities: pick from RealmShark for this class+stat when a board "
         "exists. If RealmShark has no board, use the ability specialist "
-        "wiki scaling infobox. Do not invent an ability overlay except "
+        "wiki scaling infobox. Do not invent an ability overall pick except "
         "where CLASS_STAT_SLOT_OVERRIDES names one (Attack Bard: "
         "The Triangle)."
     )
@@ -355,7 +355,7 @@ def store_ranking_brief(
             "SOURCE RANKING for this unique "
             f"{stat} {class_name} build. A full loadout already exists on "
             f"{source} (RealmShark top 5 or a matching Umi tab, not "
-            "General). Use that set. Player overlay family cores are "
+            "General). Use that set. Overall family cores are "
             "general gameplay only and must not replace it. RealmEye "
             "Maximum Achievable Stats is a fallback after that community "
             "set. Skip Limited Edition reskins. If Doom Bow appears in a "
@@ -368,7 +368,7 @@ def store_ranking_brief(
             f"full {stat} {class_name} loadout. Priority: RealmEye "
             "class-page Maximum Achievable Stats for ability, armor, and "
             f"ring (stack the highest {stat}). Weapon may still use the "
-            "player overlay family base. Hub On Equip ranks last. Skip "
+            "overall family base. Hub On Equip ranks last. Skip "
             "Limited Edition reskins. If Doom Bow appears in a top 5, "
             "also name Clockwork Repeater."
         ]
@@ -378,7 +378,7 @@ def store_ranking_brief(
             "This is a general gameplay build. When sources disagree, "
             "follow this order: "
             "1. RealmShark DPS board for this class+stat (top 5 sets plus "
-            "on-character enchants). 2. Player overlay in this chunk. "
+            "on-character enchants). 2. Overall picks in this chunk. "
             "3. UmiEnjoyers BIS in synergy. 4. RealmEye class-page Maximum "
             "Achievable Stats and hub On Equip ranks last (a max-stat stack, "
             "not the best playstyle). Skip Limited Edition reskins. If Doom Bow "
@@ -390,10 +390,11 @@ def store_ranking_brief(
             f"{slot}: [item:{name}]" for slot, name in overlay.items()
         )
         lines.append(
-            f"Player overlay for {class_name} {stat}: {bits}. "
+            f"Overall pick for {class_name} {stat}: {bits}. "
             "This beats the wiki max-stat row (Attack Bard on the wiki is "
             "often Concertina + Diplomatic; the playstyle best is The "
-            "Triangle + Vesture of Duality)."
+            "Triangle + Vesture of Duality). Never say overlay to the "
+            "user; call this an overall pick."
         )
     lines.append(
         slot_alternatives_note(
