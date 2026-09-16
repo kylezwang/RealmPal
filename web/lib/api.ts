@@ -333,6 +333,20 @@ export async function uploadChatImage(file: File): Promise<{
   return data;
 }
 
+function decodeJwtClaims(): Record<string, unknown> | null {
+  const token = getAuthToken();
+  if (!token) return null;
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Best-effort read of the `email` claim off the stored JWT, for display
  * only (e.g. showing who's signed in in the account menu). The signature
@@ -341,33 +355,16 @@ export async function uploadChatImage(file: File): Promise<{
  * this decode succeeding or being accurate.
  */
 export function decodeAuthEmail(): string | null {
-  const token = getAuthToken();
-  if (!token) return null;
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const claims = JSON.parse(json) as { email?: string };
-    return typeof claims.email === "string" ? claims.email : null;
-  } catch {
-    return null;
-  }
+  const claims = decodeJwtClaims();
+  const email = typeof claims?.email === "string" ? claims.email.trim() : "";
+  return email || null;
 }
 
 /** Best-effort read of the `ign` claim off the stored JWT, for display only. */
 export function decodeAuthIgn(): string | null {
-  const token = getAuthToken();
-  if (!token) return null;
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const claims = JSON.parse(json) as { ign?: string };
-    const ign = typeof claims.ign === "string" ? claims.ign.trim() : "";
-    return ign || null;
-  } catch {
-    return null;
-  }
+  const claims = decodeJwtClaims();
+  const ign = typeof claims?.ign === "string" ? claims.ign.trim() : "";
+  return ign || null;
 }
 
 export interface AuthSession {

@@ -38,6 +38,7 @@ import {
 import { ChatOptionsModal } from "./ChatOptionsModal";
 import { ChatSidebar } from "./ChatSidebar";
 import { AccountMenu } from "./AccountMenu";
+import { TabIcon } from "../TabIcon";
 import { SWORD_SPRITE } from "@/lib/sprites";
 import {
   type ChatSession,
@@ -388,7 +389,10 @@ export function ChatInterface() {
       const accountIgn = saved?.ign || decodeAuthIgn();
       if (accountIgn) {
         setIgn(accountIgn);
-        setPlayerProfile(saved?.ign === accountIgn ? cachedPlayerProfile(saved) : null);
+        const sameIgn =
+          Boolean(saved?.ign) &&
+          saved!.ign.trim().toLowerCase() === accountIgn.trim().toLowerCase();
+        setPlayerProfile(sameIgn && saved ? cachedPlayerProfile(saved) : null);
         void loadPlayer(accountIgn, { silent: true });
       } else {
         setIgn("");
@@ -526,10 +530,16 @@ export function ChatInterface() {
     if (!options?.silent) setIsLoadingPlayer(true);
     try {
       const profile = await fetchPlayerPet(name);
-      setPlayerProfile(profile);
-      if (decodeAuthEmail()) {
-        saveSavedAccountProfile({ ign: name, top_pet: profile.top_pet });
-      }
+      setPlayerProfile((prev) => {
+        const top_pet =
+          profile.top_pet ??
+          (prev?.username.trim().toLowerCase() === name.trim().toLowerCase()
+            ? prev.top_pet
+            : undefined);
+        const next = { ...profile, top_pet };
+        saveSavedAccountProfile({ ign: name, top_pet: next.top_pet });
+        return next;
+      });
     } catch (e) {
       if (!options?.silent) {
         setIgnError(e instanceof Error ? e.message : "Player not found");
@@ -1066,6 +1076,7 @@ export function ChatInterface() {
 
   return (
     <div className="app-shell flex bg-[#1a1a1a] text-[#ececec] overflow-hidden">
+      <TabIcon pet={playerProfile?.top_pet} />
       {/* Sidebar (desktop) */}
       <aside className="hidden md:flex flex-col w-64 xl:w-72 flex-shrink-0 min-h-0 overflow-hidden border-r border-[#303030]">
         <ChatSidebar className="flex flex-col flex-1 min-h-0 overflow-hidden p-4" {...sidebarProps} />
