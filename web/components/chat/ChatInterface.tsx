@@ -125,6 +125,10 @@ interface Message {
   /** Attached once resolved, when this exchange was about a specific
    * player | lets MessageBubble render a rich character/equipment card. */
   playerProfile?: PlayerProfile;
+  /** True once both the initial fetch and one retry failed to load the
+   * player card (the text summary above still comes from the backend's
+   * own independent scrape, so it can succeed even when this failed). */
+  playerLookupFailed?: boolean;
   /** Whether the user's own message actually asked about exaltations |
    * PlayerCard only renders the full per-class breakdown table when this
    * is true, since it's a lot of extra detail nobody wants by default. */
@@ -564,20 +568,45 @@ export function ChatInterface() {
       extractPlayerLookup(trimmed) ??
       (asksAboutExaltations ? findRecentPlayerName(messages) : null);
     if (lookupName) {
-      fetchPlayer(lookupName)
-        .then((profile) => {
-          setMessages((prev) => {
-            if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
-            const updated = [...prev];
-            updated[assistantMsgIndex] = {
-              ...updated[assistantMsgIndex],
-              playerProfile: profile,
-              showExaltationTable,
-            };
-            return updated;
+      // The backend's own player-brief scrape (for the text summary above)
+      // and this card fetch hit the same short-TTL cache but race the same
+      // single shared Playwright browser | when this one loses that race
+      // and times out, the brief's scrape has usually finished and cached
+      // the profile within a couple seconds, so one delayed retry is a fast
+      // cache hit instead of a second live scrape. Only surface a visible
+      // failure (rather than silently dropping the card) once that retry
+      // also fails.
+      const attemptFetchPlayer = (attempt: number) => {
+        fetchPlayer(lookupName)
+          .then((profile) => {
+            setMessages((prev) => {
+              if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
+              const updated = [...prev];
+              updated[assistantMsgIndex] = {
+                ...updated[assistantMsgIndex],
+                playerProfile: profile,
+                showExaltationTable,
+              };
+              return updated;
+            });
+          })
+          .catch(() => {
+            if (attempt < 1) {
+              window.setTimeout(() => attemptFetchPlayer(attempt + 1), 2500);
+              return;
+            }
+            setMessages((prev) => {
+              if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
+              const updated = [...prev];
+              updated[assistantMsgIndex] = {
+                ...updated[assistantMsgIndex],
+                playerLookupFailed: true,
+              };
+              return updated;
+            });
           });
-        })
-        .catch(() => {});
+      };
+      attemptFetchPlayer(0);
     }
 
     const dungeonName = extractDungeonLookup(trimmed);
@@ -1135,6 +1164,7 @@ export function ChatInterface() {
                     content={msg.content}
                     isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
                     playerProfile={msg.playerProfile}
+                    playerLookupFailed={msg.playerLookupFailed}
                     showExaltationTable={msg.showExaltationTable}
                     items={msg.items}
                     pendingItemNames={msg.pendingItemNames}

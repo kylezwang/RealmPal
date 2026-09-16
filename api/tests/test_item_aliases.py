@@ -69,6 +69,27 @@ def test_plain_sentence_with_no_shiny_divine_or_with_is_not_a_set():
     assert not is_set_visualize_query("How to do moonlight village?")
 
 
+def test_shiny_only_item_list_with_no_set_intent_verb_routes_to_set_visualizer():
+    """Regression: found live Sep 15 as "Rare Shiny bogwood croak, rare
+    shiny genesis spell, rare diplomatic robe, shiny rare, the twilight
+    gemstone" - shiny (no divine) with no "set"/"loadout"/"visualize"/
+    "build me"/"show me" verb used to require that verb to trigger the
+    visualizer, so this fell through to generic chat, which had no item
+    data for these names and asked the user to clarify. Naming 2+ real
+    items after a shiny/divine trigger is itself enough signal."""
+    message = (
+        "Rare Shiny bogwood croak, rare shiny genesis spell, rare diplomatic "
+        "robe, shiny rare, the twilight gemstone"
+    )
+    assert extract_set_item_names(message) == [
+        "bogwood croak",
+        "rare genesis spell",
+        "rare diplomatic robe",
+        "the twilight gemstone",
+    ]
+    assert is_set_visualize_query(message)
+
+
 def test_with_phrasing_naming_only_one_item_is_not_a_set():
     """Regression: found live Sep 14 as "Shiny divine snake eye ring. Is it
     insane with the awakened enchantment?" - _WITH_ITEMS matched "with the

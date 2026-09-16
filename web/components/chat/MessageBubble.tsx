@@ -28,6 +28,10 @@ interface Props {
   /** Attached when this response was about a specific player | renders a
    * rich character/equipment card (sprites + hover tooltips) below the text. */
   playerProfile?: PlayerProfile;
+  /** True once the character card fetch (and one retry) both failed | the
+   * text summary above still comes from the backend's own scrape and can
+   * be showing correctly even when this is true. */
+  playerLookupFailed?: boolean;
   /** Only render PlayerCard's full per-class exaltations breakdown when
    * the user actually asked about exaltations. */
   showExaltationTable?: boolean;
@@ -359,6 +363,7 @@ export function MessageBubble({
   content,
   isStreaming,
   playerProfile,
+  playerLookupFailed,
   showExaltationTable,
   items,
   pendingItemNames,
@@ -455,6 +460,11 @@ export function MessageBubble({
         )}
         {!isUser && playerProfile && (
           <PlayerCard profile={playerProfile} showExaltationTable={showExaltationTable} />
+        )}
+        {!isUser && !playerProfile && playerLookupFailed && (
+          <p className="text-sm text-[#8a8a8a] italic mt-1">
+            Couldn&apos;t load the character card for this lookup. Ask again to retry.
+          </p>
         )}
         {!isUser && showSkin && <SkinPortrait spec={skinSpec} />}
         {!isUser && loadout && (
