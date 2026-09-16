@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/16/26 (11:05 AM)
+Last updated: 9/16/26 (12:45 PM)
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -16,7 +16,7 @@ Resume order when context is fresh:
 1. **Not yet fixed - every chat message unconditionally scrapes+ingests the signed-in user's own IGN profile**, even for messages with nothing to do with the player (`api/routers/chat.py`, `if body.ign:` block, ~line 588 - "Player profiles change constantly, scrape on lookup" comment explains the *intent* but this fires on every uncached message regardless of whether the message needs it, e.g. a pure "how to do X dungeon" question). Confirmed Sep 14: asking about Moonlight Village still triggered a 14s `Scraping player profile {'username': 'Turbine'}` call. This adds unnecessary load to the shared Playwright semaphore. Worth reconsidering: only scrape when `player_only`/`buildish` is true for *this* message (the router already computes these flags for the RAG-skip logic right below it), not unconditionally whenever `body.ign` is set.
 2. **Build/loadout quality - remaining after Sep 16 store work.** Ranking is RealmShark first (top 5 plus on-character enchants), then the player overlay, Umi in synergy, RealmEye class-page Maximum Achievable Stats last (max-stat stack, not best playstyle). That table is now scraped (`scrape_class_max_stats`, `wiki:class-maxstats:v1:{class}`) and injected cache-only into specialists. `top_build_items()` now majority-picks RealmShark slots (skips Limited Edition reskins) then applies the overlay. Closed-vocab typos work for classes (`brd` → Bard), dungeon names (`moonlite`/`shaters`), and nickname keys. Enchant/DPS comparison extracts every mentioned nickname (`cbow` vs `lbow`). In-depth Claude turns now use `run_slot_agents` plus SET VISUALIZER PICKS and one matching RealmShark top-5, not the old full Umi/wiki/max-stats dump.
   - **More player overlays** in the same shape as Attack Bard: class + stat + exact wiki titles for weapon / ability / armor / ring. Next worth writing down: Dex Bard, Attack Archer, and any combo where the wiki row is the wrong playstyle.
-  - **UmiEnjoyers**: still not used for weapon/ability/ring visualizer picks.
+  - **UmiEnjoyers**: in-depth turns now inject the general-tab BIS page as the alternative list for weapon, ability, armor, and ring. Still not used for set-visualizer majority picks.
   - **Stored briefs vs visualizer** can still diverge (`wiki:build:v1:{class}:{stat}` vs `top_build_items()`).
   - **RealmShark** missing boards still fall back to a sister-class weapon family in text briefs (Attack Huntress → Archer bows). Document that fallback as sister-class, not the wrong ability slot.
   - **Full DPS formula agent** is still later. This overlay/store work is not that agent.
@@ -58,7 +58,8 @@ Resume order when context is fresh:
 
 ## History
 
-
+### Until Sep 16, 2026 (12:45 PM)
+- **UmiEnjoyers**: still not used for weapon/ability/ring visualizer picks.
 
 ### Until Sep 16, 2026 (10:40 AM)
 

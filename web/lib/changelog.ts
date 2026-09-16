@@ -21,8 +21,14 @@ export interface ChangelogEntry {
  * a user can see or do should add (or extend) an entry here. See
  * .cursor/rules/changelog.mdc for the house style.
  */
-export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-5",
+    date: "Sep 16, 2026",
+    items: [
+      "Build alternatives now come from UmiEnjoyers best-in-slot lists for every slot, not just armor and rings.",
+      "Attack robe builds name Vesture of Duality next to Diplomatic Robe, and skip filler T7 robes.",
+    ],
+  },
     version: "2026.09.16-4",
     date: "Sep 16, 2026",
     items: [

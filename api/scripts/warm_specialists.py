@@ -3,7 +3,12 @@
   cd repo-root
   .\\api\\.venv\\Scripts\\python.exe -m api.scripts.warm_specialists --status
   .\\api\\.venv\\Scripts\\python.exe -m api.scripts.warm_specialists
+  .\\api\\.venv\\Scripts\\python.exe -m api.scripts.warm_specialists --drop-briefs
   .\\api\\.venv\\Scripts\\python.exe -m api.scripts.warm_specialists Huntress
+
+Prod keys are prefixed (`DEPLOYMENT_NAMESPACE=prod` → `prod:`). This
+script applies that prefix, same as the API. Point REDIS_URL at Azure
+Redis and set the namespace or you will write into a different keyspace.
 """
 import asyncio
 import sys
@@ -16,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from api.config import get_settings
+from api.redis_namespace import namespaced
 from api.services.specialist_warm import specialist_snapshot, warm_all_specialists
 
 
@@ -69,11 +75,21 @@ def _print_status(snapshot: dict) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    redis = aioredis.from_url(settings.redis_url)
+    redis = namespaced(
+        aioredis.from_url(settings.redis_url), settings.redis_key_prefix
+    )
     args = tuple(sys.argv[1:])
+    prefix = settings.redis_key_prefix or "(none)"
+    print(f"Redis prefix: {prefix}")
     try:
         if args and args[0] == "--status":
             _print_status(await specialist_snapshot(redis))
+            return
+        if args and args[0] == "--drop-briefs":
+            from api.services.stored_answers import invalidate_briefs
+
+            removed = await invalidate_briefs(redis)
+            print(f"Dropped {removed} minted in-depth briefs")
             return
         if args:
             from api.services.wiki_scaling import warm_all_class_scaling

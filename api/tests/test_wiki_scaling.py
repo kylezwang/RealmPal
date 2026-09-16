@@ -382,7 +382,7 @@ async def test_top_build_items_attack_bard_uses_player_overlay(redis_client, mon
     picks = await wiki_scaling.top_build_items(
         redis_client, "Bard", "Attack", ttl_seconds=60, cache_only=True
     )
-    assert picks["weapon"] == "The Triangle"
+    assert picks["ability"] == "The Triangle"
     assert picks["armor"] == "Vesture of Duality"
 
 
@@ -467,9 +467,9 @@ async def test_top_build_items_shark_majority_then_overlay(redis_client, monkeyp
     picks = await wiki_scaling.top_build_items(
         redis_client, "Bard", "Attack", ttl_seconds=60, cache_only=True
     )
-    assert picks["weapon"] == "The Triangle"
+    assert picks["weapon"] == "Wavecrest Concertina"
     assert picks["armor"] == "Vesture of Duality"
-    assert picks["ability"] == "Lute of the Lost"
+    assert picks["ability"] == "The Triangle"
     assert picks["ring"] == "The Forgotten Crown"
 
 
@@ -508,6 +508,9 @@ def test_store_ranking_brief_attack_bard_names_triangle():
     text = store_ranking_brief("Bard", "Attack")
     assert "[item:The Triangle]" in text
     assert "[item:Vesture of Duality]" in text
+    assert "ability:" in text
+    assert "SLOT ALTERNATIVES" in text
+    assert "umienjoyers.com/guides/best-in-slot/bard" in text
     assert "RealmShark" in text
 
 
@@ -588,10 +591,18 @@ async def test_in_depth_build_uses_slot_agents_set_picks_and_one_shark_top5(
             "ring": "The Forgotten Crown",
         }
 
+    async def fake_umi(*args, **kwargs):
+        return (
+            "UmiEnjoyers community BIS (Bard, general tab).\n"
+            "Source: https://www.umienjoyers.com/guides/best-in-slot/bard?tab=general\n"
+            "Thousand Shot, The Triangle, Vesture of Duality"
+        )
+
     monkeypatch.setattr(realmshark, "run_slot_agents", fake_slots)
     monkeypatch.setattr(realmshark, "load_graph", fake_graph)
     monkeypatch.setattr(realmshark, "load_top_loadouts", fake_loadouts)
     monkeypatch.setattr(wiki_scaling, "top_build_items", fake_picks)
+    monkeypatch.setattr(wiki_scaling, "retrieve_umi_bis", fake_umi)
 
     text = await realmshark.retrieve_build_knowledge(
         redis_client,
@@ -600,9 +611,37 @@ async def test_in_depth_build_uses_slot_agents_set_picks_and_one_shark_top5(
     )
     assert "SLOT AGENTS STUB" in text
     assert "SET VISUALIZER PICKS" in text
+    assert "SLOT ALTERNATIVES" in text
+    assert "umienjoyers.com/guides/best-in-slot/bard" in text
     assert "[item:The Triangle]" in text
     assert "[item:Vesture of Duality]" in text
     assert "RealmShark potential-DPS loadouts for Attack Bard" in text
     assert "Wisdom Bard" not in text
     assert "ABILITY AGENT — stored wiki scaling" not in text
     assert "SOURCE RANKING" in text
+
+
+async def test_armor_brief_attack_robes_name_vesture_not_t7(
+    redis_client, monkeypatch
+):
+    """Diplomatic without Vesture was live on Attack Summoner. T7 robes
+    are hub filler, not Umi alternatives."""
+
+    async def fake_hub_index(redis, slug, ttl, *, cache_only=False, force=False):
+        if slug != "robes":
+            return []
+        return [
+            {"name": "Diplomatic Robe", "tier": "UT", "bonus": "+10 ATT"},
+            {"name": "Executioner's Garb", "tier": "ST", "bonus": "+10 ATT"},
+            {"name": "Robe of the Illusionist", "tier": "T7", "bonus": "+6 ATT"},
+        ]
+
+    monkeypatch.setattr(wiki_scaling, "_hub_index", fake_hub_index)
+    text = await wiki_scaling.retrieve_armor_brief(
+        redis_client, "Summoner", "Attack", ttl_seconds=60, cache_only=True
+    )
+    assert "[item:Diplomatic Robe]" in text
+    assert "[item:Vesture of Duality]" in text
+    assert "[item:Flowering Kimono]" in text
+    assert "Never list a T7 robe" in text
+    assert "Robe of the Illusionist" not in text
