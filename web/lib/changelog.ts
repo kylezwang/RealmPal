@@ -23,80 +23,21 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-10",
+    date: "Sep 16, 2026",
+    items: [
+      "Register from the guest menu now opens the same create-account form as the upgrade preview.",
+      "Data sources and the DECA disclaimer now live under About in the account menu.",
+    ],
+  },
+  {
     version: "2026.09.16-9",
     date: "Sep 16, 2026",
     items: [
-      "The browser tab now uses the RealmPal sword, or your pet once you have one set.",
-    ],
-  },
-  {
-    version: "2026.09.16-8",
-    date: "Sep 16, 2026",
-    items: [
-      "The upgrade preview now plays short demo videos on the first two slides, in a larger modal.",
-    ],
-  },
-  {
-    version: "2026.09.16-7",
-    date: "Sep 16, 2026",
-    items: [
-      "Build answers now call the top pick overall, not overlay.",
-      "Named shiny sets now use RealmEye item pages, so a bow is not called a sword, and Crown means The Forgotten Crown.",
-    ],
-  },
-  {
-    version: "2026.09.16-6",
-    date: "Sep 16, 2026",
-    items: [
-      "Build advice now leads with a short player-confirmed base for each weapon type, robes, leather, and rings.",
-      "Unusual class and stat builds now stack that stat from the class wiki table unless Umi or RealmShark already has that full set.",
-      "Samurai and Kensei Dexterity or Vitality sets now name Tools of the Tarnished with Fungal Breastplate.",
-    ],
-  },
-  {
-    version: "2026.09.16-5",
-    date: "Sep 16, 2026",
-    items: [
-      "Build alternatives now come from UmiEnjoyers best-in-slot lists for every slot, not just armor and rings.",
-      "Attack robe builds name Vesture of Duality next to Diplomatic Robe, and skip filler T7 robes.",
-      "Umi best-in-slot now reads every build tab, like Speed Wizard, not only General.",
-    ],
-  },
-  {
-    version: "2026.09.16-4",
-    date: "Sep 16, 2026",
-    items: [
-      "The upgrade popup shows again whenever you try an in-depth response after you are out for the day.",
-    ],
-  },
-  {
-    version: "2026.09.16-3",
-    date: "Sep 16, 2026",
-    items: [
-      "Outfit follow-ups, like asking for the small cloth too, stay on the free visualizer.",
-      "Looking up a player no longer spends an in-depth response.",
-      "The free counter now says in-depth responses.",
-      "When those run out, leftover suggestions sit above the message box until you hide them, and the tab title is Your AI Guide for RotMG.",
-    ],
-  },
-  {
-    version: "2026.09.16-2",
-    date: "Sep 16, 2026",
-    items: [
-      "Answers that do not use the AI no longer count toward your daily messages, even before you sign in.",
-      "The free counter now says in-depth prompts, so lookups that skip the AI stay free.",
-      "In-depth answers now lead with the recommended set and one RealmShark top 5, not a dump of every source.",
-      "When in-depth prompts run out, lookups still work, and the upgrade popup only shows once.",
-    ],
-  },
-  {
-    version: "2026.09.16",
-    date: "Sep 16, 2026",
-    items: [
-      "Attack Bard recommendations now follow the real best set, not just the wiki max-stat row.",
-      "Common nicknames like cbow, lbow, dbow, triangle, and lean crown now resolve to the real items.",
-      "Kagenohikari is always listed with Crown, Lean, and Gemstone when talking about rings.",
-      "Small typos in class and dungeon names still resolve, and cbow vs lbow awakening now compares both.",
+      "The tab icon is the RealmPal sword, and switches to your pet once you have one set.",
+      "The upgrade preview now plays short demo videos on the first two slides.",
+      "Build answers now name the real best gear, including Vesture, Tools of the Tarnished, and The Forgotten Crown.",
+      "Lookups and outfit previews stay free. The upgrade popup comes back when you are out of in-depth answers for the day.",
     ],
   },
   {
@@ -107,10 +48,10 @@ export const CHANGELOG: ChangelogEntry[] = [
       "On phones, sidebar suggestion prompts start hidden, and that hide or show choice is remembered next time.",
       "The menu now has a New chat button above your chat list.",
       "The in-game name field now tells you to enter your IGN to find your pet.",
-      "Finding your pet by IGN is much faster, and shows a clear message if your pet yard is hidden.",
-      "Fixed a rare case where looking up the same player twice in a row could show a plain text summary with no character card and no explanation.",
-      "Listing out a shiny loadout (weapon, ability, armor, ring) now renders the visual set preview even without saying \"set\" or \"loadout.\"",
-      "Item names now resolve even with a small typo, and rarity words like rare, legendary, or uncommon no longer confuse the lookup.",
+      "Finding your pet by IGN is much faster, with a clear message if your pet yard is hidden.",
+      "Looking up the same player twice now keeps the character card.",
+      "Listing a shiny weapon, ability, armor, and ring now shows the set preview.",
+      "Item names still work with a small typo, and words like rare no longer break the lookup.",
     ],
   },
   {

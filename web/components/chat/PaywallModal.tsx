@@ -163,6 +163,8 @@ interface Props {
   /** Guests end on create-account. Signed-in free users end on Pro. */
   signedIn?: boolean;
   reason?: PaywallReason;
+  /** Prefill the signup IGN from the sidebar lookup. */
+  defaultIgn?: string;
   onUsageEnabled?: () => void;
   spendCapUsd?: number;
   onDemandSpentUsd?: number;
@@ -278,6 +280,7 @@ export function PaywallModal({
   onClose,
   signedIn = false,
   reason = "free_quota",
+  defaultIgn = "",
   onUsageEnabled,
   spendCapUsd = 0,
   onDemandSpentUsd = 0,
@@ -286,12 +289,15 @@ export function PaywallModal({
   visualizerDemoSrc = PAYWALL_VISUALIZER_DEMO,
 }: Props) {
   const isOnDemand = reason === "claude_pool" || reason === "spend_cap";
-  const [step, setStep] = useState(isOnDemand ? LAST_STEP : 0);
+  const startOnSignup = reason === "create_account";
+  const [step, setStep] = useState(isOnDemand || startOnSignup ? LAST_STEP : 0);
   const setBuildingRef = useRef<HTMLVideoElement>(null);
   const visualizerRef = useRef<HTMLVideoElement>(null);
   const [setBuildingDone, setSetBuildingDone] = useState(false);
   const [visualizerDone, setVisualizerDone] = useState(false);
-  const [ign, setIgn] = useState("");
+  const [ign, setIgn] = useState(
+    () => defaultIgn.trim() || loadSavedAccountProfile()?.ign || "",
+  );
   const [email, setEmail] = useState(() => decodeAuthEmail() ?? "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -400,13 +406,12 @@ export function PaywallModal({
       // registration fails because the email is taken) so a failed attempt
       // can't clobber an existing account's cached IGN/pet.
       const trimmedIgn = ign.trim();
-      if (trimmedIgn && !loadSavedAccountProfile(trimmed)) {
-        saveSavedAccountProfile({ ign: trimmedIgn }, trimmed);
-      }
+      saveSavedAccountProfile({ ign: trimmedIgn }, trimmed);
       await registerAccount(trimmed, password, {
         ign: trimmedIgn,
         confirmPassword,
       });
+      saveSavedAccountProfile({ ign: trimmedIgn }, trimmed);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create account");

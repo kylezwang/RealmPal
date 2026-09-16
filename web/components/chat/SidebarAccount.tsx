@@ -7,7 +7,13 @@ import { AccountMenu } from "./AccountMenu";
  * and shares the AccountMenu component with the top-right header cluster
  * so both mirror each other's avatar and dropdown by construction.
  */
-export function SidebarAccount({ pet }: { pet?: PlayerProfile["top_pet"] }) {
+export function SidebarAccount({
+  pet,
+  onRegister,
+}: {
+  pet?: PlayerProfile["top_pet"];
+  onRegister?: () => void;
+}) {
   return (
     <AccountMenu
       pet={pet}
@@ -16,6 +22,7 @@ export function SidebarAccount({ pet }: { pet?: PlayerProfile["top_pet"] }) {
       openDirection="up"
       align="left"
       triggerClassName="w-full px-2 py-1.5 -mx-2 hover:bg-[#333333] transition-colors"
+      onRegister={onRegister}
     />
   );
 }

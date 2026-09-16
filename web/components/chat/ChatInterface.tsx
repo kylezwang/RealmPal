@@ -878,6 +878,19 @@ export function ChatInterface() {
     });
   }
 
+  function openSignup() {
+    setPaywall({
+      upgrade: true,
+      message: "Create a free account",
+      used: usage?.used ?? 0,
+      limit: usage?.limit ?? 5,
+      remaining: usage?.remaining ?? 5,
+      scope: usage?.scope ?? "ip",
+      reason: "create_account",
+      resets_in_seconds: usage?.resets_in_seconds ?? 0,
+    });
+  }
+
   function closeChangelog() {
     setShowChangelog(false);
     setUnseenChangelog(false);
@@ -1046,6 +1059,10 @@ export function ChatInterface() {
       openPaywall();
       closeMobileNav();
     },
+    onRegister: () => {
+      openSignup();
+      closeMobileNav();
+    },
     isSignedIn,
     questPercent: dailyQuestPercent(dailyQuests),
     unseenChangelog,
@@ -1147,7 +1164,13 @@ export function ChatInterface() {
               </button>
             </div>
           )}
-          <AccountMenu pet={playerProfile?.top_pet} size={32} openDirection="down" align="right" />
+          <AccountMenu
+            pet={playerProfile?.top_pet}
+            size={32}
+            openDirection="down"
+            align="right"
+            onRegister={openSignup}
+          />
         </div>
 
         {/* Compact chrome (mobile): sidebar toggle, optional new chat, account */}
@@ -1181,7 +1204,13 @@ export function ChatInterface() {
                 Sign in
               </button>
             )}
-            <AccountMenu pet={playerProfile?.top_pet} size={28} openDirection="down" align="right" />
+            <AccountMenu
+              pet={playerProfile?.top_pet}
+              size={28}
+              openDirection="down"
+              align="right"
+              onRegister={openSignup}
+            />
           </div>
         </header>
 
@@ -1351,9 +1380,6 @@ export function ChatInterface() {
                 </button>
               </div>
             </div>
-            <p className="hidden md:block text-center text-xs text-[#404040] mt-2">
-              Data via realmeye.com & umienjoyers.com · Not affiliated with DECA Games
-            </p>
           </div>
         </div>
       </main>
@@ -1367,6 +1393,7 @@ export function ChatInterface() {
           pet={playerProfile?.top_pet}
           signedIn={isSignedIn}
           reason={paywall.reason}
+          defaultIgn={ign}
           spendCapUsd={paywall.spend_cap_usd ?? usage?.spend_cap_usd ?? 0}
           onDemandSpentUsd={usage?.on_demand_spent_usd ?? 0}
           resetsInSeconds={paywall.resets_in_seconds ?? usage?.resets_in_seconds ?? 0}

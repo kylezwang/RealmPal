@@ -169,7 +169,7 @@ export interface ChatChunk {
 /** Which bucket a quota was counted against: an account, or a client IP. */
 export type QuotaScope = "user" | "ip";
 
-export type PaywallReason = "free_quota" | "claude_pool" | "spend_cap";
+export type PaywallReason = "free_quota" | "claude_pool" | "spend_cap" | "create_account";
 
 export interface PaywallInfo {
   upgrade: true;
