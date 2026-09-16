@@ -23,10 +23,17 @@ from api.services.item_aliases import (
 )
 
 
-async def _seed_catalog(redis_client, items: list[tuple[str, str]]) -> None:
+async def _seed_catalog(redis_client, items: list[tuple]) -> None:
     """Seed the item catalog cache directly (bypassing a live hub scrape),
-    same shape load_item_catalog writes: [{name, slot, aliases}, ...]."""
-    payload = [{"name": name, "slot": slot, "aliases": []} for name, slot in items]
+    same shape load_item_catalog writes: [{name, slot, aliases, hub}, ...]."""
+    payload = []
+    for row in items:
+        name = row[0]
+        slot = row[1]
+        hub = row[2] if len(row) > 2 else ""
+        payload.append(
+            {"name": name, "slot": slot, "aliases": [], "hub": hub}
+        )
     await redis_client.set(f"{CATALOG_PREFIX}:all:cached", json.dumps(payload))
 
 
@@ -35,7 +42,7 @@ def test_with_phrasing_still_extracts_a_set():
         "shiny divine set with Crown, Sword of Acclaim, Robe, and Ring of Decades"
     )
     assert names == [
-        "Crown",
+        "The Forgotten Crown",
         "Sword of Acclaim",
         "Robe",
         "Ring of Decades",
@@ -53,7 +60,12 @@ def test_full_shiny_divine_list_without_with_is_recognized_as_a_set():
     names = extract_set_item_names(
         "Full shiny divine enforcer, ballistic star, straitjacket, and lean"
     )
-    assert names == ["enforcer", "ballistic star", "straitjacket", "lean"]
+    assert names == [
+        "Enforcer",
+        "ballistic star",
+        "Cackling Straitjacket",
+        "Chrysalis of Eternity",
+    ]
 
 
 def test_single_item_shiny_request_is_not_treated_as_a_set():
@@ -99,6 +111,9 @@ def test_community_nicknames_for_bows_and_triangle():
     assert community_canonical("triangle") == "The Triangle"
     assert community_canonical("the triangle") == "The Triangle"
     assert community_canonical("lean crown") == "Chrysalis of Eternity"
+    assert community_canonical("crown") == "The Forgotten Crown"
+    assert community_canonical("forgotten crown") == "The Forgotten Crown"
+    assert community_canonical("gemstone") == "The Twilight Gemstone"
     assert community_canonical("kage") == "Kagenohikari"
     assert community_canonical("snake ring") == "Snake Eye Ring"
     assert community_canonical("enforcer") == "Enforcer"
@@ -319,3 +334,50 @@ async def test_trim_does_not_resolve_below_min_words(redis_client, anon_settings
         redis_client, "ring for my kensei build", ttl_seconds=60
     )
     assert resolved is None
+
+
+def test_trailing_all_shiny_divine_does_not_stick_to_crown():
+    """Live Sep 16: 'Warmonger, The Triangle, Vesture, and Crown all shiny
+    divine' used to leave the last name as 'Crown all'."""
+    names = extract_set_item_names(
+        "Show me a bard set with Warmonger, The Triangle, Vesture, and Crown "
+        "all shiny divine"
+    )
+    assert names == [
+        "Warmonger",
+        "The Triangle",
+        "Vesture of Duality",
+        "The Forgotten Crown",
+    ]
+
+
+async def test_named_bard_set_uses_realmeye_bow_kind_and_forgotten_crown(
+    redis_client,
+):
+    """Live Sep 16: named shiny Bard set called Warmonger a sword and cited
+    RealmShark. Catalog hub + Crown alias must drive the set chunk."""
+    await _seed_catalog(
+        redis_client,
+        [
+            ("Warmonger", "weapon", "longbows"),
+            ("The Triangle", "ability", "lutes"),
+            ("Vesture of Duality", "armor", "robes"),
+            ("The Forgotten Crown", "ring", "rings"),
+        ],
+    )
+    text = await retrieve_set_visualizer(
+        redis_client,
+        "Show me a bard set with Warmonger, The Triangle, Vesture of Duality, "
+        "and Crown all shiny divine",
+        ttl_seconds=60,
+        class_name="Bard",
+        allow_scrape=False,
+    )
+    assert "[item:Warmonger]" in text
+    assert "[item:The Triangle]" in text
+    assert "[item:Vesture of Duality]" in text
+    assert "[item:The Forgotten Crown]" in text
+    assert "(bow)" in text
+    assert "https://www.realmeye.com/wiki/warmonger" in text
+    assert "tracker.realmshark" not in text
+    assert "Cite the RealmEye wiki URLs" in text

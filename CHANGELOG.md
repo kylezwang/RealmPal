@@ -27,6 +27,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Named set visualizer uses catalog slot kinds and RealmEye URLs** (`item_aliases.retrieve_set_visualizer`, `chat.py`): Crown aliases to The Forgotten Crown; leftover "all" after a comma list is stripped; tokens order by real catalog slot (weapon/ability/armor/ring) not list order; each item gets a hub kind (Warmonger is a bow) plus RealmEye wiki URL. Chat no longer stamps the RealmShark leaderboard citation on set, skin, dungeon, player, or enchant turns.
+- **User-facing copy says overall, not overlay** (`community_knowledge.py`, `wiki_scaling.py`, `rag.py`, `slot_graph.py`, `realmshark.py`): Claude was copying "Player overlay" into leftover Why columns (Attack Bard Vesture). Prompt strings now say Overall / overall pick. `_first_visualizer_item` still skips those core lines (legacy "Player overlay" prefix too). System prompt: never say overlay to the user.
 - **Family cores in briefs and Umi prompt**: `retrieve_weapon_brief` / `retrieve_armor_brief` / `retrieve_ability_brief` prepend `weapon_core_note` / `armor_core_note` / `ability_source_note`. `retrieve_umi_bis()` now names Vesture, Diplomatic, and Flowering Kimono as the robe base (Kimono is not only an honorable mention). Ring briefs always include Snake Eye Ring with Kage / Lean / Crown / Gemstone.
 - **`retrieve_umi_bis()` prompt** no longer calls RealmEye the source of truth. Matches the ranking above. Attack robe classes: Diplomatic Robe and Vesture of Duality, Flowering Kimono as honorable mention.
 - **Anonymous stored answers no longer spend the daily guest quota** (`api/routers/chat.py`): the stored-hit branch used to call `_enforce_quota()` only for `quota.is_anonymous` so guests would hit the sign-in wall after 3 no-model replies. Guest, free, and Pro now all skip the meter when the turn never calls Claude. A real Claude turn still consumes. A guest who already spent their Claude turns can still get stored replies.
@@ -75,6 +77,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_class_max_stats_unique_without_community_is_priority`
 - `test_umi_has_matching_stat_tab_ignores_general`
 - `test_overlay_slot_picks_kensei_dex_uses_tools_and_fungal`
+- `test_trailing_all_shiny_divine_does_not_stick_to_crown`
+- `test_named_bard_set_uses_realmeye_bow_kind_and_forgotten_crown`
 
 ### History
 #### Until Sep 16, 2026 (1:20 PM)

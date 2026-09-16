@@ -24,7 +24,8 @@ def test_system_prompt_ranks_realmshark_first():
     prompt = build_system_prompt("Source: https://example.test\nunused")
     assert "RealmEye wiki infoboxes and hub tables are the source of truth" not in prompt
     assert "RealmShark first" in prompt
-    assert "player overlay" in prompt
+    assert "overall family cores" in prompt
+    assert "Never say overlay" in prompt
     assert "The Triangle" in prompt
     assert "SET VISUALIZER PICKS" in prompt
     assert "UmiEnjoyers BIS tabs" in prompt or "?tab=speed-wizard" in prompt
@@ -34,3 +35,5 @@ def test_system_prompt_ranks_realmshark_first():
     assert "Snake Eye Ring" in prompt
     assert "unique class+stat" in prompt.lower()
     assert "Fungal Breastplate" in prompt
+    assert "Warmonger is a bow" in prompt
+    assert "Crown means The Forgotten Crown" in prompt

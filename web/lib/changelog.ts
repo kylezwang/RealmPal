@@ -23,6 +23,14 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-7",
+    date: "Sep 16, 2026",
+    items: [
+      "Build answers now call the top pick overall, not overlay.",
+      "Named shiny sets now use RealmEye item pages, so a bow is not called a sword, and Crown means The Forgotten Crown.",
+    ],
+  },
+  {
     version: "2026.09.16-6",
     date: "Sep 16, 2026",
     items: [

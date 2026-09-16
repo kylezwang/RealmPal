@@ -510,6 +510,8 @@ def test_store_ranking_brief_attack_bard_names_triangle():
     assert "[item:The Triangle]" in text
     assert "[item:Vesture of Duality]" in text
     assert "ability:" in text
+    assert "Overall pick for Bard Attack" in text
+    assert "Player overlay" not in text
     assert "SLOT ALTERNATIVES" in text
     assert "umienjoyers.com/guides/best-in-slot/bard" in text
     assert "RealmShark" in text

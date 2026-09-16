@@ -913,14 +913,14 @@ async def _in_depth_build_extras(
         if tokens:
             pick_note = (
                 "SET VISUALIZER PICKS in weapon, ability, armor, ring order. "
-                "Already ranked RealmShark majority, then the player overlay. "
+                "Already ranked RealmShark majority, then overall picks. "
             )
             if unique and not community:
                 pick_note += (
                     "This unique build has no RealmShark/Umi full set. "
                     "Ability, armor, and ring should follow the Maximum "
                     "Achievable Stats row above, not these tokens, unless a "
-                    "token is the overlay family weapon. "
+                    "token is the overall family weapon. "
                 )
             bits.append(
                 pick_note

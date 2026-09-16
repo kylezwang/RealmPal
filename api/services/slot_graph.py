@@ -299,7 +299,11 @@ def _compile_graph(redis: aioredis.Redis):
     async def set_visualizer(state: SlotState) -> dict:
         return {
             "reports": [
-                wrap_slot_chunk("set", await _set_agent(redis, state))
+                wrap_slot_chunk(
+                    "set",
+                    await _set_agent(redis, state),
+                    source="https://www.realmeye.com",
+                )
             ]
         }
 
@@ -393,8 +397,10 @@ def _join_reports(state: SlotState) -> str:
         header = (
             "SET VISUALIZER. Copy the [loadout ...] flags and [item:Wiki Title] "
             "tokens from the set chunk in order (weapon, ability, armor, ring). "
-            "Those titles are already expanded from nicknames (QOT, Vest, Lean). "
-            "Short confirmation only. Do not substitute other items."
+            "Those titles are already expanded from nicknames (QOT, Vest, Lean, "
+            "Crown). Use each item's listed kind in prose (a bow is not a sword). "
+            "Cite the RealmEye wiki URLs from the set chunk. Do not cite "
+            "RealmShark. Short confirmation only. Do not substitute other items."
         )
     elif "skin" in slots and not any(
         slot in slots for slot in (*_GEAR_SLOTS, "set")
@@ -457,7 +463,7 @@ def _join_reports(state: SlotState) -> str:
                 f"UNIQUE LOADOUT ({stat} {class_name}). Ability, armor, and "
                 "ring stack the highest "
                 f"{stat} from the RealmEye Maximum Achievable Stats row. "
-                "Weapon may use the overlay family base. Do not use general "
+                "Weapon may use the overall family base. Do not use general "
                 "robe or leather cores. After the recommended set, SLOT "
                 "ALTERNATIVES from a matching Umi tab if one exists. Never "
                 "list a T7 robe or armor as an alternative."
@@ -466,7 +472,7 @@ def _join_reports(state: SlotState) -> str:
             header = (
                 f"UNIQUE LOADOUT ({stat} {class_name}). A RealmShark top 5 "
                 "or matching Umi tab already has this full set. Copy that "
-                "community loadout. Overlay family cores are general "
+                "community loadout. Overall family cores are general "
                 "gameplay only. After that, SLOT ALTERNATIVES from Umi. "
                 "Never list a T7 robe or armor as an alternative."
             )
@@ -479,7 +485,7 @@ def _join_reports(state: SlotState) -> str:
                 "slot that has extras, taken only from the UmiEnjoyers "
                 "general-tab chunk. Never list a T7 robe or armor as an "
                 "alternative. Use slot chunks only for a short why and "
-                "for overlay / Umi / wiki disagreements. Do not recap every "
+                "for overall / Umi / wiki disagreements. Do not recap every "
                 "source or list five rings. Enchant rolls come from the "
                 "enchantment chunk only."
             )
