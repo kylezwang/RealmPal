@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import re
 
-from ..models.build import CLASS_ARMOR_HUB, weapon_family
+from dataclasses import dataclass
+from typing import Optional
+
+from ..models.build import (
+    CLASS_ABILITY_HUB,
+    CLASS_ARMOR_HUB,
+    WEAPON_FAMILIES,
+    weapon_family,
+)
 
 # Source ranking for "best items for this stat / build me a set".
 # General gameplay (asked stat is the class's primary): RealmShark, then
@@ -413,3 +421,163 @@ def store_ranking_brief(
     else:
         lines.append(always_mention_rings_note())
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class SlotListSpec:
+    """Which classes, hubs, and cores feed a 'best X in the game' list."""
+
+    slug: str
+    label: str
+    hubs: tuple[str, ...]
+    classes: tuple[str, ...]
+    cores: tuple[str, ...]
+    shark_slot: str
+
+
+def spec_for_slot(slug: str) -> Optional[SlotListSpec]:
+    """Map a stored-answer slot slug to Umi/RealmShark collection inputs."""
+    key = (slug or "").strip().lower()
+    if key == "equipment":
+        return SlotListSpec(
+            slug="equipment",
+            label="equipment",
+            hubs=(),
+            classes=tuple(CLASS_ARMOR_HUB),
+            cores=(),
+            shark_slot="",
+        )
+    if key == "rings":
+        return SlotListSpec(
+            slug="rings",
+            label="rings",
+            hubs=("rings",),
+            classes=tuple(CLASS_ARMOR_HUB),
+            cores=TOP_RINGS,
+            shark_slot="ring",
+        )
+    armor_hubs = {
+        "armors": ("robes", "leather-armors", "heavy-armors"),
+        "robes": ("robes",),
+        "leather-armors": ("leather-armors",),
+        "heavy-armors": ("heavy-armors",),
+    }
+    if key in armor_hubs:
+        hubs = armor_hubs[key]
+        classes = tuple(
+            name
+            for name, hub in CLASS_ARMOR_HUB.items()
+            if hub in hubs
+        )
+        cores: tuple[str, ...] = ()
+        if "robes" in hubs:
+            cores += ROBE_CORE
+        if "leather-armors" in hubs:
+            cores += LEATHER_CORE
+        if "heavy-armors" in hubs:
+            cores += ("Fungal Breastplate",)
+        return SlotListSpec(
+            slug=key,
+            label="armor" if key == "armors" else key.replace("-", " "),
+            hubs=hubs,
+            classes=classes,
+            cores=cores,
+            shark_slot="armor",
+        )
+    for classes, hubs, label in WEAPON_FAMILIES:
+        if key in hubs:
+            return SlotListSpec(
+                slug=key,
+                label=label,
+                hubs=hubs,
+                classes=classes,
+                cores=WEAPON_FAMILY_CORES.get(hubs[0], ()),
+                shark_slot="weapon",
+            )
+    for class_name, hub in CLASS_ABILITY_HUB.items():
+        if hub == key:
+            cores = tuple(
+                overlay["ability"]
+                for (cls, _stat), overlay in CLASS_STAT_SLOT_OVERRIDES.items()
+                if cls == class_name and overlay.get("ability")
+            )
+            return SlotListSpec(
+                slug=key,
+                label=key.replace("-", " "),
+                hubs=(hub,),
+                classes=(class_name,),
+                cores=cores,
+                shark_slot="ability",
+            )
+    return None
+
+
+def apply_item_upgrades(names: list[str]) -> list[str]:
+    """Put the later item first when a listed name has a known upgrade."""
+    out: list[str] = []
+    for name in names:
+        upgrade = ITEM_UPGRADES.get(name)
+        if upgrade and upgrade not in out:
+            out.append(upgrade)
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def rank_community_slot_names(
+    *,
+    cores: tuple[str, ...] = (),
+    shark_counts: dict[str, int] | None = None,
+    umi_names: list[str] | None = None,
+    limit: int = 6,
+) -> list[str]:
+    """Cores, then RealmShark frequency, then Umi order. Never hub table order.
+
+    Found live Sep 16: 'Best bows in the game' took the first six RealmEye
+    hub rows (Shortbow, Reinforced Bow, ...) because that page is T0-first.
+    """
+    shark_counts = shark_counts or {}
+    umi_names = umi_names or []
+    ranked: list[str] = []
+
+    def _add(name: str) -> None:
+        clean = (name or "").strip()
+        if clean and clean not in ranked:
+            ranked.append(clean)
+
+    for name in cores:
+        _add(name)
+    for name, _count in sorted(
+        shark_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        _add(name)
+    for name in umi_names:
+        _add(name)
+    return apply_item_upgrades(ranked)[:limit]
+
+
+def names_mentioned_in_umi(
+    text: str,
+    catalog: list[str],
+    *,
+    stat: str | None = None,
+) -> list[str]:
+    """Catalog titles that appear in Umi BIS prose, matching-stat tab first."""
+    body = text or ""
+    if stat:
+        shorts = (stat.lower(),) + _STAT_TAB_SHORT.get(stat, ())
+        sections = re.split(r"(?m)^## Umi tab:\s*", body)
+        preferred: list[str] = []
+        for section in sections[1:]:
+            title, _, rest = section.partition("\n")
+            hay = title.lower()
+            if any(token in hay for token in shorts):
+                preferred.append(rest)
+        if preferred:
+            body = "\n".join(preferred)
+    found: list[str] = []
+    lower = body.lower()
+    for name in sorted({n for n in catalog if n}, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(name.lower())}\b", lower):
+            found.append(name)
+    return found

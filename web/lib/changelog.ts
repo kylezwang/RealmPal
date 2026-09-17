@@ -23,6 +23,15 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.16-12",
+    date: "Sep 16, 2026",
+    items: [
+      "Best bow, sword, armor, and ring lists now follow Umi and RealmShark, not the early-tier wiki table.",
+      "Asking the same ability question again is instant and does not use another in-depth reply.",
+      "Early, mid, and endgame item questions now get a class progression with dungeon routes and item pictures.",
+    ],
+  },
+  {
     version: "2026.09.16-11",
     date: "Sep 16, 2026",
     items: [

@@ -611,6 +611,15 @@ async def load_top_loadouts(
     return loadouts
 
 
+def _loadout_slot_name(row: Loadout, slot: str) -> str:
+    by_slot = {s.slot.lower(): s.item_name for s in row.equipment}
+    if slot == "weapon":
+        return (by_slot.get("weapon") or row.weapon_name or "").strip()
+    if slot == "ability":
+        return (by_slot.get("ability") or row.ability_name or "").strip()
+    return (by_slot.get(slot) or "").strip()
+
+
 def picks_from_loadouts(loadouts: list[Loadout]) -> dict[str, str]:
     """Majority item per slot across a RealmShark top-N board.
 
@@ -620,14 +629,8 @@ def picks_from_loadouts(loadouts: list[Loadout]) -> dict[str, str]:
     """
     counts = {slot: Counter() for slot in ("weapon", "ability", "armor", "ring")}
     for row in loadouts:
-        by_slot = {s.slot.lower(): s.item_name for s in row.equipment}
-        names = {
-            "weapon": by_slot.get("weapon") or row.weapon_name,
-            "ability": by_slot.get("ability") or row.ability_name,
-            "armor": by_slot.get("armor"),
-            "ring": by_slot.get("ring"),
-        }
-        for slot, name in names.items():
+        for slot in counts:
+            name = _loadout_slot_name(row, slot)
             if not name or _LE_NAME.search(name):
                 continue
             counts[slot][name] += 1
@@ -636,6 +639,49 @@ def picks_from_loadouts(loadouts: list[Loadout]) -> dict[str, str]:
         for slot, counter in counts.items()
         if counter
     }
+
+
+async def shark_name_counts(
+    redis: aioredis.Redis,
+    classes: tuple[str, ...],
+    slot: str,
+    *,
+    stat: Optional[str] = None,
+    ttl_seconds: int,
+) -> dict[str, int]:
+    """How often each item appears on cached RealmShark top 5s.
+
+    Cache only. A guest 'best bows' ask must not fan out live leaderboard
+    scrapes. Missing boards just omit those names.
+    """
+    if not classes or slot not in {"weapon", "ability", "armor", "ring"}:
+        return {}
+    try:
+        graph = await load_graph(redis, ttl_seconds, cache_only=True)
+    except Exception as e:
+        logger.bind(error=str(e)).warning("RealmShark graph unavailable for slot list")
+        return {}
+    wanted = {name.lower() for name in classes}
+    want_stat = (stat or "").lower()
+    counts: Counter[str] = Counter()
+    for edge in graph.edges:
+        if edge.class_name.lower() not in wanted:
+            continue
+        if want_stat and edge.stat.lower() != want_stat:
+            continue
+        loadouts = await load_top_loadouts(
+            redis,
+            edge,
+            season=graph.season,
+            ttl_seconds=ttl_seconds,
+            cache_only=True,
+        )
+        for row in loadouts:
+            name = _loadout_slot_name(row, slot)
+            if not name or _LE_NAME.search(name):
+                continue
+            counts[name] += 1
+    return dict(counts)
 
 
 async def shark_slot_picks(

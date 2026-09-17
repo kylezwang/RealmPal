@@ -27,6 +27,9 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Class progression briefs** (`api/services/progression.py`): "best early/mid/end game items for {class}" (and "X progression") is a stored three-band farm route with `[item:]` cards. Sorcerer is the hand-verified ratchet (Mad Lab / Cemetery / Snake Pit, Parasite + Cnidarian + Draconis, MV / O3 / Shadows). Other classes keep the same shape but use that family's dungeons and store cores (bows get Coral / Leaf / Maka + leather, staves get Unholy + Water Dragon Silk, and so on). Generic T0–T6 Nexus copy only remains when no class is named. Claude does not mint over these.
+- **Ability asks mint and replay** (`maybe_mint_brief`, `_ability_reply`, `chat.py` `_mint`): "Best druid abilities" has a class and the word ability, but no stat, so it never wrote `wiki:build:v1:{class}:{stat}`. Haiku replies were also skipped (`model != claude_model`). Live Sep 16: the same guest ask burned two in-depth turns. Class-only ability essays now store at `wiki:ability-brief:v1:{class}` (or `:{stat}` when named). The second identical ask is a stored hit. Haiku and Sonnet both mint. Constrained / dungeon / enchant asks still do not.
+- **Slot lists rank Umi + RealmShark, not hub T0 order** (`stored_answers._slot_reply`, `community_knowledge.rank_community_slot_names`, `realmshark.shark_name_counts`): "Best bows in the game" took the first six `wiki:hub-index:v8:bows` rows (Shortbow, Reinforced Bow, ...). RealmEye hubs are T0-first. Lists now seed family cores (Makakoyumi / Divinity+Damnation / robe+leather cores / TOP_RINGS), then cached RealmShark top-5 frequency, then UmiEnjoyers BIS names. Same path for swords, armor, rings, and other mapped slots. "Best equipment/gear/items for {stat}" (no class) aims to maximize that stat. Class+stat asks still defer to the build brief.
 - **Stored build briefs only match this turn's class+stat** (`stored_answers._build_reply`, `maybe_mint_brief`): `parse_query(..., history=...)` used to inherit Huntress/Dexterity (and `buildish`) from earlier turns, so an LLM-bound follow-up after a minted `wiki:build:v1:huntress:dexterity` brief streamed that same loadout instead of falling through to `_enforce_quota`. Live Sep 16 prod: a guest at 0 in-depth left sent a Claude-activating test prompt and got the prior Dexterity Huntress essay. Briefs now parse this message only. Asking the same class+stat again is still a cache hit. History inheritance stays on the Claude path for thin follow-ups.
 - **Guest Register opens the paywall signup slide** (`AccountMenu`, `PaywallModal` `reason=create_account`): the guest profile Register item used to `router.push("/auth/signin?mode=register")`, which left chat and did not show a modal. It now opens the same create-account slide as paywall step 3, prefills the sidebar IGN, and writes the IGN to account profile storage before and after `registerAccount` so the pet restore survives the auth-changed event.
 - **Composer footer attribution moved to About** (`AccountMenu`): "Data via realmeye.com..." no longer sits under the message box. Account menu About (guest and signed-in) opens a small modal with RealmEye, RealmShark, UmiEnjoyers, and the DECA disclaimer.
@@ -74,6 +77,18 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_claude_turn_at_daily_limit_still_returns_402`
 - `test_cached_build_does_not_resurface_on_an_unrelated_follow_up`
 - `test_guest_at_limit_gets_paywall_not_a_prior_build_brief`
+- `test_best_bows_uses_cores_not_hub_t0`
+- `test_best_swords_and_rings_use_community_cores`
+- `test_best_equipment_for_dexterity_aims_at_that_stat`
+- `test_best_items_for_dex_huntress_is_not_a_slot_list`
+- `test_ability_ask_matches_best_druid_abilities_not_a_full_build`
+- `test_second_druid_ability_ask_uses_the_minted_brief`
+- `test_second_druid_ability_stream_does_not_call_claude`
+- `test_parse_progression_query_needs_class_and_band_words`
+- `test_sorcerer_progression_uses_the_verified_route`
+- `test_huntress_progression_is_bows_not_scepters`
+- `test_stored_sorcerer_early_game_skips_generic_t6_blurb`
+- `test_rank_community_slot_names_cores_beat_hub_order`
 - `test_chat_burst_bucket_is_not_daily_quota_or_lookup`
 - `test_followup_and_small_sentinel_cloth_too_is_skin_query`
 - `test_skin_followup_with_history_routes_to_skin_agent`
