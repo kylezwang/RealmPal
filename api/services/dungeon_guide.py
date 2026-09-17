@@ -162,33 +162,118 @@ _SOURCE_DROP_RE = re.compile(
     r"(?:shin(?:y|ies)|loot|items?|uts?|sts?|whites?))?\s*\??\s*$"
     r"|^(?:what|which)\s+(?:does|can|do)\s+(?:the\s+)?(.+?)\s+drop(?:s)?"
     r"(?:\s+(?:shin(?:y|ies)|loot|items?))?\s*\??\s*$"
+    r"|^what\s+(?:the\s+)?(.+?)\s+drops?\b"
+    r"|^(?:what|which)\s+(?:loot|drops|items)\s+(?:does|do|can)\s+(?:the\s+)?"
+    r"(.+?)\s+(?:have|drop)"
     r"|^(.+?)\s+(?:loot\s+table|drops?\s+of\s+interest)\s*\??\s*$",
     re.I,
 )
+_SOURCE_SPLIT = re.compile(r"\s+(?:and|&)\s+|,\s+(?:and\s+)?", re.I)
 _SKIP_DROP_SOURCE = frozenset(
     {"you", "i", "we", "it", "they", "he", "she", "this", "that"}
 )
+_SKIP_SOURCE_PREFIX = frozenset(
+    {"what", "which", "where", "how", "who", "why", "best"}
+)
 
 
-def extract_drop_source_query(message: str) -> Optional[tuple[str, bool]]:
-    """Dungeon/NPC loot ask: ('Keyper', asking_about_shinies) or None.
+def _clean_source_name(raw: str) -> str:
+    name = re.sub(r"^(?:the\s+)", "", (raw or "").strip(), flags=re.I)
+    name = re.sub(r"\s+", " ", name).strip(" ?.")
+    return name
+
+
+def _split_drop_sources(raw: str) -> list[str]:
+    """'Nox the wild shadow and the twilight archmage' -> two sources."""
+    chunks = _SOURCE_SPLIT.split(raw or "") or [raw]
+    names: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        name = _clean_source_name(chunk)
+        if not name or len(name) > 60:
+            continue
+        first = name.split()[0].lower()
+        if name.lower() in _SKIP_DROP_SOURCE or first in _SKIP_SOURCE_PREFIX:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def extract_drop_source_query(message: str) -> Optional[tuple[list[str], bool]]:
+    """Dungeon/boss/NPC loot ask: (['Keyper'], shiny) or None.
 
     Live Sep 17: 'Can the Keyper drop shinies?' invented Keyper's Trickery
     because this never matched a guide verb and Claude filled in an item.
+    Same day: Nox / Twilight Archmage missed because only index titles
+    (not drops_from bosses) were treated as sources.
     """
     text = (message or "").strip()
     match = _SOURCE_DROP_RE.search(text)
     if not match:
         return None
     raw = next((group for group in match.groups() if group), "")
-    name = re.sub(r"^(?:the\s+)", "", raw.strip(), flags=re.I)
-    name = re.sub(r"\s+", " ", name).strip(" ?.")
-    if not name or len(name) > 60:
-        return None
-    if name.lower() in _SKIP_DROP_SOURCE:
+    names = _split_drop_sources(raw)
+    if not names:
         return None
     shiny = bool(re.search(r"\bshin(?:y|ies)\b", text, re.I))
-    return name, shiny
+    return names, shiny
+
+
+def mentions_drop_source(haystack: str, source: str) -> bool:
+    """True when a Drops from cell names this dungeon, boss, or NPC."""
+    q = _core(source)
+    h = _core(haystack)
+    if not q or len(q) < 3 or not h:
+        return False
+    if q == h:
+        return True
+    if f" {q} " in f" {h} ":
+        return True
+    qtoks = _tokens(source)
+    htoks = _tokens(haystack)
+    return bool(qtoks) and qtoks <= htoks
+
+
+async def cached_drops_from_source(
+    redis: aioredis.Redis,
+    source: str,
+    *,
+    limit: int = 24,
+) -> tuple[list[str], str]:
+    """Item names on cached dungeon pages whose drops_from mention source."""
+    names: list[str] = []
+    seen: set[str] = set()
+    wiki_url = ""
+    async for raw_key in redis.scan_iter(match=f"{PAGE_CACHE_PREFIX}*", count=100):
+        raw = await redis.get(raw_key)
+        if not raw:
+            continue
+        try:
+            page = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(page, dict):
+            continue
+        for row in page.get("drops") or []:
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
+            if not mentions_drop_source(row.get("drops_from") or "", source):
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(name)
+            if not wiki_url:
+                wiki_url = page.get("url") or ""
+            if len(names) >= limit:
+                return names, wiki_url
+    return names, wiki_url
 
 
 def event_index_entries() -> list[dict]:

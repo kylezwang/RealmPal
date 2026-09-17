@@ -23,6 +23,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-5",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking what a dungeon or boss drops now uses that source's wiki loot table, including Nox and Twilight Archmage.",
+    ],
+  },
+  {
     version: "2026.09.17-4",
     date: "Sep 17, 2026",
     items: [

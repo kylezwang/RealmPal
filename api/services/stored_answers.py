@@ -20,6 +20,7 @@ from ..models.build import CLASS_ABILITY_HUB, CLASS_ALIASES, STAT_ALIASES
 from .dungeon_guide import (
     _focus_text,
     _is_hardmode_shatters,
+    cached_drops_from_source,
     extract_drop_source_query,
     extract_dungeon_query,
     get_or_scrape_index,
@@ -556,24 +557,15 @@ def _place_loot_reply(
     )
 
 
-async def _source_drop_reply(
-    redis: aioredis.Redis, message: str, ttl: int
-) -> Optional[StoredReply]:
-    """Loot for a dungeon/NPC from wiki tables only. Never invent item names.
-
-    Live Sep 17: 'Can the Keyper drop shinies?' went to Claude, which made up
-    Keyper's Trickery. This path only lists names from the stored dungeon
-    loot table or item drop_locations. Dungeon/NPC pages win over a catalog
-    item with a similar name so the source is never turned into a title.
-    """
-    parsed = extract_drop_source_query(message)
-    if not parsed:
-        return None
-    source, want_shiny = parsed
-
+async def _loot_for_source(
+    redis: aioredis.Redis,
+    source: str,
+    ttl: int,
+    want_shiny: bool,
+) -> StoredReply:
+    """Wiki loot for one dungeon, boss, or NPC. Never invent item names."""
+    wiki_drops, wiki_url = await cached_drops_from_source(redis, source)
     title = source
-    wiki_drops: list[str] = []
-    wiki_url = ""
     try:
         entries = await get_or_scrape_index(
             redis, ttl_seconds=ttl, cache_only=True
@@ -590,14 +582,19 @@ async def _source_drop_reply(
             cache_only=True,
         )
         if page:
-            wiki_url = page.get("url") or ""
+            wiki_url = wiki_url or page.get("url") or ""
             for row in page.get("drops") or []:
                 name = (row.get("name") or "").strip()
                 if name:
                     wiki_drops.append(name)
-        cached_items = await cached_items_from_place(redis, title)
-        if not cached_items and title.lower() != source.lower():
-            cached_items = await cached_items_from_place(redis, source)
+    cached_items = await cached_items_from_place(redis, source)
+    if title.lower() != source.lower():
+        extra = await cached_items_from_place(redis, title)
+        have = {item.name.lower() for item in cached_items}
+        cached_items = cached_items + [
+            item for item in extra if item.name.lower() not in have
+        ]
+    if wiki_drops or cached_items or matches:
         return _place_loot_reply(
             title=title,
             wiki_url=wiki_url,
@@ -650,6 +647,31 @@ async def _source_drop_reply(
         kind="source-drop",
         key=f"wiki:source-drop:v1:{source.lower()}",
     )
+
+
+async def _source_drop_reply(
+    redis: aioredis.Redis, message: str, ttl: int
+) -> Optional[StoredReply]:
+    """Loot for a dungeon/boss/NPC from wiki tables only. Never invent names.
+
+    Live Sep 17: 'Can the Keyper drop shinies?' went to Claude, which made up
+    Keyper's Trickery. The first pass only matched dungeon-index titles, so
+    'what does Nox / Twilight Archmage drop' said the store was empty even
+    when those bosses were on the Shatters loot table. This path lists names
+    from drops_from rows and item drop_locations for every source in the ask.
+    """
+    parsed = extract_drop_source_query(message)
+    if not parsed:
+        return None
+    names, want_shiny = parsed
+    parts = [
+        await _loot_for_source(redis, source, ttl, want_shiny) for source in names
+    ]
+    if len(parts) == 1:
+        return parts[0]
+    text = "\n\n".join(part.text for part in parts)
+    key = "wiki:source-drop:v1:" + "|".join(name.lower() for name in names)
+    return StoredReply(text=text, kind="source-drop", key=key)
 
 
 async def _biome_reply(

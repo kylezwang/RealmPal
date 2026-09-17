@@ -109,10 +109,36 @@ def test_extract_drop_source_query_keyper_shinies():
 
     parsed = extract_drop_source_query("Can the Keyper drop shinies?")
     assert parsed is not None
-    name, shiny = parsed
-    assert name.lower() == "keyper"
+    names, shiny = parsed
+    assert names == ["Keyper"]
     assert shiny is True
     assert extract_drop_source_query("best attack bard") is None
     entries = merge_event_entries([])
     hits = match_index_pages("Keyper", entries)
     assert hits and hits[0]["slug"] == "the-keyper"
+
+
+def test_extract_drop_source_query_bosses_and_missing_does():
+    from api.services.dungeon_guide import extract_drop_source_query
+
+    parsed = extract_drop_source_query(
+        "what Nox the wild shadow and the twilight archmage drops"
+    )
+    assert parsed is not None
+    names, shiny = parsed
+    assert shiny is False
+    assert [name.lower() for name in names] == [
+        "nox the wild shadow",
+        "twilight archmage",
+    ]
+    single = extract_drop_source_query("what does Nox the wild shadow drop")
+    assert single is not None
+    assert single[0] == ["Nox the wild shadow"]
+
+
+def test_mentions_drop_source_matches_boss_cells():
+    from api.services.dungeon_guide import mentions_drop_source
+
+    assert mentions_drop_source("Nox the Wild Shadow", "Nox the wild shadow")
+    assert mentions_drop_source("Twilight Archmage", "the twilight archmage")
+    assert not mentions_drop_source("Valen the Unbreakable", "Nox the wild shadow")

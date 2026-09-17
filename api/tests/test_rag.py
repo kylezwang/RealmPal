@@ -43,4 +43,4 @@ def test_system_prompt_never_invents_item_names_or_loot():
     prompt = build_system_prompt("Source: https://example.test\nunused")
     assert "Never invent player stats, item names, or loot" in prompt
     assert "Do not turn a source name into a made-up item title" in prompt
-    assert "The Keyper" in prompt
+    assert "dungeon, boss, NPC, or event" in prompt
