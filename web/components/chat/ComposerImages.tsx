@@ -9,7 +9,7 @@ export function ChatImageThumb({
   src,
   className = "h-full w-full object-cover",
 }: ChatImageView & { className?: string }) {
-  const zoomSrc = chatImagePreviewUrl({ name, thumb, src });
+  const zoomSrc = chatImagePreviewUrl({ thumb, src });
   return (
     <SpriteZoomTrigger
       source={{ kind: "url", src: zoomSrc, alt: name }}
