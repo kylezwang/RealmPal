@@ -24,7 +24,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 ### Changed
 - **Phone leftover prompts drop skin-look** (`examplePromptShellClass`, `LeftoverAskBar`): below `md`, the two-field "What does Skin look like with" chip is hidden in the leftover row above the input (after the paywall has been seen) and that row is `grid-cols-3`. Empty-state cards in the main chat still show all four. Desktop leftover still shows all four.
 - **Paywall demo player on phones** (`PaywallDemoVideo`): production already serves `/videos/paywall/*.mp4` as `video/mp4` with byte ranges (H.264 Main 4.1, AAC, moov-first). Testers still saw a blank frame when autoplay was blocked or Safari clipped an `overflow-hidden` / absolutely-positioned video. The file is now `src` on `<video>` plus `<source type="video/mp4">`, `autoPlay` + muted `playsInline`, a tap-to-play overlay until `playing`, `translateZ(0)`, and no overflow clip on the video chrome. SWA also sets `Content-Type` on `/videos/*`. Deploy workflow sets `IS_STATIC_EXPORT=true` so Oryx keeps the `out/` export.
-- **Source loot stays in the wiki store** (`extract_drop_source_query`, `_source_drop_reply`): live Sep 17 "Can the Keyper drop shinies?" invented Keyper's Trickery because the ask missed guide verbs and Claude filled an item name. Stored path matches dungeon/NPC loot asks, lists names from the Keyper wiki drops table and item `drop_locations` only, and says the store is empty rather than guessing. `the-keyper` is merged into the dungeon index. Claude prompt: never invent item names or turn a source into a made-up title.
+- **Source loot stays in the wiki store** (`extract_drop_source_query`, `cached_drops_from_source`, `_source_drop_reply`): loot asks for any dungeon, boss, or NPC read `drops_from` on cached dungeon pages plus item `drop_locations`. "what Nox the wild shadow and the twilight archmage drops" splits into two sources and only lists that boss's rows. Empty store says so rather than guessing. `the-keyper` is still merged into the dungeon index. Claude prompt: never invent item names or turn a source into a made-up title.
 - **Item scrape loot rows** (`_ITEM_PAGE_JS`): drop places also come from `Drop location` / `Loot table` keys, two-cell infobox rows, and `Loot table` / `Drop locations` headings with wiki links. Dungeon pages also read `Loot table` / `Loot` / `Drops` headings. Ingested RAG text includes `Shiny sprite: yes/no`.
 
 ### Tests
@@ -53,6 +53,13 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_keyper_shinies_uses_wiki_loot_not_invented_item`
 - `test_keyper_shinies_honest_miss_does_not_invent_a_name`
 - `test_system_prompt_never_invents_item_names_or_loot`
+- `test_extract_drop_source_query_bosses_and_missing_does`
+- `test_mentions_drop_source_matches_boss_cells`
+- `test_nox_and_archmage_use_drops_from_not_dungeon_title`
+
+## History
+### Until Sep 17, 2026
+Source loot stored path only matched dungeon-index titles (Keyper as an event page). Boss names like Nox the Wild Shadow and Twilight Archmage missed the store and returned "no loot table".
 
 ## [2026.09.16] - Sep 16, 2026
 

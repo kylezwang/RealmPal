@@ -951,3 +951,58 @@ async def test_keyper_shinies_honest_miss_does_not_invent_a_name(redis_client):
     assert "Trickery" not in reply.text
     assert "invent" in reply.text.lower()
     assert "[item:" not in reply.text
+
+
+@pytest.mark.asyncio
+async def test_nox_and_archmage_use_drops_from_not_dungeon_title(redis_client):
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}hard-mode-shatters",
+        json.dumps(
+            {
+                "title": "Hard Mode Shatters",
+                "url": "https://www.realmeye.com/wiki/hard-mode-shatters",
+                "drops": [
+                    {
+                        "name": "Nox Test Cloak",
+                        "drops_from": "Nox the Wild Shadow",
+                    },
+                    {
+                        "name": "Valen Test Helm",
+                        "drops_from": "Valen the Unbreakable",
+                    },
+                ],
+            }
+        ),
+    )
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}the-shatters",
+        json.dumps(
+            {
+                "title": "The Shatters",
+                "url": "https://www.realmeye.com/wiki/the-shatters",
+                "drops": [
+                    {
+                        "name": "Archmage Test Bow",
+                        "drops_from": "Twilight Archmage",
+                    },
+                    {
+                        "name": "King Test Quiver",
+                        "drops_from": "The Forgotten King",
+                    },
+                ],
+            }
+        ),
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "what Nox the wild shadow and the twilight archmage drops",
+        ttl_seconds=3600,
+    )
+    assert reply is not None
+    assert reply.kind == "source-drop"
+    assert "Nox Test Cloak" in reply.text
+    assert "Archmage Test Bow" in reply.text
+    assert "Valen Test Helm" not in reply.text
+    assert "King Test Quiver" not in reply.text
+    assert "Trickery" not in reply.text
+    assert "invent" not in reply.text.lower()

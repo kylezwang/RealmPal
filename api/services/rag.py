@@ -348,10 +348,9 @@ def build_system_prompt(context: str, ign: Optional[str] = None) -> str:
         "If you don't have specific information about something, say so clearly "
         "rather than guessing. Never invent player stats, item names, or loot. "
         "Only name items that appear in the retrieved context or as [item:] "
-        "tokens. If the user asks about a dungeon, NPC, or event (for example "
-        "The Keyper) and the context has no loot table for it, say the wiki "
-        "store does not have that yet. Do not turn a source name into a "
-        "made-up item title."
+        "tokens. If the user asks about a dungeon, boss, NPC, or event and "
+        "the context has no loot table for it, say the wiki store does not "
+        "have that yet. Do not turn a source name into a made-up item title."
     )
 
     return base
