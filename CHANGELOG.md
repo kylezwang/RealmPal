@@ -19,6 +19,11 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Item drop locations** (`_ITEM_PAGE_JS`): infobox rows `Drops from` / `Obtained through` / `Dropped by` / `Obtained from` are collected even when they are not the first table header. Item cards show `Drops from ...`.
 - **Farm TLDR cards** (`api/services/farm_guides.py`, `web/components/chat/FarmTldr.tsx`): "how to farm Ogmur / Scythe" is a stored reply with `[farm:ogmur]` / `[farm:scythe]`. The UI paints a sprite panel (swap arrows, prohibition marks, short labels) using wiki item sprites plus simple pixel enemies. Ogmur: Lord of the Lost Lands in Runic Tundra, stun on last crystal, skip add-chasing. Scythe: Spectral Jailer in veteran biomes, loot under the Penitentiary portal, Skeletal Centipede as the easier source.
 - **Site Feedback modal** (`api/services/product_feedback.py`, `POST /chat/site-feedback`): the header/sidebar "N free in-depth responses left" chip is a Feedback button. Answers (rating, what works, what to fix, anything else, optional IGN, signed-in email) insert into `product_feedback`. Same Azure Postgres database as accounts/chat_sessions when `DATABASE_URL` is set. Scan with `SELECT created_at, rating, what_works, what_to_improve, anything_else, email FROM product_feedback ORDER BY created_at DESC LIMIT 100;`. Local SQLite is `data/product_feedback.db`. Capped at 5 submits/hour per IP or signed-in subject.
+- **Free in-depth remaining in the account menu** (`AccountMenu`): the old top-right / sidebar quota chip copy (`freeInDepthPromptsLeft`) is a menu item under Register (guest) or Billing (signed-in free). Clicking it opens `PaywallModal` the same way the chip did. Hidden for paid.
+
+### Changed
+- **Phone leftover prompts drop skin-look** (`examplePromptShellClass`, `LeftoverAskBar`): below `md`, the two-field "What does Skin look like with" chip is hidden in the leftover row above the input (after the paywall has been seen) and that row is `grid-cols-3`. Empty-state cards in the main chat still show all four. Desktop leftover still shows all four.
+- **Paywall demo player on phones** (`PaywallDemoVideo`): production already serves `/videos/paywall/*.mp4` as `video/mp4` with byte ranges (H.264 Main 4.1, AAC, moov-first). Testers still saw a blank frame when autoplay was blocked or Safari clipped an `overflow-hidden` / absolutely-positioned video. The file is now `src` on `<video>` plus `<source type="video/mp4">`, `autoPlay` + muted `playsInline`, a tap-to-play overlay until `playing`, `translateZ(0)`, and no overflow clip on the video chrome. SWA also sets `Content-Type` on `/videos/*`. Deploy workflow sets `IS_STATIC_EXPORT=true` so Oryx keeps the `out/` export.
 
 ### Tests
 - `test_user_content_sends_image_blocks`
@@ -40,6 +45,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_empty_answers_are_rejected`
 - `test_rate_limit_caps_repeat_submits`
 - `test_header_feedback_replaces_quota_chip`
+- `test_mobile_hides_skin_look_suggestion`
+- `test_static_web_app_video_route_sets_mp4_type`
 
 ## [2026.09.16] - Sep 16, 2026
 

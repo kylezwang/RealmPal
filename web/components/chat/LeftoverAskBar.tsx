@@ -1,5 +1,5 @@
 "use client";
-import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
+import { examplePromptShellClass, LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { leftoverAskLead } from "@/lib/usageCopy";
 import { ChevronToggle } from "./ChevronToggle";
 import { ExamplePrompt } from "./ExamplePrompt";
@@ -34,16 +34,17 @@ export function LeftoverAskBar({
           <p className="text-sm leading-relaxed text-[#a3a3a3] mb-3">
             {leftoverAskLead(signedIn)}
           </p>
-          <div className="grid grid-cols-4 gap-2 w-full">
+          <div className="grid grid-cols-3 md:grid-cols-4 gap-2 w-full">
             {LANDING_EXAMPLE_PROMPTS.map((config) => (
-              <ExamplePrompt
-                key={config.id}
-                config={config}
-                variant="row"
-                animate={false}
-                disabled={disabled}
-                onSubmit={onSubmit}
-              />
+              <div key={config.id} className={examplePromptShellClass(config.id)}>
+                <ExamplePrompt
+                  config={config}
+                  variant="row"
+                  animate={false}
+                  disabled={disabled}
+                  onSubmit={onSubmit}
+                />
+              </div>
             ))}
           </div>
         </div>

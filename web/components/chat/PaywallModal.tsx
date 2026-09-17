@@ -185,20 +185,55 @@ function PaywallDemoVideo({
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onEnded: () => void;
 }) {
+  const [showPlay, setShowPlay] = useState(true);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const onPlaying = () => setShowPlay(false);
+    const onPause = () => setShowPlay(true);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("ended", onPause);
+    return () => {
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onPause);
+    };
+  }, [videoRef]);
+
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-[#404040] bg-black h-[min(46vh,460px)] sm:h-[min(48vh,480px)]">
+    <div className="relative w-full rounded-xl border border-[#404040] bg-black h-[min(34vh,280px)] sm:h-[min(48vh,480px)]">
       <video
         ref={videoRef}
-        className="absolute inset-0 h-full w-full object-cover"
+        src={src}
+        className="h-full w-full rounded-xl object-cover [transform:translateZ(0)]"
         controls
         playsInline
         muted
+        autoPlay
         preload="metadata"
         aria-label={label}
         onEnded={onEnded}
       >
         <source src={src} type="video/mp4" />
       </video>
+      {showPlay && (
+        <button
+          type="button"
+          className="absolute inset-x-0 top-0 bottom-10 z-10 flex items-center justify-center bg-black/20"
+          aria-label={`Play ${label}`}
+          onClick={() => {
+            void videoRef.current?.play().catch(() => {});
+          }}
+        >
+          <span className="flex h-14 w-14 items-center justify-center rounded-full border border-white/40 bg-black/55">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="text-white ml-0.5">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </span>
+        </button>
+      )}
     </div>
   );
 }
@@ -485,7 +520,7 @@ export function PaywallModal({
           isLast || isReminder
             ? "max-w-sm p-6"
             : isVideoSlide
-              ? "max-w-3xl p-6 max-h-[94vh] overflow-y-auto"
+              ? "max-w-3xl p-6 max-h-[94vh] overflow-visible"
               : "max-w-md p-6"
         }`}
       >
@@ -506,7 +541,7 @@ export function PaywallModal({
               RealmPal Pro
             </p>
             <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
-              This type of question can be answered with in-depth responses, such as items, set-building, & enchanting guides
+              This type of question can be answered with in-depth AI responses, such as items, set-building, & enchanting guides
             </h2>
             <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
               Ask for a class and a stat. Get a real loadout tailored to your playstyle. Enchant rolls that

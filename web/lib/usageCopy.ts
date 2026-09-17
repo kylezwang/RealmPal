@@ -30,3 +30,14 @@ export function leftoverAskLead(signedIn: boolean): string {
     ? "Get more in-depth responses with RealmPal Pro. You can still ask more general questions such as:"
     : STILL_ASK_GENERAL;
 }
+
+/** Header used to show this as a chip. Now it lives in the account menu. */
+export function showsFreeInDepthQuota(usage: {
+  tier?: string;
+  scope?: string;
+  limit: number;
+} | null | undefined): boolean {
+  return Boolean(
+    usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5),
+  );
+}

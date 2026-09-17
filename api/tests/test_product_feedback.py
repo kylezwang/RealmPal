@@ -132,3 +132,27 @@ def test_header_feedback_replaces_quota_chip():
     assert "freeInDepthPromptsLeft" not in sidebar
     assert "How has RealmPal been" in modal
     assert "sendSiteFeedback" in modal
+    menu = (root / "web" / "components" / "chat" / "AccountMenu.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "freeInDepthPromptsLeft" in menu
+    assert "onOpenPaywall" in menu
+    assert "showsFreeInDepthQuota" in menu
+
+
+def test_mobile_hides_skin_look_suggestion():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    prompts = (root / "web" / "lib" / "examplePrompts.ts").read_text(encoding="utf-8")
+    leftover = (root / "web" / "components" / "chat" / "LeftoverAskBar.tsx").read_text(
+        encoding="utf-8"
+    )
+    chat = (root / "web" / "components" / "chat" / "ChatInterface.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert 'SKIN_LOOK_PROMPT_ID = "skin-look"' in prompts
+    assert "hidden min-w-0 md:block" in prompts
+    assert "examplePromptShellClass" in leftover
+    assert "grid-cols-3 md:grid-cols-4" in leftover
+    assert "examplePromptShellClass" not in chat

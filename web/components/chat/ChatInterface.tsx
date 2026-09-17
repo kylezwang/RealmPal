@@ -981,6 +981,18 @@ export function ChatInterface() {
     void addImageFiles(filesFromDrop(e));
   }
 
+  function openPaywall() {
+    setPaywall({
+      upgrade: true,
+      message: "Upgrade to keep chatting",
+      used: usage.used,
+      limit: usage.limit,
+      remaining: usage.remaining,
+      scope: usage.scope,
+      resets_in_seconds: usage.resets_in_seconds,
+    });
+  }
+
   function openSignup() {
     setPaywall({
       upgrade: true,
@@ -1174,6 +1186,11 @@ export function ChatInterface() {
       openSignup();
       closeMobileNav();
     },
+    usage,
+    onOpenPaywall: () => {
+      openPaywall();
+      closeMobileNav();
+    },
     questPercent: dailyQuestPercent(dailyQuests),
     unseenChangelog,
     onHome: () => {
@@ -1287,6 +1304,8 @@ export function ChatInterface() {
             openDirection="down"
             align="right"
             onRegister={openSignup}
+            usage={usage}
+            onOpenPaywall={openPaywall}
           />
         </div>
 
@@ -1327,6 +1346,8 @@ export function ChatInterface() {
               openDirection="down"
               align="right"
               onRegister={openSignup}
+              usage={usage}
+              onOpenPaywall={openPaywall}
             />
           </div>
         </header>

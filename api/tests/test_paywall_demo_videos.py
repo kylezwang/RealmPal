@@ -53,4 +53,14 @@ def test_paywall_mp4s_are_faststart():
 def test_paywall_player_declares_mp4_type():
     source = PAYWALL_MODAL.read_text(encoding="utf-8")
     assert 'type="video/mp4"' in source
+    assert "src={src}" in source
+    assert "playsInline" in source
+    assert "autoPlay" in source
     assert 'preload="metadata"' in source
+    assert 'aria-label={`Play ${label}`}' in source
+
+
+def test_static_web_app_video_route_sets_mp4_type():
+    config = json.loads(SWA_CONFIG.read_text(encoding="utf-8"))
+    video_route = next(r for r in config["routes"] if r["route"] == "/videos/*")
+    assert video_route["headers"]["Content-Type"] == "video/mp4"

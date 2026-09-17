@@ -60,6 +60,14 @@ function skinLookMessage(skinRaw: string, clothRaw?: string): string | null {
   return `What does ${skin} look like with ${cloth}?`;
 }
 
+/** Two-field skin preview chip. The leftover row above the input hides it below `md`. */
+export const SKIN_LOOK_PROMPT_ID = "skin-look";
+
+/** Wrapper class for LeftoverAskBar only: hide the skin-look chip on phones. */
+export function examplePromptShellClass(id: string): string {
+  return id === SKIN_LOOK_PROMPT_ID ? "hidden min-w-0 md:block" : "min-w-0";
+}
+
 export const ANIMATED_EXAMPLE_PROMPTS: ExamplePromptConfig[] = [
   {
     id: "player",
@@ -73,7 +81,7 @@ export const ANIMATED_EXAMPLE_PROMPTS: ExamplePromptConfig[] = [
     toMessage: playerLookupMessage,
   },
   {
-    id: "skin-look",
+    id: SKIN_LOOK_PROMPT_ID,
     prefix: "What does",
     infix: "look like with",
     suffix: "?",
