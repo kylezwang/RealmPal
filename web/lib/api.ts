@@ -519,6 +519,20 @@ export async function fetchDungeon(name: string): Promise<DungeonGuide> {
   return res.json();
 }
 
+export async function fetchItemSuggest(query: string): Promise<{ name: string; kind: string }[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const res = await fetchWithTimeout(
+    `${API_URL}/items/suggest?q=${encodeURIComponent(q)}`,
+    { cache: "no-store", headers: authHeaders() },
+    4000,
+    "Suggest timed out",
+  );
+  if (!res.ok) return [];
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows : [];
+}
+
 export async function fetchItem(name: string, className?: string): Promise<ItemProfile> {
   const params = className ? `?class_name=${encodeURIComponent(className)}` : "";
   const res = await fetchWithTimeout(

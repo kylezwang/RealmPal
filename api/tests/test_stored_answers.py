@@ -1006,3 +1006,41 @@ async def test_nox_and_archmage_use_drops_from_not_dungeon_title(redis_client):
     assert "King Test Quiver" not in reply.text
     assert "Trickery" not in reply.text
     assert "invent" not in reply.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_shiny_fungal_star_uses_kunai_not_raw_name(redis_client):
+    from api.services.item_aliases import CATALOG_PREFIX
+
+    await redis_client.set(
+        f"{CATALOG_PREFIX}:all:cached",
+        json.dumps(
+            [
+                {
+                    "name": "Crystalline Kunai",
+                    "slot": "ability",
+                    "aliases": [],
+                    "hub": "stars",
+                }
+            ]
+        ),
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Crystalline Kunai",
+            type="Star",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "Shiny fungal star",
+        ttl_seconds=3600,
+    )
+    assert reply is not None
+    assert reply.kind == "shiny"
+    assert "Crystalline Kunai" in reply.text
+    assert "fungal star" not in reply.text.lower()
+    assert "[item:Crystalline Kunai]" in reply.text

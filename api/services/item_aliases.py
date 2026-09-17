@@ -21,8 +21,17 @@ from ..models.build import (
     WEAPON_FAMILIES,
     weapon_family,
 )
+from ..models.item import ItemProfile
 from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
-from .wiki_scaling import HUB_PREFIX, _hub_index, _SKIP_NAME, read_cached_item, top_build_items
+from .wiki_scaling import (
+    HUB_PREFIX,
+    _hub_index,
+    _LE_CLONE,
+    _SKIP_NAME,
+    cached_items_from_place,
+    read_cached_item,
+    top_build_items,
+)
 
 SET_SLOT_COUNT = 4
 SET_SLOTS = ("weapon", "ability", "armor", "ring")
@@ -288,6 +297,7 @@ _TYPE_WORDS = frozenset(
         "dagger",
         "wand",
         "star",
+        "kunai",
         "cloak",
         "quiver",
         "trap",
@@ -691,6 +701,219 @@ def resolve_against_catalog(
     return None
 
 
+# Fungal Cavern and Crystal Cavern are one dungeon chain. "fungal star"
+# and "crystal star" should resolve to the same Ninja star.
+_LINKED_PLACES = {
+    "fungal": ("crystal",),
+    "crystal": ("fungal",),
+}
+_KIND_SYNONYMS = {
+    "star": ("star", "stars", "kunai"),
+    "stars": ("star", "stars", "kunai"),
+    "kunai": ("star", "stars", "kunai"),
+}
+_PLACE_GENERIC = frozenset(
+    {
+        "cavern",
+        "dungeon",
+        "the",
+        "of",
+        "chamber",
+        "room",
+        "lands",
+        "land",
+        "biome",
+        "forest",
+        "abyss",
+        "portal",
+        "boss",
+        "guide",
+    }
+)
+SUGGEST_KEY = "wiki:suggest:v1"
+
+
+def _is_limited_item(item: ItemProfile) -> bool:
+    if item.limited_edition:
+        return True
+    if _LE_CLONE.search(item.name or ""):
+        return True
+    return bool(re.search(r"limited|\(le\)", item.tier or "", re.I))
+
+
+def _item_matches_kind(item: ItemProfile, kinds: tuple[str, ...], extra: str = "") -> bool:
+    blob = f"{item.type or ''} {item.name} {extra}".lower()
+    return any(kind in blob for kind in kinds if kind)
+
+
+def _explicit_limited_query(query: str) -> bool:
+    return bool(re.search(r"\blimited\b|\(le\)", query or "", re.I))
+
+
+async def prefer_original_name(
+    redis: aioredis.Redis, name: str, *, query: str = ""
+) -> Optional[str]:
+    """Swap a Limited Edition clone for the original unless the user asked for LE."""
+    if _explicit_limited_query(query):
+        return name
+    item = await read_cached_item(redis, name)
+    if not item or not _is_limited_item(item):
+        return name
+    original = (item.original_name or "").strip()
+    if original and original.lower() != item.name.lower():
+        return original
+    return None
+
+
+async def resolve_place_slot(
+    redis: aioredis.Redis,
+    query: str,
+    catalog: list[CatalogItem],
+) -> Optional[str]:
+    """'fungal star' -> item whose drop_locations mention Fungal/Crystal and type is star."""
+    parts = _tokens(query)
+    if len(parts) != 2:
+        return None
+    place, kind = parts[0], _stem(parts[1])
+    kinds = _KIND_SYNONYMS.get(kind, (kind,))
+    known = _TYPE_WORDS | set(_HUB_KIND.values()) | {"kunai"}
+    if kind not in known and not any(k in known for k in kinds):
+        return None
+    by_name = {row.name.lower(): row for row in catalog}
+    hits: list[ItemProfile] = []
+    for loc in (place, *_LINKED_PLACES.get(place, ())):
+        for item in await cached_items_from_place(redis, loc):
+            if _is_limited_item(item):
+                continue
+            cat = by_name.get(item.name.lower())
+            extra = hub_kind(cat.hub, cat.slot) if cat else ""
+            if not _item_matches_kind(item, kinds, extra=extra):
+                continue
+            if not any(hit.name.lower() == item.name.lower() for hit in hits):
+                hits.append(item)
+    if not hits:
+        return None
+    return hits[0].name
+
+
+async def suggest_terms(
+    redis: aioredis.Redis,
+    query: str,
+    *,
+    limit: int = 8,
+) -> list[dict[str, str]]:
+    """Prefix match warmed item/dungeon names for composer Tab complete."""
+    text = (query or "").strip().lower()
+    if len(text) < 2:
+        return []
+    words = text.split()
+    needles = [text]
+    if words:
+        needles.append(words[-1])
+        if len(words) >= 2:
+            needles.append(" ".join(words[-2:]))
+    raw = await redis.get(SUGGEST_KEY)
+    if not raw:
+        return []
+    try:
+        rows = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    hits: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        alias = (row.get("a") or "").lower()
+        name = (row.get("n") or "").strip()
+        if not name or name.lower() in seen:
+            continue
+        matched = False
+        for needle in needles:
+            if len(needle) < 2:
+                continue
+            if alias.startswith(needle) or name.lower().startswith(needle):
+                matched = True
+                break
+            if len(needle) >= 3 and (needle in alias or needle in name.lower()):
+                matched = True
+                break
+        if not matched:
+            continue
+        seen.add(name.lower())
+        hits.append({"name": name, "kind": row.get("k") or "item"})
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+async def warm_suggest_index(
+    redis: aioredis.Redis, *, ttl_seconds: int
+) -> dict[str, int]:
+    """Build Tab-complete terms from warmed hubs, dungeon index, and drop places.
+
+    ponytail: one SCAN of item profiles at warm time, not on each keystroke.
+    """
+    from .dungeon_guide import get_or_scrape_index
+    from .wiki_scaling import ITEM_CACHE_PREFIX
+
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(canonical: str, alias: str, kind: str) -> None:
+        name = (canonical or "").strip()
+        nick = (alias or "").strip()
+        if not name or not nick or len(nick) < 2:
+            return
+        key = (name.lower(), nick.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append({"n": name, "a": nick, "k": kind})
+
+    catalog = await load_item_catalog(
+        redis, ttl_seconds=ttl_seconds, class_name=None, allow_scrape=False
+    )
+    by_name = {row.name.lower(): row for row in catalog}
+    for item in catalog:
+        add(item.name, item.name, "item")
+        for alias in item.aliases:
+            if " " in alias:
+                add(item.name, alias, "item")
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl_seconds, cache_only=True
+        )
+    except Exception:
+        entries = []
+    for entry in entries:
+        title = (entry.get("title") or "").strip()
+        if title:
+            add(title, title, "dungeon")
+    async for raw_key in redis.scan_iter(match=f"{ITEM_CACHE_PREFIX}:*", count=200):
+        raw = await redis.get(raw_key)
+        if not raw:
+            continue
+        try:
+            item = ItemProfile.model_validate_json(raw)
+        except Exception:
+            continue
+        if _is_limited_item(item):
+            continue
+        cat = by_name.get(item.name.lower())
+        kind = hub_kind(cat.hub, cat.slot) if cat else _stem((item.type or "").lower())
+        if not kind:
+            continue
+        for loc in item.drop_locations or []:
+            for word in _tokens(loc):
+                if word in _PLACE_GENERIC or len(word) < 3:
+                    continue
+                add(item.name, f"{word} {kind}", "item")
+                for linked in _LINKED_PLACES.get(word, ()):
+                    add(item.name, f"{linked} {kind}", "item")
+    if rows:
+        await redis.setex(SUGGEST_KEY, ttl_seconds, json.dumps(rows))
+    return {"terms": len(rows)}
+
+
 def extract_set_item_names(prompt: str) -> list[str]:
     text = prompt or ""
     match = _WITH_ITEMS.search(text)
@@ -900,7 +1123,7 @@ async def load_item_catalog(
                 redis, slug, ttl_seconds, allow_scrape=allow_scrape
             ):
                 name = (row.get("name") or "").strip()
-                if not name or _SKIP_NAME.search(name):
+                if not name or _SKIP_NAME.search(name) or _LE_CLONE.search(name):
                     continue
                 key = name.lower()
                 if key in seen:
@@ -952,6 +1175,14 @@ async def resolve_item_query(
             allow_scrape=False,
         )
     hit = resolve_against_catalog(raw, catalog, slot_hint=slot_hint)
+    if not hit:
+        cached = await read_cached_item(redis, raw)
+        if cached:
+            hit = cached.name
+    if not hit:
+        hit = await resolve_place_slot(redis, raw, catalog)
+    if hit:
+        hit = await prefer_original_name(redis, hit, query=raw)
     if hit and hit.lower() != raw.lower():
         logger.bind(query=raw, canonical=hit, class_name=class_name).info(
             "Resolved item nickname"

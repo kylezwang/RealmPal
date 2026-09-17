@@ -133,6 +133,10 @@ async def ingest_player(client: AsyncQdrantClient, profile: PlayerProfile) -> No
 
 async def ingest_item(client: AsyncQdrantClient, item: ItemProfile) -> None:
     """Convert an ItemProfile to a Qdrant document and upsert."""
+    if item.limited_edition or re.search(
+        r"limited edition|\(le\)", item.name or "", re.I
+    ):
+        return
     await ensure_collection(client)
 
     stat_lines = "\n".join(f"  {k}: {v}" for k, v in item.stats.items()) if item.stats else ""

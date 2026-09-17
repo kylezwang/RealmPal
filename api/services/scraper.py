@@ -845,13 +845,18 @@ _ITEM_PAGE_JS = """
     return /^(tier|on equip|mp cost)$/i.test(key);
   });
   const stats = {};
+  let original_name = '';
   if (infobox) {
     for (const row of infobox.querySelectorAll('tr')) {
       const cells = Array.from(row.querySelectorAll('th, td'));
       if (cells.length < 2) continue;
       const key = cellText(cells[0]).replace(/:$/, '');
-      if (!key || /^reskin/i.test(key)) continue;
       const val = cellText(cells[1]);
+      if (/^(reskin of|original(?: item)?)$/i.test(key)) {
+        if (val) original_name = original_name || val;
+        continue;
+      }
+      if (!key || /^reskin/i.test(key)) continue;
       if (val) stats[key] = val;
     }
   }
@@ -923,7 +928,11 @@ _ITEM_PAGE_JS = """
   const limited = /limited edition/i.test(
     [name, description, JSON.stringify(stats)].join(' ')
   ) || /limited edition item/i.test((root.innerText || '').slice(0, 1800));
-  return { name, description, stats, sprite_url, shiny_sprite_url, drops, limited };
+  if (!original_name) {
+    const m = (description || '').match(/reskin of\\s+([^.,\\n]+)/i);
+    if (m) original_name = m[1].trim();
+  }
+  return { name, description, stats, sprite_url, shiny_sprite_url, drops, limited, original_name };
 }
 """
 
@@ -1052,8 +1061,10 @@ _ABILITY_HUB_JS = """
 def _item_from_raw(raw: dict, fallback_name: str, url: str) -> ItemProfile:
     stats = raw.get("stats") or {}
     title = _clean_item_name(raw.get("name") or fallback_name)
+    original = _clean_item_name(raw.get("original_name") or "")
     return ItemProfile(
         name=title or fallback_name.strip(),
+        type=(stats.get("Slot") or stats.get("Type") or None),
         tier=stats.get("Tier"),
         description=(raw.get("description") or "").strip() or None,
         stats=stats,
@@ -1062,6 +1073,7 @@ def _item_from_raw(raw: dict, fallback_name: str, url: str) -> ItemProfile:
         drop_locations=raw.get("drops") or [],
         wiki_url=url,
         limited_edition=bool(raw.get("limited")),
+        original_name=original or None,
     )
 
 
