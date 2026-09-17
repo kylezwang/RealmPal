@@ -883,27 +883,41 @@ _ITEM_PAGE_JS = """
 
   const drops = [];
   const seenDropPlace = new Set();
+  const dropKey = /^(drops from|obtained through|dropped by|obtained from|drop locations?|loot table|location)$/i;
   const pushPlace = (raw) => {
     const name = (raw || '').replace(/\\s+/g, ' ').trim();
     const key = name.toLowerCase();
     if (!name || name.length < 3 || seenDropPlace.has(key)) return;
-    if (/^(loot bag|soulbound|fame|feed power)$/i.test(name)) return;
+    if (/^(loot bag|soulbound|fame|feed power|yes|no)$/i.test(name)) return;
     seenDropPlace.add(key);
     drops.push(name);
   };
+  const collectFromCell = (cell) => {
+    if (!cell) return;
+    const links = cell.querySelectorAll('a');
+    if (links.length) {
+      links.forEach((a) => pushPlace(a.textContent));
+    } else {
+      cell.innerText.split(/[,\\n]/).forEach(pushPlace);
+    }
+  };
   for (const t of tables) {
     for (const row of t.querySelectorAll('tr')) {
-      const th = row.querySelector('th');
-      const td = row.querySelector('td');
-      if (!th || !td) continue;
-      const key = th.innerText.trim().replace(/:$/, '');
-      if (!/^(drops from|obtained through|dropped by|obtained from)$/i.test(key)) continue;
-      const links = td.querySelectorAll('a');
-      if (links.length) {
-        links.forEach((a) => pushPlace(a.textContent));
-      } else {
-        td.innerText.split(/[,\\n]/).forEach(pushPlace);
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      if (cells.length < 2) continue;
+      const key = cellText(cells[0]).replace(/:$/, '');
+      if (!dropKey.test(key)) continue;
+      collectFromCell(cells[1]);
+    }
+  }
+  for (const h of root.querySelectorAll('h1,h2,h3,h4,h5')) {
+    if (!/^(drops from|obtained from|dropped by|obtained through|drop locations?|loot table)/i.test((h.textContent || '').trim())) continue;
+    let n = h.nextElementSibling;
+    while (n && !/^H[1-2]$/.test(n.tagName)) {
+      for (const a of n.querySelectorAll ? n.querySelectorAll('a[href*="/wiki/"]') : []) {
+        pushPlace(a.textContent);
       }
+      n = n.nextElementSibling;
     }
   }
   const limited = /limited edition/i.test(
@@ -1345,7 +1359,7 @@ _DUNGEON_PAGE_JS = """
   const seenDrop = new Set();
   let dropTable = null;
   for (const h of root.querySelectorAll('h1,h2,h3,h4,h5')) {
-    if (!/drops of interest|notable drops/i.test(h.textContent || '')) continue;
+    if (!/drops of interest|notable drops|loot table|^drops$|^loot$/i.test(h.textContent || '')) continue;
     let n = h.nextElementSibling;
     while (n && !/^H[1-2]$/.test(n.tagName)) {
       if (n.matches && n.matches('table')) { dropTable = n; break; }

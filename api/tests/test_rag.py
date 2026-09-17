@@ -37,3 +37,10 @@ def test_system_prompt_ranks_realmshark_first():
     assert "Fungal Breastplate" in prompt
     assert "Warmonger is a bow" in prompt
     assert "Crown means The Forgotten Crown" in prompt
+
+
+def test_system_prompt_never_invents_item_names_or_loot():
+    prompt = build_system_prompt("Source: https://example.test\nunused")
+    assert "Never invent player stats, item names, or loot" in prompt
+    assert "Do not turn a source name into a made-up item title" in prompt
+    assert "The Keyper" in prompt

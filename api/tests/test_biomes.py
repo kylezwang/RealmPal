@@ -94,6 +94,9 @@ def test_item_scraper_reads_infobox_drop_rows():
     )
     assert "obtained from" in source
     assert "drops from|obtained through|dropped by|obtained from" in source
+    assert "loot table" in source
+    assert "drop locations?" in source
+    assert "drop locations?|loot table" in source
 
 
 async def test_stored_biome_survey_lists_floral_potions(redis_client, anon_settings):

@@ -102,3 +102,17 @@ def test_one_letter_dungeon_typos_still_match_the_index():
     assert mv and mv[0]["title"] == "Moonlight Village"
     shatts = match_index_pages("shaters", entries)
     assert shatts and shatts[0]["title"] == "The Shatters"
+
+
+def test_extract_drop_source_query_keyper_shinies():
+    from api.services.dungeon_guide import extract_drop_source_query, merge_event_entries
+
+    parsed = extract_drop_source_query("Can the Keyper drop shinies?")
+    assert parsed is not None
+    name, shiny = parsed
+    assert name.lower() == "keyper"
+    assert shiny is True
+    assert extract_drop_source_query("best attack bard") is None
+    entries = merge_event_entries([])
+    hits = match_index_pages("Keyper", entries)
+    assert hits and hits[0]["slug"] == "the-keyper"

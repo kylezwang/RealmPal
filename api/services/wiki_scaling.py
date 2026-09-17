@@ -380,6 +380,34 @@ async def write_cached_item(
         await redis.setex(f"{ITEM_CACHE_PREFIX}:{key}", ttl, payload)
 
 
+async def cached_items_from_place(
+    redis: aioredis.Redis,
+    place: str,
+    *,
+    limit: int = 24,
+) -> list[ItemProfile]:
+    """Cached item profiles whose drop_locations mention this dungeon/NPC."""
+    needle = re.sub(r"^the\s+", "", (place or "").strip().lower())
+    if len(needle) < 3:
+        return []
+    hits: list[ItemProfile] = []
+    async for raw_key in redis.scan_iter(match=f"{ITEM_CACHE_PREFIX}:*", count=200):
+        raw = await redis.get(raw_key)
+        if not raw:
+            continue
+        try:
+            item = ItemProfile.model_validate_json(raw)
+        except Exception:
+            continue
+        places = [loc.lower() for loc in (item.drop_locations or []) if loc]
+        if any(needle in loc or loc in needle for loc in places):
+            if not any(hit.name.lower() == item.name.lower() for hit in hits):
+                hits.append(item)
+        if len(hits) >= limit:
+            break
+    return hits
+
+
 MISSING_ITEM_PREFIX = "item:missing:v1"
 
 

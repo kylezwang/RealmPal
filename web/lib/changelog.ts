@@ -23,6 +23,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-4",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking whether a dungeon or the Keyper drops shinies now uses the wiki loot table instead of guessing item names.",
+    ],
+  },
+  {
     version: "2026.09.17-3",
     date: "Sep 17, 2026",
     items: [
