@@ -26,6 +26,8 @@ jobs:
           # time (there's no server at runtime to read them from), so this
           # has to be set here, not as a Container App / portal setting.
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          # Keep Oryx on the static `out/` export, not hybrid Next.js preview.
+          IS_STATIC_EXPORT: true
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_THANKFUL_MUSHROOM_0951BFB0F }}

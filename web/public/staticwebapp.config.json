@@ -1,4 +1,13 @@
 {
+  "routes": [
+    {
+      "route": "/videos/*",
+      "headers": {
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes"
+      }
+    }
+  ],
   "mimeTypes": {
     ".mp4": "video/mp4"
   }

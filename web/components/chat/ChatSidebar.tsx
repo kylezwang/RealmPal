@@ -1,6 +1,6 @@
 "use client";
 import Image from "next/image";
-import type { PlayerProfile } from "@/lib/api";
+import type { ChatUsage, PlayerProfile } from "@/lib/api";
 import { SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
 import type { ChatSession } from "@/lib/chatHistory";
@@ -30,6 +30,8 @@ interface Props {
   isStreaming: boolean;
   onSubmitPrompt: (message: string) => void;
   onRegister?: () => void;
+  usage?: ChatUsage | null;
+  onOpenPaywall?: () => void;
   questPercent: number;
   onOpenQuests: () => void;
   unseenChangelog: boolean;
@@ -73,6 +75,8 @@ export function ChatSidebar({
   isStreaming,
   onSubmitPrompt,
   onRegister,
+  usage,
+  onOpenPaywall,
   questPercent,
   onOpenQuests,
   unseenChangelog,
@@ -245,7 +249,12 @@ export function ChatSidebar({
           percent={questPercent}
           onClick={onOpenQuests}
         />
-        <SidebarAccount pet={playerProfile?.top_pet} onRegister={onRegister} />
+        <SidebarAccount
+          pet={playerProfile?.top_pet}
+          onRegister={onRegister}
+          usage={usage}
+          onOpenPaywall={onOpenPaywall}
+        />
       </div>
     </div>
   );

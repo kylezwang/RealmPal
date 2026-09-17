@@ -1,10 +1,11 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { PlayerProfile } from "@/lib/api";
+import type { PlayerProfile, ChatUsage } from "@/lib/api";
 import { AUTH_CHANGED_EVENT, clearAuthToken, decodeAuthEmail, decodeAuthIgn } from "@/lib/api";
 import { BillingModal } from "./BillingModal";
 import { GuestAvatar } from "./GuestAvatar";
+import { freeInDepthPromptsLeft, showsFreeInDepthQuota } from "@/lib/usageCopy";
 
 function SettingsIcon({ size = 16 }: { size?: number }) {
   return (
@@ -118,6 +119,14 @@ function RegisterIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+function QuotaIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 function MenuItem({
   icon,
   label,
@@ -139,7 +148,7 @@ function MenuItem({
       }`}
     >
       <span className={`flex-shrink-0 ${danger ? "text-red-400" : "text-[#a3a3a3]"}`}>{icon}</span>
-      {label}
+      <span className="min-w-0 leading-snug">{label}</span>
     </button>
   );
 }
@@ -157,6 +166,9 @@ interface Props {
   triggerClassName?: string;
   /** Guest Register opens the paywall signup slide instead of leaving chat. */
   onRegister?: () => void;
+  /** Remaining free in-depth replies. Clicking opens the upgrade paywall. */
+  usage?: ChatUsage | null;
+  onOpenPaywall?: () => void;
 }
 
 /**
@@ -173,6 +185,8 @@ export function AccountMenu({
   align = "right",
   triggerClassName = "",
   onRegister,
+  usage,
+  onOpenPaywall,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
@@ -233,6 +247,13 @@ export function AccountMenu({
 
   const isSignedIn = Boolean(email);
   const primaryLabel = isSignedIn ? ign || email || "Account" : "Guest";
+  const showQuota = showsFreeInDepthQuota(usage) && Boolean(onOpenPaywall);
+  const remaining = usage?.remaining ?? 0;
+
+  function openQuotaPaywall() {
+    setOpen(false);
+    onOpenPaywall?.();
+  }
 
   return (
     <div ref={containerRef} className={`relative inline-flex ${showLabel ? "w-full" : ""}`}>
@@ -282,6 +303,13 @@ export function AccountMenu({
             <>
               <MenuItem icon={<SettingsIcon />} label="Settings" onClick={() => { setOpen(false); router.push("/account/settings"); }} />
               <MenuItem icon={<BillingIcon />} label="Billing" onClick={() => { setOpen(false); setShowBilling(true); }} />
+              {showQuota && (
+                <MenuItem
+                  icon={<QuotaIcon />}
+                  label={freeInDepthPromptsLeft(remaining)}
+                  onClick={openQuotaPaywall}
+                />
+              )}
               <MenuItem icon={<BellIcon />} label="Notifications" onClick={() => { setOpen(false); router.push("/account/notifications"); }} />
               <MenuItem icon={<AboutIcon />} label="About" onClick={() => { setOpen(false); setShowAbout(true); }} />
               <div className="border-t border-[#303030] my-1" />
@@ -291,6 +319,13 @@ export function AccountMenu({
             <>
               <MenuItem icon={<SignInIcon />} label="Sign in" onClick={goToSignIn} />
               <MenuItem icon={<RegisterIcon />} label="Register" onClick={goToRegister} />
+              {showQuota && (
+                <MenuItem
+                  icon={<QuotaIcon />}
+                  label={freeInDepthPromptsLeft(remaining)}
+                  onClick={openQuotaPaywall}
+                />
+              )}
               <div className="border-t border-[#303030] my-1" />
               <MenuItem icon={<AboutIcon />} label="About" onClick={() => { setOpen(false); setShowAbout(true); }} />
             </>

@@ -23,6 +23,15 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-3",
+    date: "Sep 17, 2026",
+    items: [
+      "Your remaining free in-depth replies now live in the account menu, under Register. Tap it to upgrade.",
+      "On a phone, leftover suggestions above the input drop the skin preview so three fit.",
+      "Upgrade preview videos show a play button if a phone blocks autoplay.",
+    ],
+  },
+  {
     version: "2026.09.17-2",
     date: "Sep 17, 2026",
     items: [

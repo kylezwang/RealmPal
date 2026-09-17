@@ -1,5 +1,5 @@
 "use client";
-import type { PlayerProfile } from "@/lib/api";
+import type { ChatUsage, PlayerProfile } from "@/lib/api";
 import { AccountMenu } from "./AccountMenu";
 
 /**
@@ -10,9 +10,13 @@ import { AccountMenu } from "./AccountMenu";
 export function SidebarAccount({
   pet,
   onRegister,
+  usage,
+  onOpenPaywall,
 }: {
   pet?: PlayerProfile["top_pet"];
   onRegister?: () => void;
+  usage?: ChatUsage | null;
+  onOpenPaywall?: () => void;
 }) {
   return (
     <AccountMenu
@@ -23,6 +27,8 @@ export function SidebarAccount({
       align="left"
       triggerClassName="w-full px-2 py-1.5 -mx-2 hover:bg-[#333333] transition-colors"
       onRegister={onRegister}
+      usage={usage}
+      onOpenPaywall={onOpenPaywall}
     />
   );
 }
