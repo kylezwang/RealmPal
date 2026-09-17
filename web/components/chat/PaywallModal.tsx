@@ -190,14 +190,15 @@ function PaywallDemoVideo({
       <video
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover"
-        src={src}
         controls
         playsInline
         muted
-        preload="auto"
+        preload="metadata"
         aria-label={label}
         onEnded={onEnded}
-      />
+      >
+        <source src={src} type="video/mp4" />
+      </video>
     </div>
   );
 }
