@@ -48,6 +48,8 @@ _NICKNAMES = {
     "udl": "undead lair",
     "mv": "moonlight village",
     "moonlite": "moonlight",
+    "carniferous": "carboniferous",
+    "carboniferus": "carboniferous",
 }
 
 _GUIDE_RE = re.compile(
@@ -150,6 +152,11 @@ def extract_dungeon_query(
     direct = _name_from_guide_match(message)
     if direct:
         return direct
+    from .biomes import named_biome
+
+    biome = named_biome(message)
+    if biome:
+        return biome
     if history and _FOLLOWUP_RE.search(message or ""):
         for prev in reversed(history):
             found = _name_from_guide_match(prev)
@@ -334,7 +341,9 @@ def _hard_mode_section(body: str) -> Optional[str]:
     return (body or "")[start : start + 8000]
 
 
-def _focus_text(text: str, query: str, *, include_lead: bool = True) -> str:
+def _focus_text(
+    text: str, query: str, *, include_lead: bool = True, keep_potions: bool = False
+) -> str:
     """Keep Hard Mode plus shrine/Umi/layout/drops even when trimming."""
     body = text or ""
     parts: list[str] = []
@@ -354,7 +363,9 @@ def _focus_text(text: str, query: str, *, include_lead: bool = True) -> str:
         chunk = match.group(1).strip()
         if chunk and chunk not in "\n".join(parts):
             parts.append(chunk)
-    focused = _strip_potion_drop_lines("\n\n".join(parts))
+    focused = "\n\n".join(parts) if keep_potions else _strip_potion_drop_lines(
+        "\n\n".join(parts)
+    )
     if _is_hardmode_shatters(query):
         focused = _CHRYSALIS_HYPE.sub(
             "a very low chance at the Chrysalis of Eternity", focused
@@ -375,15 +386,17 @@ async def get_or_scrape_index(
     force: bool = False,
     cache_only: bool = False,
 ) -> list[dict]:
+    from .biomes import merge_biome_entries
+
     if not force:
         cached = await redis.get(INDEX_CACHE_KEY)
         if cached:
-            return json.loads(cached)
+            return merge_biome_entries(json.loads(cached))
         if cache_only:
-            return []
+            return merge_biome_entries([])
     entries = await scrape_dungeon_indexes()
     await redis.setex(INDEX_CACHE_KEY, ttl_seconds, json.dumps(entries))
-    return entries
+    return merge_biome_entries(entries)
 
 
 async def get_or_scrape_wiki(
@@ -473,8 +486,15 @@ async def retrieve_dungeon_guide(
     )
     index_cite = "\n".join(f"Source: {url}" for url in INDEX_URLS)
     blocks: list[str] = [_media_instructions(media)]
+    from .biomes import biome_by_title, is_biome_slug
+
+    keep_potions = bool(biome_by_title(dungeon_name)) or any(
+        is_biome_slug(entry.get("slug") or "") for entry in matches
+    )
     for page in pages:
-        focused = _focus_text(page.get("text") or "", dungeon_name)
+        focused = _focus_text(
+            page.get("text") or "", dungeon_name, keep_potions=keep_potions
+        )
         blocks.append(
             "RealmEye dungeon page, reached from the official dungeon "
             "indexes. Use this walkthrough for the route, shrine/NPC quiz "

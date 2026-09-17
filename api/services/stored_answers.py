@@ -25,6 +25,8 @@ from .dungeon_guide import (
     get_or_scrape_wiki,
     match_index_pages,
 )
+from .biomes import compose_biome_brief, extract_biome_query
+from .farm_guides import extract_farm_guide, farm_reply_text
 from .enchanting import is_enchant_query
 from .item_aliases import (
     MAX_PLAUSIBLE_ITEM_NAME_WORDS,
@@ -486,6 +488,35 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     )
 
 
+async def _biome_reply(
+    redis: aioredis.Redis, message: str, ttl: int
+) -> Optional[StoredReply]:
+    query = extract_biome_query(message)
+    if not query:
+        return None
+    brief = await compose_biome_brief(
+        redis, query, ttl_seconds=ttl, cache_only=True
+    )
+    if not brief:
+        return None
+    key = "wiki:biome:v1:veteran"
+    if query.name and not query.survey:
+        key = f"wiki:biome:v1:{(query.slug or query.name).lower()}"
+    if query.potion:
+        key = f"{key}:{query.potion.lower()}"
+    return StoredReply(text=brief, kind="biome", key=key)
+
+
+async def _farm_reply(message: str) -> Optional[StoredReply]:
+    guide_id = extract_farm_guide(message)
+    if not guide_id:
+        return None
+    text = farm_reply_text(guide_id)
+    if not text:
+        return None
+    return StoredReply(text=text, kind="farm", key=f"wiki:farm:v1:{guide_id}")
+
+
 async def _hub_catalog_names(
     redis: aioredis.Redis, hubs: tuple[str, ...]
 ) -> list[str]:
@@ -781,9 +812,15 @@ async def _compose_guide_brief(
     # One RealmEye page, not a Claude essay. The wiki is the reply store.
     use_pages = (hm_pages[:1] if hm else None) or (guide_pages[:1] or pages[:1])
     chunks = [f"# {dungeon.strip().title()}"]
+    from .biomes import biome_by_title
+
+    keep_potions = bool(biome_by_title(dungeon))
     for page in use_pages:
         focused = _focus_text(
-            page.get("text") or "", dungeon, include_lead=not hm
+            page.get("text") or "",
+            dungeon,
+            include_lead=not hm,
+            keep_potions=keep_potions,
         )
         title = _WIKI_TITLE_TAIL.sub("", page.get("title") or page.get("slug") or "Guide")
         body = _strip_wiki_chrome(focused)
@@ -873,6 +910,12 @@ async def try_stored_reply(
     if shiny:
         return shiny
 
+    biome = await _biome_reply(redis, message, ttl_seconds)
+    if biome:
+        return biome
+    farm = await _farm_reply(message)
+    if farm:
+        return farm
     drop = await _drop_reply(redis, message, ttl_seconds)
     if drop:
         return drop
@@ -911,6 +954,10 @@ async def maybe_mint_brief(
     if is_constrained(message) or not (reply or "").strip():
         return None
     if extract_dungeon_query(message, history=history):
+        return None
+    if extract_biome_query(message):
+        return None
+    if extract_farm_guide(message):
         return None
     if parse_progression_query(message):
         return None

@@ -30,8 +30,12 @@ function formatItemCaption(item: ItemProfile): string | undefined {
   const stats = Object.entries(item.stats || {}).filter(
     ([key, value]) => key && value && !/^reskin/i.test(key),
   );
-  if (stats.length === 0) return undefined;
-  return stats.map(([key, value]) => `${key}: ${formatStatValue(key, value)}`).join("\n");
+  const lines = stats.map(([key, value]) => `${key}: ${formatStatValue(key, value)}`);
+  if (item.drop_locations?.length) {
+    lines.push(`Drops from: ${item.drop_locations.join(", ")}`);
+  }
+  if (lines.length === 0) return undefined;
+  return lines.join("\n");
 }
 
 function WikiSprite({
@@ -209,6 +213,12 @@ function ItemCardBody({
             ))}
           </tbody>
         </table>
+      )}
+
+      {item.drop_locations && item.drop_locations.length > 0 && (
+        <p className="text-[11px] text-[#a3a3a3] mt-2 leading-snug">
+          Drops from {item.drop_locations.join(", ")}
+        </p>
       )}
 
       {item.wiki_url && (

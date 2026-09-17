@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     stripe_price_id: str = ""
 
     # Durable store backend (api/services/db.py) for entitlements, accounts,
-    # uploads, and billing prefs. Empty: SQLite files under data/, good for
+    # uploads, billing prefs, and product_feedback. Empty: SQLite files under data/, good for
     # local dev and tests, no infra dependency. Set to a `postgresql://...`
     # DSN (e.g. Azure Database for PostgreSQL) in any deployment with more
     # than one Container Apps replica - SQLite on a shared volume is not
@@ -189,6 +189,13 @@ class Settings(BaseSettings):
     # without bound.
     chat_sessions_db_path: str = "data/chat_sessions.db"
     chat_sessions_max_per_account: int = 200
+
+    # Site-level Feedback modal (not per-message thumbs). SQLite file locally;
+    # same Azure Postgres database as the other stores when DATABASE_URL is set.
+    # Scan with: SELECT * FROM product_feedback ORDER BY created_at DESC;
+    product_feedback_db_path: str = "data/product_feedback.db"
+    product_feedback_limit: int = 5
+    product_feedback_window_seconds: int = 3600
 
     # Auth (magic link JWT) | legacy, being replaced by the identity provider
     # below. Kept so existing paid tokens keep working during the migration.

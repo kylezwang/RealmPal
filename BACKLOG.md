@@ -49,7 +49,7 @@ Resume order when context is fresh:
    warnings (Sep 13) - both are silently falling back to `JWT_SECRET`. Set
    both explicitly and rotate `JWT_SECRET` off its local-dev value before
    real launch.
-6. **Stripe live mode**: test mode is fully verified end to end (Sep 13, see Done below). Before real launch: repeat the same setup in Live mode (dashboard toggle top-right) - live secret key into `.env`, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, re-enable the Customer Portal toggle (it's a separate on/off per mode), and point the webhook endpoint at the real production URL.
+6. **Stripe live mode**: test-mode Checkout, Customer Portal, and the production webhook (`/payments/webhook` on the Container App, signing secret set Sep 16) are wired. Before taking real cards: flip the Stripe Dashboard to Live, paste `sk_live_` into `.env` and the Container App, rerun `python -m api.scripts.ensure_stripe_price` for the live-mode price, turn the Customer Portal on in Live (separate per mode), and run `python -m api.scripts.sync_prod_stripe_webhook` so the live account gets its own endpoint + secret.
 7. **Entra External ID**: MSAL sign-in built on `feature/entra-auth` (Sep 13), but hit a "failed fetch" error in manual testing. Deprioritized for now (not blocking launch, decided Sep 13), come back to it after Container Apps.
 8. Launch on a direct `ANTHROPIC_API_KEY` (decided Sep 13); swap to Foundry once the Azure billing review clears, don't hold deployment on it.
 

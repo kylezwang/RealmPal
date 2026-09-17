@@ -266,8 +266,9 @@ export function SpriteZoomTrigger({
   className?: string;
   /** Skip the popunder. Click opens the centered zoom modal. */
   direct?: boolean;
-  /** `card` clones the trigger contents, scaled up, instead of a sprite sheet. */
-  preview?: "sprite" | "card";
+  /** `card` clones the trigger contents, scaled up, instead of a sprite sheet.
+   *  `image` shows `source.src` large in the same overlay, for screenshots. */
+  preview?: "sprite" | "card" | "image";
   /** Optional full-size card for the zoom modal. Defaults to `children`. */
   previewContent?: ReactNode;
 }) {
@@ -322,7 +323,14 @@ export function SpriteZoomTrigger({
   ) : null;
 
   const zoomBody =
-    preview === "card" ? (
+    preview === "image" && source?.kind === "url" ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={source.src}
+        alt={title}
+        className="max-h-[min(88vh,920px)] max-w-[min(94vw,1100px)] rounded-xl border border-[#404040] bg-black object-contain shadow-2xl"
+      />
+    ) : preview === "card" ? (
       <div
         ref={previewRef}
         className="pointer-events-none origin-center rounded-xl shadow-2xl"
@@ -364,7 +372,7 @@ export function SpriteZoomTrigger({
         <span
           role="button"
           tabIndex={0}
-          className="block cursor-pointer"
+          className="block h-full w-full cursor-pointer"
           aria-label={`Zoom ${title}`}
           aria-expanded={direct ? zoomOpen : menuOpen}
           onClick={(e) => {
@@ -405,7 +413,7 @@ export function SpriteZoomTrigger({
         )}
       </div>
       {zoomOpen && typeof document !== "undefined" && (
-        <ZoomModal title={title} onClose={() => setZoomOpen(false)} frame={preview === "card" ? "card" : "sprite"}>
+        <ZoomModal title={title} onClose={() => setZoomOpen(false)} frame={preview === "sprite" ? "sprite" : "card"}>
           {zoomBody}
         </ZoomModal>
       )}

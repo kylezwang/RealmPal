@@ -1,6 +1,6 @@
 "use client";
 import type { DungeonGuide } from "@/lib/api";
-import { skipDungeonItemCard } from "@/lib/itemLookup";
+import { skipDungeonItemCard, isRealmBiome } from "@/lib/itemLookup";
 import { portalForDungeon } from "@/lib/quests";
 
 function WikiImg({
@@ -107,7 +107,9 @@ export function DungeonLayouts({ guide }: { guide: DungeonGuide }) {
 const DROP_ICON_SIZE = 25;
 
 export function DungeonDrops({ guide }: { guide: DungeonGuide }) {
-  const drops = guide.drops.filter((drop) => !skipDungeonItemCard(drop.name));
+  const drops = guide.drops.filter(
+    (drop) => isRealmBiome(guide.title) || !skipDungeonItemCard(drop.name),
+  );
   if (!drops.length) return null;
   return (
     <div className="mt-3">

@@ -13,9 +13,12 @@ import { DungeonDrops, DungeonHeader, DungeonLayouts } from "./DungeonHeader";
 import { GuestAvatar } from "./GuestAvatar";
 import { PetSprite } from "./PetCompanion";
 import { MessageActions } from "./MessageActions";
+import { ChatImageThumb } from "./ComposerImages";
 import { cleanItemName, findItem, itemTokensToLinks, stripItemTokens } from "@/lib/itemLookup";
 import { resolveLoadoutShowcase, stripLoadoutToken } from "@/lib/loadoutShowcase";
 import { parseSkinToken, parseSkinFromPrompt, stripSkinToken } from "@/lib/skinShowcase";
+import { farmGuideFromContent, stripFarmToken } from "@/lib/farmTldr";
+import { FarmTldr } from "./FarmTldr";
 
 const THINKING_LINES = ["Thinking...", "Working on it...", "Looking that up..."];
 const AVATAR_SIZE = 52;
@@ -43,6 +46,8 @@ interface Props {
   dungeonGuide?: DungeonGuide;
   /** Sidebar pet, same crop as PetCompanion. */
   userPet?: PlayerProfile["top_pet"];
+  /** Screenshots the user attached on this turn. */
+  images?: Array<{ name: string; thumb: string; src?: string }>;
   /** Stable id for copy/feedback tracking on finished assistant replies. */
   messageId?: string;
   /** User prompt that produced this assistant reply. */
@@ -369,12 +374,15 @@ export function MessageBubble({
   pendingItemNames,
   dungeonGuide,
   userPet,
+  images,
   messageId,
   prompt,
   feedback,
   onFeedback,
 }: Props) {
   const isUser = role === "user";
+  const cannedAttach = /^(Attached a screenshot|Attached \d+ screenshots)$/;
+  const showUserText = !isUser || !images?.length || !cannedAttach.test(content.trim());
   const showThinking = Boolean(isStreaming && !content.trim());
   const displayContent = !isUser && playerProfile
     ? stripRestatedPlayerSummary(content)
@@ -395,7 +403,12 @@ export function MessageBubble({
     ? parseSkinToken(content) ?? parseSkinFromPrompt(prompt)
     : null;
   const showSkin = Boolean(skinSpec);
-  const markdownSource = skinSpec
+  const farmGuide = !isUser && !loadout && !showSkin
+    ? farmGuideFromContent(content)
+    : null;
+  const markdownSource = farmGuide
+    ? stripItemTokens(stripFarmToken(stripLoadoutToken(guideBody || displayContent)))
+    : skinSpec
     ? stripSkinToken(stripLoadoutToken(guideBody || displayContent))
     : loadout
       ? stripItemTokens(stripLoadoutToken(guideBody || displayContent))
@@ -435,6 +448,18 @@ export function MessageBubble({
         role="article"
         aria-label={`${role} message`}
       >
+        {isUser && images && images.length > 0 && (
+          <div className={`flex flex-wrap gap-1.5 ${showUserText && displayContent.trim() ? "mb-2" : ""}`}>
+            {images.map((image, index) => (
+              <div
+                key={`${image.name}-${index}`}
+                className="h-14 w-[4.75rem] overflow-hidden rounded-lg border border-[#404040] bg-black"
+              >
+                <ChatImageThumb name={image.name} thumb={image.thumb} src={image.src} />
+              </div>
+            ))}
+          </div>
+        )}
         {!isUser && playerProfile && (
           <p className="text-xl font-semibold text-[#ececec] leading-tight mb-2">{playerProfile.username}</p>
         )}
@@ -442,14 +467,15 @@ export function MessageBubble({
         {!isUser && dungeonGuide && <DungeonHeader guide={dungeonGuide} />}
         {showThinking ? (
           <ThinkingLabel />
-        ) : markdownSource.trim() ? (
+        ) : markdownSource.trim() && (showUserText || !isUser) ? (
           parseContent(
-            loadout ? stripItemTokens(markdownSource) : markdownSource,
+            loadout || farmGuide ? stripItemTokens(markdownSource) : markdownSource,
             items,
             pendingItemNames,
             dungeonGuide,
           )
         ) : null}
+        {!isUser && farmGuide && <FarmTldr guide={farmGuide} items={items} />}
         {!isUser && dungeonGuide && <DungeonLayouts guide={dungeonGuide} />}
         {!isUser && dungeonGuide && !isStreaming && <DungeonDrops guide={dungeonGuide} />}
         {!isUser && dungeonGuide && !isStreaming && guideSources && (
@@ -470,7 +496,7 @@ export function MessageBubble({
         {!isUser && loadout && (
           <LoadoutRow items={items} pendingNames={pendingItemNames} showcase={loadout} />
         )}
-        {!isUser && !loadout && !showSkin && (
+        {!isUser && !loadout && !showSkin && !farmGuide && (
           <ItemCardGrid items={items} pendingNames={pendingItemNames} />
         )}
         {!isUser && !isStreaming && Boolean(content.trim()) && messageId && onFeedback && (

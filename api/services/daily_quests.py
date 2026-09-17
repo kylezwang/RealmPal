@@ -54,6 +54,10 @@ DUNGEON_ROTATION = (
     "The Nest",
     "Cultist Hideout",
     "Carboniferous",
+    "Floral Escape",
+    "Sanguine Forest",
+    "Runic Tundra",
+    "Deep Sea Abyss",
     "The Shatters",
 )
 

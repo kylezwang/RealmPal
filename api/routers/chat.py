@@ -31,17 +31,20 @@ from ..config import Settings, get_settings
 from ..dependencies import get_optional_user, get_redis, get_qdrant
 from ..identity import AuthenticatedUser, bearer_token
 from ..models.chat import (
+    MAX_ATTACHMENTS,
     ChatAttachment,
     ChatRequest,
     FeedbackRequest,
     FeedbackResponse,
     PaywallResponse,
+    SiteFeedbackRequest,
     UsageResponse,
 )
 from ..models.build import CLASS_ABILITY_HUB
 from ..services.rag import build_system_prompt, rag_exclude_slugs, retrieve_context
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
+from ..services.biomes import extract_biome_query
 from ..services.enchanting import is_enchant_query
 from ..services.item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
 from ..services.player_lookup import extract_player_ign
@@ -56,12 +59,14 @@ from ..services.rate_limit import (
     hash_identifier,
     peek,
     peek_ttl,
+    product_feedback_quota_for,
     quota_for,
 )
 from ..services.budget import disabled_reason, record_llm_failure, record_usage
 from ..services.llm import build_chat_client
 from ..services.model_route import pick_chat_model
 from ..services import entitlements
+from ..services import product_feedback
 from ..services.claude_billing import consume_claude_reply, peek_claude_usage
 from ..services import daily_quests
 from ..services.stored_answers import maybe_mint_brief, try_stored_reply
@@ -92,29 +97,45 @@ def _validate_attachment(att: ChatAttachment) -> None:
         raise HTTPException(status_code=400, detail="Unsupported attachment type")
 
 
-def _user_content(body: ChatRequest) -> str | list[dict]:
-    """Plain text, or Claude vision/document blocks when a file is attached."""
+def _request_attachments(body: ChatRequest) -> list[ChatAttachment]:
+    """Legacy `attachment` plus `attachments`, capped at MAX_ATTACHMENTS."""
+    atts: list[ChatAttachment] = []
+    if body.attachment is not None:
+        atts.append(body.attachment)
+    atts.extend(body.attachments)
+    if len(atts) > MAX_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_ATTACHMENTS} images per message",
+        )
+    return atts
+
+
+def _user_content(body: ChatRequest, attachments: list[ChatAttachment]) -> str | list[dict]:
+    """Plain text, or Claude vision/document blocks when files are attached."""
     text = body.message.strip()
-    att = body.attachment
-    if att is None:
+    if not attachments:
         return text
 
-    media = att.media_type.lower()
-    if media in ALLOWED_IMAGE_TYPES:
-        file_block: dict = {
-            "type": "image",
-            "source": {"type": "base64", "media_type": media, "data": att.data},
-        }
-    else:
-        file_block = {
-            "type": "document",
-            "source": {"type": "base64", "media_type": media, "data": att.data},
-        }
+    blocks: list[dict] = []
+    for att in attachments:
+        media = att.media_type.lower()
+        if media in ALLOWED_IMAGE_TYPES:
+            blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media, "data": att.data},
+            })
+        else:
+            blocks.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": media, "data": att.data},
+            })
     caption = text or (
-        f"The user attached a file named {att.filename}. "
-        "Look at it and help with their RotMG question."
+        "The user attached RotMG screenshot(s). Read the character, gear, vault, "
+        "or inventory in the image(s) and help with their question."
     )
-    return [file_block, {"type": "text", "text": caption}]
+    blocks.append({"type": "text", "text": caption})
+    return blocks
 
 
 async def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings) -> bool:
@@ -541,6 +562,58 @@ async def chat_feedback(
     return FeedbackResponse()
 
 
+@router.post("/site-feedback", response_model=FeedbackResponse)
+async def site_feedback(
+    body: SiteFeedbackRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    user: Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)] = None,
+) -> FeedbackResponse:
+    """Header Feedback modal. Rows land in product_feedback for Azure scans."""
+    what_works = (body.what_works or "").strip()
+    what_to_improve = (body.what_to_improve or "").strip()
+    anything_else = (body.anything_else or "").strip()
+    if not (what_works or what_to_improve or anything_else):
+        raise HTTPException(
+            status_code=400,
+            detail="Tell us what works, what to fix, or anything else.",
+        )
+
+    bucket = product_feedback_quota_for(user, request, settings)
+    try:
+        count = await consume_windowed(redis, bucket)
+    except Exception:
+        logger.exception("Could not enforce site-feedback rate limit")
+        raise HTTPException(status_code=503, detail="Feedback unavailable")
+    if count > bucket.limit:
+        raise HTTPException(
+            status_code=429,
+            detail="Thanks, we already have recent feedback from you.",
+            headers={"Retry-After": str(bucket.window_seconds)},
+        )
+
+    try:
+        await product_feedback.insert_feedback(
+            settings,
+            rating=body.rating,
+            what_works=what_works,
+            what_to_improve=what_to_improve,
+            anything_else=anything_else,
+            email=user.email if user else None,
+            ign=body.ign,
+        )
+    except Exception:
+        logger.exception("Failed to persist site feedback")
+        raise HTTPException(status_code=503, detail="Feedback unavailable")
+    logger.bind(
+        rating=body.rating,
+        signed_in=bool(user),
+        has_text=True,
+    ).info("Site feedback recorded")
+    return FeedbackResponse()
+
+
 @router.post("/stream")
 async def chat_stream(
     body: ChatRequest,
@@ -553,10 +626,11 @@ async def chat_stream(
 ) -> StreamingResponse:
     """Stream a chat response. Quota is keyed on the verified caller or their IP."""
 
-    if not body.message.strip() and body.attachment is None:
+    attachments = _request_attachments(body)
+    if not body.message.strip() and not attachments:
         raise HTTPException(status_code=400, detail="Message is empty")
-    if body.attachment is not None:
-        _validate_attachment(body.attachment)
+    for att in attachments:
+        _validate_attachment(att)
 
     # Checked before the quota so a shut-off deployment doesn't silently
     # consume someone's allowance on a request it won't answer.
@@ -586,7 +660,7 @@ async def chat_stream(
             history=outfit_history,
             ttl_seconds=settings.wiki_ttl_seconds,
             player_ttl_seconds=settings.player_ttl_seconds,
-            has_attachment=body.attachment is not None,
+            has_attachment=bool(attachments),
         )
     except Exception:
         logger.exception("Stored-answer lookup failed; falling through to Claude")
@@ -619,12 +693,13 @@ async def chat_stream(
     player_only = False
     try:
         query_text = body.message.strip()
-        if not query_text and body.attachment is not None:
-            query_text = body.attachment.filename
+        if not query_text and attachments:
+            query_text = attachments[0].filename
         class_name, stat, buildish = parse_query(query_text, history=user_history)
         this_class, _this_stat, _this_build = parse_query(query_text)
-        dungeon_only = bool(
-            extract_dungeon_query(query_text, history=user_history)
+        dungeon_only = (
+            bool(extract_dungeon_query(query_text, history=user_history))
+            or bool(extract_biome_query(query_text))
         ) and not buildish
         # This-turn IGN lookups stay off the wiki/DPS path even if an
         # earlier Bard/Huntress question would inherit as buildish.
@@ -725,7 +800,7 @@ async def chat_stream(
     messages = [
         {"role": msg.role, "content": msg.content[:HISTORY_CONTENT_CAP]}
         for msg in body.history[-10:]
-    ] + [{"role": "user", "content": body.message}]
+    ] + [{"role": "user", "content": _user_content(body, attachments)}]
 
     model = pick_chat_model(
         body.message,
@@ -734,7 +809,7 @@ async def chat_stream(
         context=context,
         dungeon_only=dungeon_only,
         player_only=player_only,
-        has_attachment=body.attachment is not None,
+        has_attachment=bool(attachments),
     )
     logger.bind(
         session_id=body.session_id[:8],

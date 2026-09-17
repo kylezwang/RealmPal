@@ -1,6 +1,6 @@
 "use client";
 import Image from "next/image";
-import type { ChatUsage, PlayerProfile } from "@/lib/api";
+import type { PlayerProfile } from "@/lib/api";
 import { SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
 import type { ChatSession } from "@/lib/chatHistory";
@@ -8,7 +8,6 @@ import { ExamplePrompt } from "./ExamplePrompt";
 import { PetCompanion } from "./PetCompanion";
 import { QuestProgressMeter } from "./QuestProgressMeter";
 import { SidebarAccount } from "./SidebarAccount";
-import { freeInDepthPromptsLeft } from "@/lib/usageCopy";
 import { ChevronToggle } from "./ChevronToggle";
 
 interface Props {
@@ -30,14 +29,12 @@ interface Props {
   onToggleSuggestions: () => void;
   isStreaming: boolean;
   onSubmitPrompt: (message: string) => void;
-  usage: ChatUsage | null;
-  onOpenPaywall: () => void;
   onRegister?: () => void;
-  isSignedIn: boolean;
   questPercent: number;
   onOpenQuests: () => void;
   unseenChangelog: boolean;
   onOpenChangelog: () => void;
+  onOpenFeedback: () => void;
 }
 
 function CloseIcon() {
@@ -75,14 +72,12 @@ export function ChatSidebar({
   onToggleSuggestions,
   isStreaming,
   onSubmitPrompt,
-  usage,
-  onOpenPaywall,
   onRegister,
-  isSignedIn,
   questPercent,
   onOpenQuests,
   unseenChangelog,
   onOpenChangelog,
+  onOpenFeedback,
 }: Props) {
   return (
     <div className={className}>
@@ -221,22 +216,15 @@ export function ChatSidebar({
       </div>
 
       <div className="flex-shrink-0 pt-3 mt-3 border-t border-[#303030] space-y-2">
-        {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
-          <button
-            type="button"
-            onClick={onOpenPaywall}
-            className="group w-full text-left px-2 py-1 -mx-2 rounded-lg hover:bg-[#333333] transition-colors cursor-pointer"
-          >
-            <span className="block text-sm text-[#a3a3a3] group-hover:text-[#ececec]">
-              {freeInDepthPromptsLeft(usage.remaining)}
-            </span>
-            {!isSignedIn && (
-              <span className="block text-xs leading-tight text-[#737373] group-hover:text-[#a3a3a3]">
-                Sign in for 2 more today
-              </span>
-            )}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onOpenFeedback}
+          className="group w-full text-left px-2 py-1 -mx-2 rounded-lg hover:bg-[#333333] transition-colors cursor-pointer"
+        >
+          <span className="block text-sm text-[#a3a3a3] group-hover:text-[#ececec]">
+            Feedback
+          </span>
+        </button>
         <button
           type="button"
           onClick={onOpenChangelog}

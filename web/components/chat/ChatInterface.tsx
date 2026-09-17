@@ -10,13 +10,25 @@ import { ExamplePrompt } from "./ExamplePrompt";
 import { extractItemNames, skipDungeonItemCard, ITEM_CARD_ROW_SIZE } from "@/lib/itemLookup";
 import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, SET_SLOT_COUNT } from "@/lib/loadoutShowcase";
 import { inferSkinVisualize } from "@/lib/skinShowcase";
+import { farmItemNamesFromContent } from "@/lib/farmTldr";
 import { MessageBubble } from "./MessageBubble";
 import { PetSprite } from "./PetCompanion";
 import { PaywallModal } from "./PaywallModal";
 import { ChangelogModal } from "./ChangelogModal";
+import { FeedbackModal } from "./FeedbackModal";
 import { hasUnseenChangelog } from "@/lib/changelog";
-import { freeInDepthPromptsLeft } from "@/lib/usageCopy";
 import { LeftoverAskBar } from "./LeftoverAskBar";
+import { ComposerImages } from "./ComposerImages";
+import {
+  CHAT_IMAGE_ACCEPT,
+  CHAT_IMAGE_MAX,
+  chatImagePreviewUrl,
+  encodeChatImage,
+  filesFromClipboard,
+  filesFromDrop,
+  isChatImageFile,
+  type PendingChatImage,
+} from "@/lib/chatImages";
 import { QuestProgressMeter } from "./QuestProgressMeter";
 import { QuestsModal } from "./QuestsModal";
 import {
@@ -153,6 +165,7 @@ interface Message {
    * skeletons until each fetchItem() resolves. */
   pendingItemNames?: string[];
   dungeonGuide?: DungeonGuide;
+  images?: Array<{ name: string; thumb: string; src?: string }>;
 }
 
 
@@ -180,6 +193,7 @@ export function ChatInterface() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [unseenChangelog, setUnseenChangelog] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [dailyQuests, setDailyQuests] = useState<DailyQuestState[]>([]);
@@ -231,7 +245,9 @@ export function ChatInterface() {
     scope: "ip",
   });
   const [ignError, setIgnError] = useState<string | null>(null);
-  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+  const [dragOverComposer, setDragOverComposer] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -248,7 +264,12 @@ export function ChatInterface() {
   const historyOwnerRef = useRef<string | null>(null);
   const persistPausedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingImagesRef = useRef<PendingChatImage[]>([]);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  useEffect(() => {
+    pendingImagesRef.current = pendingImages;
+  }, [pendingImages]);
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -552,7 +573,9 @@ export function ChatInterface() {
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+    const readyImages = pendingImages.filter((image) => image.data);
+    if (isStreaming || (!trimmed && readyImages.length === 0)) return;
+    if (pendingImages.some((image) => !image.data && !image.error)) return;
 
     // Handle /player command | this is a client-side lookup only. It should
     // never reach Claude: sending the literal "/player <ign>" text as a chat
@@ -560,7 +583,7 @@ export function ChatInterface() {
     // can't meaningfully answer anyway, since the profile just loads into the
     // sidebar via loadPlayer().
     const playerMatch = trimmed.match(/^\/player\s+(\S+)/i);
-    if (playerMatch) {
+    if (playerMatch && readyImages.length === 0) {
       const username = playerMatch[1];
       setIgn(username);
       void loadPlayer(username);
@@ -569,16 +592,38 @@ export function ChatInterface() {
       return;
     }
 
-    noteQuestProgress(trimmed);
+    if (trimmed) noteQuestProgress(trimmed);
 
-    const outgoingText = attachedFile ? `${trimmed}\n\n[Attached file: ${attachedFile.name}]` : trimmed;
-    const userMsg: Message = { role: "user", content: outgoingText };
+    const apiMessage = trimmed || (
+      readyImages.length === 1
+        ? "Look at this RotMG screenshot and help with what it shows."
+        : "Look at these RotMG screenshots and help with what they show."
+    );
+    const historyContent = trimmed || (
+      readyImages.length === 1
+        ? "Attached a screenshot"
+        : `Attached ${readyImages.length} screenshots`
+    );
+    const attachments = readyImages.map((image) => ({
+      filename: image.name,
+      media_type: image.mediaType,
+      data: image.data,
+    }));
+    const userMsg: Message = {
+      role: "user",
+      content: historyContent,
+      images: readyImages.map((image) => ({
+        name: image.name,
+        thumb: image.thumb,
+        src: chatImagePreviewUrl(image),
+      })),
+    };
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
     pinToSentMessageRef.current = true;
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
-    removeAttachment();
+    clearImages();
     setIsStreaming(true);
 
     // Placeholder for streaming assistant message. Capture its index (set
@@ -761,7 +806,13 @@ export function ChatInterface() {
 
     let assembled = "";
     try {
-      for await (const chunk of streamChat(outgoingText, history, ign || undefined, abortRef.current.signal)) {
+      for await (const chunk of streamChat(
+        apiMessage,
+        history,
+        ign || undefined,
+        abortRef.current.signal,
+        attachments,
+      )) {
         if (chunk.error) {
           // Backend streamed a mid-response failure | surface it instead of
           // leaving the placeholder bubble blank with no explanation.
@@ -793,12 +844,18 @@ export function ChatInterface() {
           for (const name of extractItemNames(assembled)) {
             queueItemFetch(name);
           }
+          for (const name of farmItemNamesFromContent(assembled)) {
+            queueItemFetch(name);
+          }
         }
         if (chunk.done) break;
       }
 
       if (!lookupName) {
         for (const name of extractItemNames(assembled)) {
+          queueItemFetch(name);
+        }
+        for (const name of farmItemNamesFromContent(assembled)) {
           queueItemFetch(name);
         }
       }
@@ -855,27 +912,73 @@ export function ChatInterface() {
     fileInputRef.current?.click();
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setAttachedFile(file);
-    if (file && file.type.startsWith("image/")) {
-      void uploadChatImage(file).catch(() => {
-        // Keep the local chip so the message can still mention the file.
-      });
+  async function addImageFiles(files: File[]) {
+    const images = files.filter(isChatImageFile);
+    if (files.length && images.length === 0) {
+      setAttachError("Attach a PNG, JPEG, WebP, or GIF");
+      return;
+    }
+    const prev = pendingImagesRef.current;
+    const room = CHAT_IMAGE_MAX - prev.length;
+    if (room <= 0) {
+      setAttachError(`You can attach up to ${CHAT_IMAGE_MAX} images`);
+      return;
+    }
+    const chosen = images.slice(0, room);
+    setAttachError(
+      images.length > chosen.length ? `You can attach up to ${CHAT_IMAGE_MAX} images` : null,
+    );
+    const next: PendingChatImage[] = chosen.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name || "screenshot.png",
+      thumb: URL.createObjectURL(file),
+      mediaType: file.type || "image/png",
+      data: "",
+    }));
+    pendingImagesRef.current = [...prev, ...next];
+    setPendingImages(pendingImagesRef.current);
+    for (let i = 0; i < next.length; i++) {
+      const item = next[i];
+      try {
+        const encoded = await encodeChatImage(chosen[i]);
+        pendingImagesRef.current = pendingImagesRef.current.map((image) =>
+          image.id === item.id ? { ...encoded, id: item.id } : image,
+        );
+        setPendingImages(pendingImagesRef.current);
+        if (item.thumb.startsWith("blob:")) URL.revokeObjectURL(item.thumb);
+        void uploadChatImage(chosen[i]).catch(() => {});
+      } catch {
+        pendingImagesRef.current = pendingImagesRef.current.map((image) =>
+          image.id === item.id ? { ...image, error: "Could not read image" } : image,
+        );
+        setPendingImages(pendingImagesRef.current);
+      }
     }
   }
 
-  function openPaywall() {
-    if (!usage) return;
-    setPaywall({
-      upgrade: true,
-      message: "Upgrade to keep chatting",
-      used: usage.used,
-      limit: usage.limit,
-      remaining: usage.remaining,
-      scope: usage.scope,
-      resets_in_seconds: usage.resets_in_seconds,
-    });
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    void addImageFiles(files);
+    e.target.value = "";
+  }
+
+  function handleComposerPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = filesFromClipboard(e);
+    if (!files.length) return;
+    e.preventDefault();
+    void addImageFiles(files);
+  }
+
+  function handleComposerDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    setDragOverComposer(true);
+  }
+
+  function handleComposerDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOverComposer(false);
+    void addImageFiles(filesFromDrop(e));
   }
 
   function openSignup() {
@@ -920,8 +1023,21 @@ export function ChatInterface() {
     });
   }
 
-  function removeAttachment() {
-    setAttachedFile(null);
+  function removeImage(id: string) {
+    const target = pendingImagesRef.current.find((image) => image.id === id);
+    if (target?.thumb.startsWith("blob:")) URL.revokeObjectURL(target.thumb);
+    pendingImagesRef.current = pendingImagesRef.current.filter((image) => image.id !== id);
+    setPendingImages(pendingImagesRef.current);
+    setAttachError(null);
+  }
+
+  function clearImages() {
+    for (const image of pendingImagesRef.current) {
+      if (image.thumb.startsWith("blob:")) URL.revokeObjectURL(image.thumb);
+    }
+    pendingImagesRef.current = [];
+    setPendingImages([]);
+    setAttachError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -930,7 +1046,7 @@ export function ChatInterface() {
     setIsStreaming(false);
     setMessages([]);
     setInput("");
-    removeAttachment();
+    clearImages();
     setActiveSessionId(null);
   }
 
@@ -942,7 +1058,7 @@ export function ChatInterface() {
     setActiveSessionId(id);
     setMessages(session.messages as Message[]);
     setInput("");
-    removeAttachment();
+    clearImages();
   }
 
   function renameSession(id: string, title: string) {
@@ -1054,16 +1170,10 @@ export function ChatInterface() {
     showSuggestions,
     onToggleSuggestions: toggleSuggestions,
     isStreaming,
-    usage,
-    onOpenPaywall: () => {
-      openPaywall();
-      closeMobileNav();
-    },
     onRegister: () => {
       openSignup();
       closeMobileNav();
     },
-    isSignedIn,
     questPercent: dailyQuestPercent(dailyQuests),
     unseenChangelog,
     onHome: () => {
@@ -1086,10 +1196,19 @@ export function ChatInterface() {
       setShowChangelog(true);
       closeMobileNav();
     },
+    onOpenFeedback: () => {
+      setShowFeedback(true);
+      closeMobileNav();
+    },
   };
 
   const leftoverActive =
     usage.tier !== "paid" && (leftoverArmed || usage.remaining <= 0);
+  const encodingImages = pendingImages.some((image) => !image.data && !image.error);
+  const canSend =
+    !isStreaming &&
+    !encodingImages &&
+    Boolean(input.trim() || pendingImages.some((image) => image.data));
 
   return (
     <div className="app-shell flex bg-[#1a1a1a] text-[#ececec] overflow-hidden">
@@ -1126,15 +1245,13 @@ export function ChatInterface() {
             avatar, signed in just shows the avatar. Mirrors the sidebar's
             account row (same AccountMenu, kept in sync by construction). */}
         <div className="hidden md:flex absolute top-0 right-0 z-40 items-center gap-5 rounded-bl-xl bg-[#1a1a1a] border-b border-l border-[#303030] px-4 py-2">
-          {usage && usage.tier !== "paid" && (usage.scope === "ip" || usage.limit <= 5) && (
-            <button
-              type="button"
-              onClick={openPaywall}
-              className="text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer whitespace-nowrap"
-            >
-              {freeInDepthPromptsLeft(usage.remaining)}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowFeedback(true)}
+            className="text-sm text-[#a3a3a3] hover:text-[#ececec] transition-colors cursor-pointer whitespace-nowrap"
+          >
+            Feedback
+          </button>
           <button
             type="button"
             onClick={() => setShowChangelog(true)}
@@ -1271,6 +1388,7 @@ export function ChatInterface() {
                     items={msg.items}
                     pendingItemNames={msg.pendingItemNames}
                     dungeonGuide={msg.dungeonGuide}
+                    images={msg.images}
                     userPet={playerProfile?.top_pet}
                     messageId={msg.id ?? `${activeSessionId ?? "chat"}:${i}`}
                     prompt={i > 0 && messages[i - 1].role === "user" ? messages[i - 1].content : undefined}
@@ -1295,25 +1413,34 @@ export function ChatInterface() {
                 onSubmit={(message) => void sendMessage(message)}
               />
             )}
-            {attachedFile && (
-              <div className="flex items-center gap-2 mb-2 px-3 py-1.5 rounded-lg bg-[#262626] border border-[#404040] text-xs text-[#a3a3a3] w-fit">
-                <span className="truncate max-w-[200px]">{attachedFile.name}</span>
-                <button
-                  onClick={removeAttachment}
-                  className="text-[#737373] hover:text-[#ececec] transition-colors"
-                  aria-label="Remove attachment"
-                >
-                  ✕
-                </button>
-              </div>
+            {attachError && (
+              <p className="mb-2 px-1 text-xs text-red-300">{attachError}</p>
             )}
-            <div className="flex items-end gap-2 rounded-2xl bg-[#262626] border border-[#404040] focus-within:border-[#525252] px-4 py-3 transition-colors">
+            <div
+              className={`rounded-2xl bg-[#262626] border transition-colors ${
+                dragOverComposer
+                  ? "border-white"
+                  : "border-[#404040] focus-within:border-[#525252]"
+              }`}
+              onDragOver={handleComposerDragOver}
+              onDragLeave={() => setDragOverComposer(false)}
+              onDrop={handleComposerDrop}
+            >
+              <ComposerImages images={pendingImages} onRemove={removeImage} />
+              <div className="flex items-end gap-2 px-4 py-3">
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isStreaming ? "Thinking..." : "Ask about a player, item, or dungeon..."}
+                onPaste={handleComposerPaste}
+                placeholder={
+                  isStreaming
+                    ? "Thinking..."
+                    : pendingImages.length
+                      ? "Ask about this screenshot..."
+                      : "Ask about a player, item, or dungeon..."
+                }
                 rows={1}
                 style={{ resize: "none" }}
                 className="flex-1 bg-transparent text-base md:text-sm leading-5 text-[#ececec] placeholder-[#525252] focus:outline-none min-h-[24px] max-h-[200px] overflow-y-auto"
@@ -1325,16 +1452,17 @@ export function ChatInterface() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  accept={CHAT_IMAGE_ACCEPT}
+                  multiple
                   onChange={handleFileChange}
                   className="hidden"
                   aria-hidden="true"
                 />
                 <button
                   onClick={handleAttachClick}
-                  disabled={isStreaming}
+                  disabled={isStreaming || pendingImages.length >= CHAT_IMAGE_MAX}
                   className="w-8 h-8 rounded-xl border border-[#404040] hover:border-white text-[#737373] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-                  aria-label="Attach file"
+                  aria-label="Attach screenshot"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -1370,7 +1498,7 @@ export function ChatInterface() {
                 )}
                 <button
                   onClick={() => void sendMessage(input)}
-                  disabled={isStreaming || !input.trim()}
+                  disabled={!canSend}
                   className="w-8 h-8 rounded-xl bg-white hover:bg-[#e5e5e5] disabled:opacity-40 disabled:cursor-not-allowed text-[#1a1a1a] flex items-center justify-center transition-colors"
                   aria-label="Send message"
                 >
@@ -1378,6 +1506,7 @@ export function ChatInterface() {
                     <path d="M2 21L23 12 2 3v7l15 2-15 2z"/>
                   </svg>
                 </button>
+              </div>
               </div>
             </div>
           </div>
@@ -1404,6 +1533,10 @@ export function ChatInterface() {
 
       {/* What's new modal */}
       {showChangelog && <ChangelogModal onClose={closeChangelog} />}
+
+      {showFeedback && (
+        <FeedbackModal ign={ign} onClose={() => setShowFeedback(false)} />
+      )}
 
       {showQuests && (
         <QuestsModal

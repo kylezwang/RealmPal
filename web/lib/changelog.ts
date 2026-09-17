@@ -23,6 +23,24 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-2",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking how to farm Ogmur or Jailer's Scythe now shows a short sprite guide with arrows for what to bring and what to skip.",
+      "The top-right quota line is now a Feedback button so you can tell us what to keep and what to fix.",
+    ],
+  },
+  {
+    version: "2026.09.17",
+    date: "Sep 17, 2026",
+    items: [
+      "You can drop or paste RotMG screenshots into the message box, and they show up as pictures before you send.",
+      "Click a screenshot in chat to zoom it, the same way item sprites zoom.",
+      "Veteran biomes like Floral Escape, Carboniferous, and Sanguine Forest now answer potion-farm questions.",
+      "Item cards and drop questions now use the drop locations from each RealmEye wiki page.",
+    ],
+  },
+  {
     version: "2026.09.16-13",
     date: "Sep 16, 2026",
     items: [

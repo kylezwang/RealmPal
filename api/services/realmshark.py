@@ -32,6 +32,7 @@ from ..models.build import (
     StatScalingGraph,
 )
 from .dungeon_guide import extract_dungeon_query
+from .biomes import extract_biome_query, retrieve_biome_context
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .fuzzy_match import fuzzy_closed_vocab
 from .item_aliases import (
@@ -731,6 +732,7 @@ async def retrieve_build_knowledge(
     class_name, stat, buildish = parse_query(message, history=history)
     player_ign = extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
+    biome_ask = extract_biome_query(message)
     set_visualize = is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
         message, class_name, stat
     )
@@ -755,8 +757,21 @@ async def retrieve_build_knowledge(
         and not set_visualize
         and not skin_visualize
         and not enchant_only
+        and not biome_ask
     ):
         return ""
+
+    if biome_ask and biome_ask.survey:
+        try:
+            return await retrieve_biome_context(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                cache_only=False,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Biome specialist unavailable")
+            return ""
 
     if set_visualize:
         try:

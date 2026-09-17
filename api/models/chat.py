@@ -26,6 +26,9 @@ class ChatAttachment(BaseModel):
     data: str
 
 
+MAX_ATTACHMENTS = 4
+
+
 class ChatRequest(BaseModel):
     message: str = Field(max_length=MAX_MESSAGE_CHARS)
     history: list[ChatMessage] = Field(default=[], max_length=MAX_HISTORY_MESSAGES)
@@ -34,6 +37,7 @@ class ChatRequest(BaseModel):
     session_id: str = ""
     ign: Optional[str] = None  # in-game name for context
     attachment: Optional[ChatAttachment] = None
+    attachments: list[ChatAttachment] = Field(default=[], max_length=MAX_ATTACHMENTS)
 
 
 class UsageResponse(BaseModel):
@@ -76,6 +80,16 @@ class FeedbackRequest(BaseModel):
     prompt: Optional[str] = None
     what_went_wrong: Optional[str] = None
     improvement: Optional[str] = None
+
+
+class SiteFeedbackRequest(BaseModel):
+    """Header Feedback modal. Separate from per-message thumbs-up/down."""
+
+    rating: Literal["great", "okay", "rough"]
+    what_works: str = Field(default="", max_length=4000)
+    what_to_improve: str = Field(default="", max_length=4000)
+    anything_else: str = Field(default="", max_length=4000)
+    ign: Optional[str] = Field(default=None, max_length=32)
 
 
 class FeedbackResponse(BaseModel):

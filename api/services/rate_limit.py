@@ -47,6 +47,7 @@ USER_SCOPE = "user"
 ANONYMOUS_SCOPE = "ip"
 LOOKUP_SCOPE = "lookup"
 CHAT_BURST_SCOPE = "chatburst"
+PRODUCT_FEEDBACK_SCOPE = "productfeedback"
 
 # Quota windows roll every 24h. Kept as a constant (still the right ceiling
 # for a "how long could this TTL possibly be" assertion) even though the
@@ -216,6 +217,30 @@ def lookup_quota_for(
         key=f"ratelimit:{LOOKUP_SCOPE}:{ANONYMOUS_SCOPE}:{hashed}",
         limit=settings.lookup_rate_limit_anonymous,
         window_seconds=settings.lookup_rate_window_seconds,
+        label=hashed[:12],
+    )
+
+
+def product_feedback_quota_for(
+    user: Optional[AuthenticatedUser],
+    request: Request,
+    settings: Settings,
+) -> WindowedQuota:
+    """Cap Feedback-modal submissions so the table cannot be flooded."""
+    if user is not None:
+        label = hash_identifier(user.subject, settings)
+        return WindowedQuota(
+            key=f"ratelimit:{PRODUCT_FEEDBACK_SCOPE}:{USER_SCOPE}:{user.subject}",
+            limit=settings.product_feedback_limit,
+            window_seconds=settings.product_feedback_window_seconds,
+            label=label[:12],
+        )
+
+    hashed = hash_identifier(client_ip(request, settings), settings)
+    return WindowedQuota(
+        key=f"ratelimit:{PRODUCT_FEEDBACK_SCOPE}:{ANONYMOUS_SCOPE}:{hashed}",
+        limit=settings.product_feedback_limit,
+        window_seconds=settings.product_feedback_window_seconds,
         label=hashed[:12],
     )
 
