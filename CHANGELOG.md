@@ -24,6 +24,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 ### Changed
 - **Phone leftover prompts drop skin-look** (`examplePromptShellClass`, `LeftoverAskBar`): below `md`, the two-field "What does Skin look like with" chip is hidden in the leftover row above the input (after the paywall has been seen) and that row is `grid-cols-3`. Empty-state cards in the main chat still show all four. Desktop leftover still shows all four.
 - **Paywall demo player on phones** (`PaywallDemoVideo`): production already serves `/videos/paywall/*.mp4` as `video/mp4` with byte ranges (H.264 Main 4.1, AAC, moov-first). Testers still saw a blank frame when autoplay was blocked or Safari clipped an `overflow-hidden` / absolutely-positioned video. The file is now `src` on `<video>` plus `<source type="video/mp4">`, `autoPlay` + muted `playsInline`, a tap-to-play overlay until `playing`, `translateZ(0)`, and no overflow clip on the video chrome. SWA also sets `Content-Type` on `/videos/*`. Deploy workflow sets `IS_STATIC_EXPORT=true` so Oryx keeps the `out/` export.
+- **Source loot stays in the wiki store** (`extract_drop_source_query`, `_source_drop_reply`): live Sep 17 "Can the Keyper drop shinies?" invented Keyper's Trickery because the ask missed guide verbs and Claude filled an item name. Stored path matches dungeon/NPC loot asks, lists names from the Keyper wiki drops table and item `drop_locations` only, and says the store is empty rather than guessing. `the-keyper` is merged into the dungeon index. Claude prompt: never invent item names or turn a source into a made-up title.
+- **Item scrape loot rows** (`_ITEM_PAGE_JS`): drop places also come from `Drop location` / `Loot table` keys, two-cell infobox rows, and `Loot table` / `Drop locations` headings with wiki links. Dungeon pages also read `Loot table` / `Loot` / `Drops` headings. Ingested RAG text includes `Shiny sprite: yes/no`.
 
 ### Tests
 - `test_user_content_sends_image_blocks`
@@ -47,6 +49,10 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_header_feedback_replaces_quota_chip`
 - `test_mobile_hides_skin_look_suggestion`
 - `test_static_web_app_video_route_sets_mp4_type`
+- `test_extract_drop_source_query_keyper_shinies`
+- `test_keyper_shinies_uses_wiki_loot_not_invented_item`
+- `test_keyper_shinies_honest_miss_does_not_invent_a_name`
+- `test_system_prompt_never_invents_item_names_or_loot`
 
 ## [2026.09.16] - Sep 16, 2026
 

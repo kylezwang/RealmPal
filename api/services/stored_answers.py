@@ -20,6 +20,7 @@ from ..models.build import CLASS_ABILITY_HUB, CLASS_ALIASES, STAT_ALIASES
 from .dungeon_guide import (
     _focus_text,
     _is_hardmode_shatters,
+    extract_drop_source_query,
     extract_dungeon_query,
     get_or_scrape_index,
     get_or_scrape_wiki,
@@ -49,7 +50,7 @@ from .community_knowledge import (
 from .progression import compose_progression_brief, parse_progression_query
 from .realmshark import parse_query, shark_name_counts
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
-from .wiki_scaling import HUB_PREFIX, UMI_BIS_PREFIX, read_cached_item
+from .wiki_scaling import HUB_PREFIX, UMI_BIS_PREFIX, cached_items_from_place, read_cached_item
 
 BUILD_PREFIX = "wiki:build:v1"
 ABILITY_PREFIX = "wiki:ability-brief:v1"
@@ -488,6 +489,169 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     )
 
 
+def _place_loot_reply(
+    *,
+    title: str,
+    wiki_url: str,
+    wiki_drops: list[str],
+    cached_items: list,
+    want_shiny: bool,
+) -> StoredReply:
+    by_name: dict[str, dict] = {}
+    for name in wiki_drops:
+        by_name.setdefault(name.lower(), {"name": name, "shiny": False})
+    for cached in cached_items:
+        row = by_name.setdefault(
+            cached.name.lower(), {"name": cached.name, "shiny": False}
+        )
+        row["name"] = cached.name
+        row["shiny"] = bool(cached.shiny_sprite_url)
+
+    names = [row["name"] for row in by_name.values()]
+    if not names:
+        body = (
+            f"The wiki store has no loot table for **{title}** yet. "
+            "It will not invent item names."
+        )
+        if wiki_url:
+            body += f" Check {wiki_url}."
+        return StoredReply(
+            text=body,
+            kind="source-drop",
+            key=f"wiki:source-drop:v1:{title.lower()}",
+        )
+
+    if want_shiny:
+        shiny_names = [row["name"] for row in by_name.values() if row["shiny"]]
+        if shiny_names:
+            lines = "\n".join(f"- {name}" for name in shiny_names[:12])
+            body = f"**{title}** drops with a stored shiny sprite:\n{lines}"
+            return StoredReply(
+                text=body + _item_tags(shiny_names[:8]),
+                kind="source-drop",
+                key=f"wiki:source-drop:v1:{title.lower()}",
+            )
+        listed = "\n".join(f"- {name}" for name in names[:12])
+        body = (
+            f"The wiki store has **{title}** loot, but no shiny sprite on "
+            "those item pages yet. It will not guess which can be shiny.\n"
+            f"{listed}"
+        )
+        return StoredReply(
+            text=body + _item_tags(names[:8]),
+            kind="source-drop",
+            key=f"wiki:source-drop:v1:{title.lower()}",
+        )
+
+    lines = "\n".join(
+        f"- {row['name']}"
+        + (" (shiny sprite on RealmEye)" if row["shiny"] else "")
+        for row in list(by_name.values())[:12]
+    )
+    body = f"**{title}** loot in the wiki store:\n{lines}"
+    return StoredReply(
+        text=body + _item_tags(names[:8]),
+        kind="source-drop",
+        key=f"wiki:source-drop:v1:{title.lower()}",
+    )
+
+
+async def _source_drop_reply(
+    redis: aioredis.Redis, message: str, ttl: int
+) -> Optional[StoredReply]:
+    """Loot for a dungeon/NPC from wiki tables only. Never invent item names.
+
+    Live Sep 17: 'Can the Keyper drop shinies?' went to Claude, which made up
+    Keyper's Trickery. This path only lists names from the stored dungeon
+    loot table or item drop_locations. Dungeon/NPC pages win over a catalog
+    item with a similar name so the source is never turned into a title.
+    """
+    parsed = extract_drop_source_query(message)
+    if not parsed:
+        return None
+    source, want_shiny = parsed
+
+    title = source
+    wiki_drops: list[str] = []
+    wiki_url = ""
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl, cache_only=True
+        )
+    except Exception:
+        entries = []
+    matches = match_index_pages(source, entries) if entries else []
+    if matches:
+        title = matches[0].get("title") or title
+        page = await get_or_scrape_wiki(
+            redis,
+            matches[0].get("slug") or "",
+            ttl_seconds=ttl,
+            cache_only=True,
+        )
+        if page:
+            wiki_url = page.get("url") or ""
+            for row in page.get("drops") or []:
+                name = (row.get("name") or "").strip()
+                if name:
+                    wiki_drops.append(name)
+        cached_items = await cached_items_from_place(redis, title)
+        if not cached_items and title.lower() != source.lower():
+            cached_items = await cached_items_from_place(redis, source)
+        return _place_loot_reply(
+            title=title,
+            wiki_url=wiki_url,
+            wiki_drops=wiki_drops,
+            cached_items=cached_items,
+            want_shiny=want_shiny,
+        )
+
+    resolved = None
+    try:
+        resolved = await resolve_item_query(
+            redis, source, ttl_seconds=ttl, allow_scrape=False
+        )
+    except Exception:
+        resolved = None
+    item = await read_cached_item(redis, resolved or source)
+    if item:
+        if want_shiny:
+            if item.shiny_sprite_url:
+                body = (
+                    f"**{item.name}** has a shiny sprite on its RealmEye wiki page."
+                )
+            else:
+                body = (
+                    f"**{item.name}** is in the wiki store with no shiny sprite "
+                    "recorded. The store does not guess shiny drops."
+                )
+        else:
+            places = [d for d in (item.drop_locations or []) if d]
+            if places:
+                lines = "\n".join(f"- {place}" for place in places[:12])
+                body = f"**{item.name}** drops from:\n{lines}"
+            else:
+                body = (
+                    f"**{item.name}** is in the wiki store, but this profile "
+                    "has no drop locations yet."
+                )
+        return StoredReply(
+            text=body + _item_tags([item.name]),
+            kind="source-drop",
+            key=f"item:profile:v3:{item.name.lower()}",
+        )
+
+    body = (
+        f"The wiki store has no loot table for **{source}** yet. "
+        "It will not invent item names."
+    )
+    return StoredReply(
+        text=body,
+        kind="source-drop",
+        key=f"wiki:source-drop:v1:{source.lower()}",
+    )
+
+
 async def _biome_reply(
     redis: aioredis.Redis, message: str, ttl: int
 ) -> Optional[StoredReply]:
@@ -919,6 +1083,9 @@ async def try_stored_reply(
     drop = await _drop_reply(redis, message, ttl_seconds)
     if drop:
         return drop
+    source_drop = await _source_drop_reply(redis, message, ttl_seconds)
+    if source_drop:
+        return source_drop
     guide = await _guide_reply(redis, message, history, ttl_seconds)
     if guide:
         return guide

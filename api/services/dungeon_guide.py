@@ -50,7 +50,20 @@ _NICKNAMES = {
     "moonlite": "moonlight",
     "carniferous": "carboniferous",
     "carboniferus": "carboniferous",
+    "keyper": "the keyper",
+    "keypers": "the keyper",
 }
+
+# RealmEye event/NPC pages that are loot sources but often missing from
+# /wiki/dungeons. Same merge pattern as veteran biomes.
+EVENT_PAGES = (
+    {
+        "title": "The Keyper",
+        "slug": "the-keyper",
+        "kind": "dungeon",
+        "aliases": ("keyper", "keypers"),
+    },
+)
 
 _GUIDE_RE = re.compile(
     r"(?:"
@@ -142,6 +155,60 @@ def _name_from_guide_match(message: str) -> Optional[str]:
     name = re.sub(r"^(?:the\s+)?dungeon\s+", "", name, flags=re.I)
     name = re.sub(r"\s+dungeon$", "", name, flags=re.I)
     return name or None
+
+
+_SOURCE_DROP_RE = re.compile(
+    r"^(?:can|does|do)\s+(?:the\s+)?(.+?)\s+drop(?:s)?(?:\s+"
+    r"(?:shin(?:y|ies)|loot|items?|uts?|sts?|whites?))?\s*\??\s*$"
+    r"|^(?:what|which)\s+(?:does|can|do)\s+(?:the\s+)?(.+?)\s+drop(?:s)?"
+    r"(?:\s+(?:shin(?:y|ies)|loot|items?))?\s*\??\s*$"
+    r"|^(.+?)\s+(?:loot\s+table|drops?\s+of\s+interest)\s*\??\s*$",
+    re.I,
+)
+_SKIP_DROP_SOURCE = frozenset(
+    {"you", "i", "we", "it", "they", "he", "she", "this", "that"}
+)
+
+
+def extract_drop_source_query(message: str) -> Optional[tuple[str, bool]]:
+    """Dungeon/NPC loot ask: ('Keyper', asking_about_shinies) or None.
+
+    Live Sep 17: 'Can the Keyper drop shinies?' invented Keyper's Trickery
+    because this never matched a guide verb and Claude filled in an item.
+    """
+    text = (message or "").strip()
+    match = _SOURCE_DROP_RE.search(text)
+    if not match:
+        return None
+    raw = next((group for group in match.groups() if group), "")
+    name = re.sub(r"^(?:the\s+)", "", raw.strip(), flags=re.I)
+    name = re.sub(r"\s+", " ", name).strip(" ?.")
+    if not name or len(name) > 60:
+        return None
+    if name.lower() in _SKIP_DROP_SOURCE:
+        return None
+    shiny = bool(re.search(r"\bshin(?:y|ies)\b", text, re.I))
+    return name, shiny
+
+
+def event_index_entries() -> list[dict]:
+    return [
+        {
+            "title": row["title"],
+            "slug": row["slug"],
+            "kind": row.get("kind") or "dungeon",
+            "portal_url": None,
+            "difficulty": None,
+            "aliases": list(row.get("aliases") or ()),
+        }
+        for row in EVENT_PAGES
+    ]
+
+
+def merge_event_entries(entries: list[dict]) -> list[dict]:
+    seen = {(row.get("slug") or "").lower() for row in entries}
+    extra = [row for row in event_index_entries() if row["slug"] not in seen]
+    return list(entries) + extra
 
 
 def extract_dungeon_query(
@@ -274,10 +341,18 @@ def _score_entry(query: str, entry: dict) -> int:
         return 0
     if q == t:
         return 100
+    for alias in entry.get("aliases") or []:
+        a = _core(str(alias))
+        if a and q == a:
+            return 95
     if t.startswith(q) or q.startswith(t):
         return 80 + min(len(t), 15)
     if q in t or t in q:
         return 70 + min(len(t), 15)
+    for alias in entry.get("aliases") or []:
+        a = _core(str(alias))
+        if a and (a in q or q in a):
+            return 75
     s = _core(slug.replace(" guide", ""))
     if q == s or q in s:
         return 60
@@ -391,12 +466,12 @@ async def get_or_scrape_index(
     if not force:
         cached = await redis.get(INDEX_CACHE_KEY)
         if cached:
-            return merge_biome_entries(json.loads(cached))
+            return merge_event_entries(merge_biome_entries(json.loads(cached)))
         if cache_only:
-            return merge_biome_entries([])
+            return merge_event_entries(merge_biome_entries([]))
     entries = await scrape_dungeon_indexes()
     await redis.setex(INDEX_CACHE_KEY, ttl_seconds, json.dumps(entries))
-    return merge_biome_entries(entries)
+    return merge_event_entries(merge_biome_entries(entries))
 
 
 async def get_or_scrape_wiki(

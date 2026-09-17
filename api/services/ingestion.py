@@ -141,7 +141,8 @@ async def ingest_item(client: AsyncQdrantClient, item: ItemProfile) -> None:
         f"Type: {item.type or 'unknown'} | Tier: {item.tier or 'unknown'}\n"
         f"Description: {item.description or ''}\n"
         f"Stats:\n{stat_lines or '  unknown'}\n"
-        f"Drop locations: {', '.join(item.drop_locations) or 'unknown'}"
+        f"Drop locations: {', '.join(item.drop_locations) or 'unknown'}\n"
+        f"Shiny sprite: {'yes' if item.shiny_sprite_url else 'no'}"
     )
     text = _sanitize(text)
 

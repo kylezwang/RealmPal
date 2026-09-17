@@ -31,6 +31,7 @@ from api.services.stored_answers import (
     build_brief_key,
     is_ability_ask,
     maybe_mint_brief,
+    try_stored_reply,
 )
 from api.services.wiki_scaling import HUB_PREFIX, write_cached_item
 
@@ -902,3 +903,51 @@ def test_guide_brief_drops_item_card_hooks():
     assert "[item:" not in text
     assert "[sprite:" not in text
     assert "/wiki/" not in text
+
+
+@pytest.mark.asyncio
+async def test_keyper_shinies_uses_wiki_loot_not_invented_item(redis_client):
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}the-keyper",
+        json.dumps(
+            {
+                "title": "The Keyper",
+                "url": "https://www.realmeye.com/wiki/the-keyper",
+                "text": "The Keyper sells dungeon keys.",
+                "drops": [{"name": "Dirk of Cronus"}],
+            }
+        ),
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Dirk of Cronus",
+            drop_locations=["The Keyper"],
+            shiny_sprite_url="https://www.realmeye.com/s/a/img/wiki/shiny.png",
+        ),
+        3600,
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "Can the Keyper drop shinies?",
+        ttl_seconds=3600,
+    )
+    assert reply is not None
+    assert reply.kind == "source-drop"
+    assert "Dirk of Cronus" in reply.text
+    assert "Trickery" not in reply.text
+    assert "shiny" in reply.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_keyper_shinies_honest_miss_does_not_invent_a_name(redis_client):
+    reply = await try_stored_reply(
+        redis_client,
+        "Can the Keyper drop shinies?",
+        ttl_seconds=3600,
+    )
+    assert reply is not None
+    assert reply.kind == "source-drop"
+    assert "Trickery" not in reply.text
+    assert "invent" in reply.text.lower()
+    assert "[item:" not in reply.text
