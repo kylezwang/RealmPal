@@ -14,6 +14,7 @@ from loguru import logger
 
 from ..models.build import CLASS_ABILITY_HUB, CLASS_ARMOR_HUB, STAT_RING_HUB
 from .dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX, get_or_scrape_index, get_or_scrape_wiki
+from .biomes import biome_index_entries
 from .enchanting import enchanting_store_status, warm_enchanting_store
 from .ingestion import WIKI_HUB_SLUGS
 from .item_aliases import load_item_catalog
@@ -234,6 +235,32 @@ async def warm_dungeon_guides(
         except Exception as e:
             logger.bind(slug=slug, error=str(e)).warning("Could not warm dungeon page")
     return {"cached": cached, "total": len(slugs), "index": 1}
+
+
+async def warm_biome_pages(
+    redis: aioredis.Redis,
+    *,
+    ttl_seconds: int,
+    force: bool = False,
+) -> dict[str, int]:
+    """Five veteran biome wiki pages. Always cheap enough to fill on boot."""
+    cached = 0
+    rows = biome_index_entries()
+    for entry in rows:
+        try:
+            page = await get_or_scrape_wiki(
+                redis,
+                entry["slug"],
+                ttl_seconds=ttl_seconds,
+                force=force,
+            )
+            if page:
+                cached += 1
+        except Exception as e:
+            logger.bind(slug=entry.get("slug"), error=str(e)).warning(
+                "Could not warm biome page"
+            )
+    return {"cached": cached, "total": len(rows)}
 
 
 async def dps_store_status(redis: aioredis.Redis) -> dict[str, int]:
@@ -546,6 +573,12 @@ async def warm_all_specialists(
     await _phase(
         "sets",
         lambda: warm_set_catalog(redis, ttl_seconds=ttl_seconds),
+    )
+    await _phase(
+        "biomes",
+        lambda: warm_biome_pages(
+            redis, ttl_seconds=ttl_seconds, force=force
+        ),
     )
     logger.bind(
         abilities=len(result.get("abilities") or {}),

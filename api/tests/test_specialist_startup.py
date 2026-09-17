@@ -195,6 +195,10 @@ async def test_warm_all_continues_after_item_phase_fails(
     monkeypatch.setattr(specialist_warm, "warm_dps_boards", fake_dps)
     monkeypatch.setattr(specialist_warm, "warm_dungeon_guides", fake_dungeons)
     monkeypatch.setattr(specialist_warm, "warm_set_catalog", fake_sets)
+    async def fake_biomes(*args, **kwargs):
+        return {"cached": 5, "total": 5}
+
+    monkeypatch.setattr(specialist_warm, "warm_biome_pages", fake_biomes)
     async def fake_snap(redis):
         return _full_snapshot() | {
             "items": {"cached": 0, "total": 10},

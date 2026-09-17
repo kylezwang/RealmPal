@@ -881,22 +881,28 @@ _ITEM_PAGE_JS = """
     }
   }
 
-  const loot = tables.find((t) => {
-    const th = t.querySelector('th');
-    return th && /^(loot bag|drops from|obtained through)$/i.test(th.innerText.trim());
-  });
   const drops = [];
-  if (loot) {
-    for (const row of loot.querySelectorAll('tr')) {
+  const seenDropPlace = new Set();
+  const pushPlace = (raw) => {
+    const name = (raw || '').replace(/\\s+/g, ' ').trim();
+    const key = name.toLowerCase();
+    if (!name || name.length < 3 || seenDropPlace.has(key)) return;
+    if (/^(loot bag|soulbound|fame|feed power)$/i.test(name)) return;
+    seenDropPlace.add(key);
+    drops.push(name);
+  };
+  for (const t of tables) {
+    for (const row of t.querySelectorAll('tr')) {
       const th = row.querySelector('th');
       const td = row.querySelector('td');
       if (!th || !td) continue;
-      const key = th.innerText.trim();
-      if (/drops from|obtained through/i.test(key)) {
-        td.querySelectorAll('a').forEach((a) => {
-          const t = a.textContent.trim();
-          if (t) drops.push(t);
-        });
+      const key = th.innerText.trim().replace(/:$/, '');
+      if (!/^(drops from|obtained through|dropped by|obtained from)$/i.test(key)) continue;
+      const links = td.querySelectorAll('a');
+      if (links.length) {
+        links.forEach((a) => pushPlace(a.textContent));
+      } else {
+        td.innerText.split(/[,\\n]/).forEach(pushPlace);
       }
     }
   }
@@ -1253,7 +1259,7 @@ async def scrape_dungeon_indexes() -> list[dict]:
 
 
 _DUNGEON_PAGE_JS = """
-(root) => {
+(root, keepPotions) => {
   const abs = (src) => {
     if (!src) return null;
     if (src.startsWith('http')) return src;
@@ -1350,7 +1356,9 @@ _DUNGEON_PAGE_JS = """
     break;
   }
   if (dropTable) {
-    const skipName = /dungeon-keys|(?:^|\\s)key$|\\bpotion\\b|^tier\\s+\\d+\\s+|(?:pet\\s+)?skins?$|sage genji|drummer kaguya|dancer miko|kitsune umi|village girl umi|umi, goddess/i;
+    const skipName = keepPotions
+      ? /dungeon-keys|(?:^|\\s)key$|^tier\\s+\\d+\\s+|(?:pet\\s+)?skins?$|sage genji|drummer kaguya|dancer miko|kitsune umi|village girl umi|umi, goddess/i
+      : /dungeon-keys|(?:^|\\s)key$|\\bpotion\\b|^tier\\s+\\d+\\s+|(?:pet\\s+)?skins?$|sage genji|drummer kaguya|dancer miko|kitsune umi|village girl umi|umi, goddess/i;
     const headerCells = Array.from(
       (dropTable.querySelector('tr') || { querySelectorAll: () => [] }).querySelectorAll('th,td')
     );
@@ -1449,7 +1457,11 @@ async def scrape_wiki_article(slug: str) -> dict:
 
             media: dict = {}
             try:
-                media = await content_el.evaluate(_DUNGEON_PAGE_JS)
+                from .biomes import is_biome_slug
+
+                media = await content_el.evaluate(
+                    _DUNGEON_PAGE_JS, is_biome_slug(slug)
+                )
             except Exception as e:
                 logger.bind(slug=slug, error=str(e)).warning(
                     "Dungeon page sprites could not be extracted"

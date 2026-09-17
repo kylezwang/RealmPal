@@ -559,11 +559,18 @@ export async function fetchSkinPortrait(spec: {
  * Stream a chat response. Yields ChatChunk objects.
  * Throws { paywall: PaywallInfo } if the rate limit is hit.
  */
+export type ChatStreamAttachment = {
+  filename: string;
+  media_type: string;
+  data: string;
+};
+
 export async function* streamChat(
   message: string,
   history: Array<{ role: string; content: string }>,
   ign?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  attachments?: ChatStreamAttachment[],
 ): AsyncGenerator<ChatChunk> {
   const sessionId = getSessionId();
   const token = getAuthToken();
@@ -574,7 +581,13 @@ export async function* streamChat(
   const res = await fetch(`${API_URL}/chat/stream`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, history, session_id: sessionId, ign }),
+    body: JSON.stringify({
+      message,
+      history,
+      session_id: sessionId,
+      ign,
+      ...(attachments?.length ? { attachments } : {}),
+    }),
     signal,
   });
 
@@ -648,6 +661,28 @@ export async function sendFeedback(payload: {
     body: JSON.stringify({ ...payload, session_id: sessionId }),
   });
   if (!res.ok) throw new Error("Failed to send feedback");
+}
+
+export type SiteFeedbackRating = "great" | "okay" | "rough";
+
+export async function sendSiteFeedback(payload: {
+  rating: SiteFeedbackRating;
+  what_works: string;
+  what_to_improve: string;
+  anything_else: string;
+  ign?: string;
+}): Promise<void> {
+  const res = await fetch(`${API_URL}/chat/site-feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    if (res.status === 429) {
+      throw new Error("Thanks, we already have recent feedback from you.");
+    }
+    throw new Error("Couldn't save feedback. Try again.");
+  }
 }
 
 export interface QuestArtResponse {

@@ -115,8 +115,10 @@ export function skipDungeonItemCard(name: string): boolean {
   );
 }
 
-export function isDungeonPotion(name: string): boolean {
-  return skipDungeonItemCard(name);
+export function isRealmBiome(name: string): boolean {
+  return /floral escape|carboniferous|carniferous|sanguine forest|runic tundra|deep sea abyss/i.test(
+    name || "",
+  );
 }
 
 export function wikiSlug(url: string): string {

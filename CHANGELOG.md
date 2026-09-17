@@ -11,6 +11,36 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.17] - Sep 17, 2026
+
+### Added
+- **Chat screenshot attachments** (`ChatInterface`, `ComposerImages`, `ChatRequest.attachments`): the composer takes PNG/JPEG/WebP/GIF screenshots (character stats, vault, inventory) via the paperclip, paste, or drag-and-drop. Up to 4 images render as thumbnails inside the input, the same shape as the Cursor composer. `streamChat` sends them as Claude vision blocks. `_user_content` was previously unused, so an attached file never reached the model. Clicking a thumbnail opens `SpriteZoomTrigger` `preview="image"` with the full encoded picture.
+- **Veteran biomes** (`api/services/biomes.py`): RealmEye pages for Floral Escape, Carboniferous, Sanguine Forest, Runic Tundra, and Deep Sea Abyss are merged into the dungeon index, warmed on boot, and served as stored answers. `carniferous` maps to Carboniferous. Potion sentences stay on biome pages (dungeon drop lists still skip potions). Daily quest rotation includes the other veteran biomes. Found live Sep 17: "What veteran biomes drop what potions" had no biome store and fell through to generic weapon/ability RAG.
+- **Item drop locations** (`_ITEM_PAGE_JS`): infobox rows `Drops from` / `Obtained through` / `Dropped by` / `Obtained from` are collected even when they are not the first table header. Item cards show `Drops from ...`.
+- **Farm TLDR cards** (`api/services/farm_guides.py`, `web/components/chat/FarmTldr.tsx`): "how to farm Ogmur / Scythe" is a stored reply with `[farm:ogmur]` / `[farm:scythe]`. The UI paints a sprite panel (swap arrows, prohibition marks, short labels) using wiki item sprites plus simple pixel enemies. Ogmur: Lord of the Lost Lands in Runic Tundra, stun on last crystal, skip add-chasing. Scythe: Spectral Jailer in veteran biomes, loot under the Penitentiary portal, Skeletal Centipede as the easier source.
+- **Site Feedback modal** (`api/services/product_feedback.py`, `POST /chat/site-feedback`): the header/sidebar "N free in-depth responses left" chip is a Feedback button. Answers (rating, what works, what to fix, anything else, optional IGN, signed-in email) insert into `product_feedback`. Same Azure Postgres database as accounts/chat_sessions when `DATABASE_URL` is set. Scan with `SELECT created_at, rating, what_works, what_to_improve, anything_else, email FROM product_feedback ORDER BY created_at DESC LIMIT 100;`. Local SQLite is `data/product_feedback.db`. Capped at 5 submits/hour per IP or signed-in subject.
+
+### Tests
+- `test_user_content_sends_image_blocks`
+- `test_user_content_image_only_uses_rotmg_caption`
+- `test_legacy_single_attachment_still_counts`
+- `test_too_many_attachments_are_rejected`
+- `test_screenshot_turns_stay_on_sonnet`
+- `test_composer_wires_screenshot_thumbnails` (also asserts `preview="image"` and `ChatImageThumb` on sent bubbles)
+- `test_extract_biome_survey_from_live_question`
+- `test_named_biome_and_carniferous_typo`
+- `test_potions_from_wiki_leads`
+- `test_stored_biome_survey_lists_floral_potions`
+- `test_item_scraper_reads_infobox_drop_rows`
+- `test_extract_farm_ogmur_and_scythe`
+- `test_stored_ogmur_farm_skips_claude`
+- `test_insert_roundtrips_a_row`
+- `test_site_feedback_persists_for_a_guest`
+- `test_site_feedback_attaches_signed_in_email`
+- `test_empty_answers_are_rejected`
+- `test_rate_limit_caps_repeat_submits`
+- `test_header_feedback_replaces_quota_chip`
+
 ## [2026.09.16] - Sep 16, 2026
 
 ### Added

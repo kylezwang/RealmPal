@@ -79,6 +79,7 @@ COMMUNITY_ALIASES: dict[str, str] = {
     "vest": "Vest of Abandoned Shadows",
     "vesture": "Vesture of Duality",
     "scythe": "Jailer's Scythe",
+    "ogmur": "Shield of Ogmur",
     "cult staff": "Staff of Unholy Sacrifice",
     "cult": "Staff of Unholy Sacrifice",
     "tshot": "Thousand Shot",

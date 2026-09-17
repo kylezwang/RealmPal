@@ -31,6 +31,7 @@ export interface StoredMessage {
   showExaltationTable?: boolean;
   items?: ItemProfile[];
   dungeonGuide?: DungeonGuide;
+  images?: Array<{ name: string; thumb: string; src?: string }>;
 }
 
 export interface ChatSession {
@@ -90,8 +91,13 @@ export function saveSessions(sessions: ChatSession[], email?: string | null) {
 
 /** Derive a short auto-title from the first user message. */
 export function deriveTitle(messages: StoredMessage[]): string {
-  const first = messages.find((m) => m.role === "user")?.content.trim() ?? "New chat";
-  return first.length > 40 ? `${first.slice(0, 40)}...` : first;
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return "New chat";
+  const text = first.content.trim();
+  if (text) return text.length > 40 ? `${text.slice(0, 40)}...` : text;
+  if (first.images?.length === 1) return first.images[0].name || "Screenshot";
+  if (first.images && first.images.length > 1) return `${first.images.length} screenshots`;
+  return "New chat";
 }
 
 // --- Server-side sync (signed-in accounts only) -----------------------------
