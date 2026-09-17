@@ -1,6 +1,8 @@
 """Stored answers skip Claude on drops and minted builds."""
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -16,17 +18,21 @@ from api.services.rate_limit import peek, quota_for
 from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
 from api.services.item_aliases import CATALOG_PREFIX
 from api.services.stored_answers import (
+    _ability_reply,
     _build_reply,
     _compose_guide_brief,
     _shiny_divine_flags,
     _shiny_divine_item_name,
     _shiny_divine_reply,
+    _slot_reply,
     _strip_item_card_hooks,
     _strip_wiki_chrome,
+    ability_brief_key,
     build_brief_key,
+    is_ability_ask,
     maybe_mint_brief,
 )
-from api.services.wiki_scaling import write_cached_item
+from api.services.wiki_scaling import HUB_PREFIX, write_cached_item
 
 from .conftest import build_request
 
@@ -621,6 +627,146 @@ async def test_paid_stored_hit_does_not_increment_claude_meter(
     usage = await peek_claude_usage(redis_client, email, anon_settings)
     assert usage.used == 0
     assert usage.included == anon_settings.paid_claude_included
+
+
+async def test_best_bows_uses_cores_not_hub_t0(redis_client, anon_settings):
+    """Live Sep 16: 'Best bows in the game' listed Shortbow because the
+    RealmEye hub is T0-first and _slot_reply took the first six rows."""
+    await redis_client.set(
+        f"{HUB_PREFIX}:bows",
+        json.dumps(
+            [
+                {"name": "Shortbow", "tier": "T0"},
+                {"name": "Reinforced Bow", "tier": "T1"},
+                {"name": "Makakoyumi", "tier": "UT"},
+            ]
+        ),
+    )
+    reply = await _slot_reply(
+        redis_client,
+        "Best bows in the game",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert "Makakoyumi" in reply.text
+    assert "Shortbow" not in reply.text
+    assert "Reinforced Bow" not in reply.text
+    assert "RealmEye hub" not in reply.text
+    assert "UmiEnjoyers" in reply.text
+
+
+async def test_best_swords_and_rings_use_community_cores(
+    redis_client, anon_settings
+):
+    swords = await _slot_reply(
+        redis_client,
+        "Best swords in the game",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert swords is not None
+    assert "Divinity" in swords.text
+    assert "Damnation" in swords.text
+    rings = await _slot_reply(
+        redis_client,
+        "Best rings in the game",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert rings is not None
+    assert "Kagenohikari" in rings.text
+    assert "Chrysalis of Eternity" in rings.text
+    armor = await _slot_reply(
+        redis_client,
+        "Best armor in the game",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert armor is not None
+    assert "Vesture of Duality" in armor.text
+    assert "Cackling Straitjacket" in armor.text
+
+
+async def test_best_equipment_for_dexterity_aims_at_that_stat(
+    redis_client, anon_settings
+):
+    await redis_client.set(
+        f"{HUB_PREFIX}:bows",
+        json.dumps([{"name": "Makakoyumi", "tier": "UT"}]),
+    )
+    await redis_client.set(
+        "umi:bis:v2:archer",
+        json.dumps(
+            [
+                "## Umi tab: Dexterity Archer (?tab=dexterity-archer)\n"
+                "Makakoyumi\n",
+                "https://www.umienjoyers.com/guides/best-in-slot/archer",
+            ]
+        ),
+    )
+    reply = await _slot_reply(
+        redis_client,
+        "Best equipment for dexterity",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert "maximize Dexterity" in reply.text
+    assert "Makakoyumi" in reply.text
+    assert "Kagenohikari" in reply.text
+
+
+def test_ability_ask_matches_best_druid_abilities_not_a_full_build():
+    assert is_ability_ask("Best druid abilities")
+    assert is_ability_ask("best wisdom druid abilities")
+    assert not is_ability_ask("Best items for a dex huntress")
+
+
+async def test_second_druid_ability_ask_uses_the_minted_brief(
+    redis_client, anon_settings
+):
+    """Live Sep 16: the same 'Best druid abilities' ask burned Claude twice
+    because mint required a named stat and skipped Haiku."""
+    minted = await maybe_mint_brief(
+        redis_client,
+        "Best druid abilities",
+        "Sigil of the Rhino leads on Wisdom Druid.",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert minted == ability_brief_key("Druid")
+    reply = await _ability_reply(redis_client, "Best druid abilities")
+    assert reply is not None
+    assert "Sigil of the Rhino" in reply.text
+    assert await _build_reply(redis_client, "Best druid abilities") is None
+
+
+async def test_second_druid_ability_stream_does_not_call_claude(
+    stream_app, redis_client, anon_settings
+):
+    client, calls = stream_app
+    async with client as http:
+        first = await http.post(
+            "/chat/stream",
+            json={"message": "Best druid abilities", "session_id": "s-abil-1"},
+        )
+        assert first.status_code == 200
+        text = await _read_sse_text(first)
+        second = await http.post(
+            "/chat/stream",
+            json={"message": "Best druid abilities", "session_id": "s-abil-2"},
+        )
+        assert second.status_code == 200
+        again = await _read_sse_text(second)
+    assert len(calls) == 1
+    assert "Rift Ripper" in text
+    assert "Rift Ripper" in again
+
+
+async def test_best_items_for_dex_huntress_is_not_a_slot_list(
+    redis_client, anon_settings
+):
+    reply = await _slot_reply(
+        redis_client,
+        "Best items for a dex huntress",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is None
 
 
 async def test_second_wis_kensei_is_a_cache_hit(stream_app, redis_client, anon_settings):

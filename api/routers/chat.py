@@ -745,8 +745,9 @@ async def chat_stream(
     ).info("Chat stream started")
 
     async def _mint(reply: str) -> None:
-        if model != settings.claude_model:
-            return
+        # Haiku used to be skipped. Found live Sep 16: "best druid
+        # abilities" has enough wiki context to pick Haiku, so the first
+        # essay never landed in the store and the repeat burned Claude.
         await maybe_mint_brief(
             redis,
             body.message,

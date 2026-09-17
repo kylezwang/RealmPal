@@ -38,11 +38,19 @@ from .player_lookup import (
     format_player_stored_reply,
     get_or_scrape_player,
 )
-from .realmshark import parse_query
+from .community_knowledge import (
+    SlotListSpec,
+    names_mentioned_in_umi,
+    rank_community_slot_names,
+    spec_for_slot,
+)
+from .progression import compose_progression_brief, parse_progression_query
+from .realmshark import parse_query, shark_name_counts
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
-from .wiki_scaling import HUB_PREFIX, read_cached_item
+from .wiki_scaling import HUB_PREFIX, UMI_BIS_PREFIX, read_cached_item
 
 BUILD_PREFIX = "wiki:build:v1"
+ABILITY_PREFIX = "wiki:ability-brief:v1"
 GUIDE_BRIEF_PREFIX = "wiki:guide-brief:v2"
 BRIEF_INDEX_KEY = "wiki:brief-index"
 MAX_BRIEF_CHARS = 8_000
@@ -72,7 +80,9 @@ _SLOT = re.compile(
     r"\bbest\s+(bows?|longbows?|wands?|staves|staffs?|swords?|daggers?|"
     r"katanas?|lutes?|wakizashi|traps?|quivers?|tomes?|seals?|cloaks?|"
     r"helms?|shields?|rings?|orbs?|prisms?|scepters?|stars?|maces?|"
-    r"sheaths?|sigils?|poisons?|skulls?|spells?)\b",
+    r"sheaths?|sigils?|poisons?|skulls?|spells?|"
+    r"armou?rs?|robes?|leathers?|"
+    r"equipment|gear)\b",
     re.I,
 )
 _SHINY_DIVINE_ITEM = re.compile(
@@ -176,6 +186,16 @@ _SLOT_SLUG = {
     "skulls": "skulls",
     "spell": "spells",
     "spells": "spells",
+    "armor": "armors",
+    "armors": "armors",
+    "armour": "armors",
+    "armours": "armors",
+    "robe": "robes",
+    "robes": "robes",
+    "leather": "leather-armors",
+    "leathers": "leather-armors",
+    "equipment": "equipment",
+    "gear": "equipment",
 }
 
 _EARLY_TEXT = (
@@ -221,8 +241,27 @@ def is_constrained(message: str) -> bool:
     return bool(_CONSTRAINT.search(message or ""))
 
 
+_ABILITY_ASK = re.compile(
+    r"\b(?:best|top)\s+(?:\w+\s+)*abilit(?:y|ies)\b"
+    r"|\babilit(?:y|ies)\b.+\b(?:best|top)\b",
+    re.I,
+)
+
+
+def is_ability_ask(message: str) -> bool:
+    """True for 'best druid abilities', not 'best items for a dex huntress'."""
+    return bool(_ABILITY_ASK.search(message or ""))
+
+
 def build_brief_key(class_name: str, stat: str) -> str:
     return f"{BUILD_PREFIX}:{class_name.lower()}:{stat.lower()}"
+
+
+def ability_brief_key(class_name: str, stat: Optional[str] = None) -> str:
+    slug = (class_name or "").strip().lower()
+    if stat:
+        return f"{ABILITY_PREFIX}:{slug}:{stat.lower()}"
+    return f"{ABILITY_PREFIX}:{slug}"
 
 
 def guide_brief_key(dungeon_name: str) -> str:
@@ -447,39 +486,167 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     )
 
 
-async def _slot_reply(redis: aioredis.Redis, message: str) -> Optional[StoredReply]:
-    match = _SLOT.search(message or "")
-    if not match:
-        return None
+async def _hub_catalog_names(
+    redis: aioredis.Redis, hubs: tuple[str, ...]
+) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for slug in hubs:
+        raw = await redis.get(f"{HUB_PREFIX}:{slug}")
+        if not raw:
+            continue
+        try:
+            rows = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        for row in rows:
+            name = (row.get("name") or "").strip()
+            key = name.lower()
+            if name and key not in seen:
+                seen.add(key)
+                names.append(name)
+    return names
+
+
+async def _umi_slot_names(
+    redis: aioredis.Redis,
+    classes: tuple[str, ...],
+    catalog: list[str],
+    *,
+    stat: Optional[str],
+) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    for class_name in classes:
+        raw = await redis.get(f"{UMI_BIS_PREFIX}{class_name.lower()}")
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+            text = payload[0] if isinstance(payload, list) else str(payload)
+        except (json.JSONDecodeError, TypeError, IndexError):
+            continue
+        for name in names_mentioned_in_umi(text, catalog, stat=stat):
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                found.append(name)
+    return found
+
+
+async def _best_slot_names(
+    redis: aioredis.Redis,
+    spec: SlotListSpec,
+    *,
+    stat: Optional[str],
+    ttl_seconds: int,
+) -> list[str]:
+    catalog = list(spec.cores)
+    catalog.extend(await _hub_catalog_names(redis, spec.hubs))
+    shark = await shark_name_counts(
+        redis,
+        spec.classes,
+        spec.shark_slot,
+        stat=stat,
+        ttl_seconds=ttl_seconds,
+    )
+    umi = await _umi_slot_names(redis, spec.classes, catalog, stat=stat)
+    return rank_community_slot_names(
+        cores=spec.cores, shark_counts=shark, umi_names=umi
+    )
+
+
+async def _slot_reply(
+    redis: aioredis.Redis, message: str, *, ttl_seconds: int
+) -> Optional[StoredReply]:
     class_name, stat, _buildish = parse_query(message)
     if class_name and stat:
         return None
-    slug = _SLOT_SLUG.get(match.group(1).lower())
+    match = _SLOT.search(message or "")
+    if match:
+        slug = _SLOT_SLUG.get(match.group(1).lower())
+    elif stat and re.search(
+        r"\bbest\s+(?:items?|loadouts?|equips?)\b", message or "", re.I
+    ):
+        slug = "equipment"
+    else:
+        return None
     if not slug:
         return None
-    raw = await redis.get(f"{HUB_PREFIX}:{slug}")
-    if not raw:
+    spec = spec_for_slot(slug)
+    if spec is None:
         return None
-    try:
-        rows = json.loads(raw)
-    except json.JSONDecodeError:
+    if spec.slug == "equipment" and not stat:
         return None
-    names: list[str] = []
-    for row in rows:
-        name = (row.get("name") or "").strip()
-        if name and name not in names:
-            names.append(name)
-        if len(names) >= 6:
-            break
+
+    if spec.slug == "equipment":
+        weapons: list[str] = []
+        armors: list[str] = []
+        rings: list[str] = []
+        for part in ("bows", "swords", "armors", "rings"):
+            piece = spec_for_slot(part)
+            if piece is None:
+                continue
+            names = await _best_slot_names(
+                redis, piece, stat=stat, ttl_seconds=ttl_seconds
+            )
+            if part == "rings":
+                rings = names
+            elif part == "armors":
+                armors = names
+            else:
+                for name in names:
+                    if name not in weapons:
+                        weapons.append(name)
+                weapons = weapons[:6]
+        if not (weapons or armors or rings):
+            return None
+        heading = (
+            f"**Best {stat} equipment** from UmiEnjoyers BIS and "
+            f"RealmShark top 5s, aiming to maximize {stat}:"
+        )
+        chunks = [heading]
+        if weapons:
+            chunks.append(
+                "Weapons:\n" + "\n".join(f"- {name}" for name in weapons)
+            )
+        if armors:
+            chunks.append(
+                "Armor:\n" + "\n".join(f"- {name}" for name in armors)
+            )
+        if rings:
+            chunks.append(
+                "Rings:\n" + "\n".join(f"- {name}" for name in rings)
+            )
+        shown = weapons + armors + rings
+        return StoredReply(
+            text="\n\n".join(chunks) + _item_tags(shown),
+            kind="slot",
+            key=f"slot:best:equipment:{stat.lower()}",
+        )
+
+    names = await _best_slot_names(
+        redis, spec, stat=stat, ttl_seconds=ttl_seconds
+    )
     if not names:
         return None
-    label = slug.replace("-", " ")
+    if stat:
+        heading = (
+            f"**Best {stat} {spec.label}** from UmiEnjoyers BIS and "
+            f"RealmShark top 5s, aiming to maximize {stat}:"
+        )
+        key = f"slot:best:{spec.slug}:{stat.lower()}"
+    else:
+        heading = (
+            f"**Best {spec.label}** from UmiEnjoyers BIS and "
+            "RealmShark top 5s:"
+        )
+        key = f"slot:best:{spec.slug}"
     lines = "\n".join(f"- {name}" for name in names)
     return StoredReply(
-        text=f"Top **{label}** from the warmed RealmEye hub:\n{lines}"
-        + _item_tags(names),
+        text=f"{heading}\n{lines}" + _item_tags(names),
         kind="slot",
-        key=f"{HUB_PREFIX}:{slug}",
+        key=key,
     )
 
 
@@ -518,6 +685,39 @@ async def _build_reply(
     if not text:
         return None
     return StoredReply(text=text, kind="build", key=key)
+
+
+async def _read_brief(redis: aioredis.Redis, key: str) -> Optional[str]:
+    raw = await redis.get(key)
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+        text = (payload.get("text") or "").strip()
+    except json.JSONDecodeError:
+        text = raw.decode() if isinstance(raw, bytes) else str(raw)
+    return text or None
+
+
+async def _ability_reply(
+    redis: aioredis.Redis, message: str
+) -> Optional[StoredReply]:
+    """Replay a minted ability essay when this turn asks for it again.
+
+    Found live Sep 16: 'Best druid abilities' used Claude twice. The mint
+    path required a named stat (wiki:build:v1:{class}:{stat}) and skipped
+    Haiku, so a class-only ability ask never landed in the store.
+    """
+    if not is_ability_ask(message) or is_enchant_query(message):
+        return None
+    class_name, stat, _buildish = parse_query(message)
+    if not class_name or class_name not in CLASS_ABILITY_HUB:
+        return None
+    key = ability_brief_key(class_name, stat)
+    text = await _read_brief(redis, key)
+    if not text:
+        return None
+    return StoredReply(text=text, kind="ability", key=key)
 
 
 async def _guide_reply(
@@ -625,6 +825,22 @@ async def _player_reply(
     )
 
 
+async def _progression_reply(
+    redis: aioredis.Redis, message: str, *, ttl_seconds: int
+) -> Optional[StoredReply]:
+    parsed = parse_progression_query(message)
+    if not parsed:
+        return None
+    class_name, band = parsed
+    text = await compose_progression_brief(
+        redis, class_name, band=band, ttl_seconds=ttl_seconds
+    )
+    key = f"wiki:progression:v1:{class_name.lower()}"
+    if band:
+        key = f"{key}:{band}"
+    return StoredReply(text=text, kind="progression", key=key)
+
+
 async def try_stored_reply(
     redis: aioredis.Redis,
     message: str,
@@ -663,11 +879,19 @@ async def try_stored_reply(
     guide = await _guide_reply(redis, message, history, ttl_seconds)
     if guide:
         return guide
-    if _EARLY.search(message or ""):
+    progression = await _progression_reply(
+        redis, message, ttl_seconds=ttl_seconds
+    )
+    if progression:
+        return progression
+    if _EARLY.search(message or "") and not parse_query(message)[0]:
         return StoredReply(text=_EARLY_TEXT, kind="early")
-    slot = await _slot_reply(redis, message)
+    slot = await _slot_reply(redis, message, ttl_seconds=ttl_seconds)
     if slot:
         return slot
+    ability = await _ability_reply(redis, message)
+    if ability:
+        return ability
     return await _build_reply(redis, message)
 
 
@@ -688,6 +912,8 @@ async def maybe_mint_brief(
         return None
     if extract_dungeon_query(message, history=history):
         return None
+    if parse_progression_query(message):
+        return None
     if is_enchant_query(message):
         # Same reasoning as _build_reply: a slot noun (ring/armor/weapon/
         # ability) alone can flip buildish True. Enchant answers are never
@@ -695,6 +921,12 @@ async def maybe_mint_brief(
         return None
     text = reply.strip()[:MAX_BRIEF_CHARS]
     class_name, stat, buildish = parse_query(message)
+    if is_ability_ask(message) and class_name and class_name in CLASS_ABILITY_HUB:
+        key = ability_brief_key(class_name, stat)
+        if await redis.get(key):
+            return None
+        await _write_brief(redis, key, text, ttl_seconds, kind="ability")
+        return key
     if not (buildish and class_name and stat):
         return None
     key = build_brief_key(class_name, stat)
