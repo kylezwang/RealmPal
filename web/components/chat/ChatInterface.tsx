@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { streamChat, fetchPlayer, fetchPlayerPet, fetchItem, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
+import { streamChat, fetchPlayer, fetchPlayerPet, fetchItem, fetchItemSuggest, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
 import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
@@ -19,6 +19,7 @@ import { FeedbackModal } from "./FeedbackModal";
 import { hasUnseenChangelog } from "@/lib/changelog";
 import { LeftoverAskBar } from "./LeftoverAskBar";
 import { ComposerImages } from "./ComposerImages";
+import { applySuggest, ComposerSuggest, type SuggestHit } from "./ComposerSuggest";
 import {
   CHAT_IMAGE_ACCEPT,
   CHAT_IMAGE_MAX,
@@ -248,6 +249,7 @@ export function ChatInterface() {
   const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
   const [dragOverComposer, setDragOverComposer] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [suggestHits, setSuggestHits] = useState<SuggestHit[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -544,6 +546,19 @@ export function ChatInterface() {
   useLayoutEffect(() => {
     resizeComposer();
   }, [input, resizeComposer]);
+
+  useEffect(() => {
+    if (isStreaming || input.trim().length < 2) {
+      setSuggestHits([]);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void fetchItemSuggest(input)
+        .then(setSuggestHits)
+        .catch(() => setSuggestHits([]));
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [input, isStreaming]);
 
   // Load player profile when IGN is set
   async function loadPlayer(name: string, options?: { silent?: boolean }) {
@@ -902,6 +917,12 @@ export function ChatInterface() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Tab" && suggestHits[0] && !e.shiftKey) {
+      e.preventDefault();
+      setInput(applySuggest(input, suggestHits[0].name));
+      setSuggestHits([]);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void sendMessage(input);
@@ -1448,6 +1469,14 @@ export function ChatInterface() {
               onDrop={handleComposerDrop}
             >
               <ComposerImages images={pendingImages} onRemove={removeImage} />
+              <ComposerSuggest
+                hits={suggestHits}
+                onPick={(name) => {
+                  setInput(applySuggest(input, name));
+                  setSuggestHits([]);
+                  inputRef.current?.focus();
+                }}
+              />
               <div className="flex items-end gap-2 px-4 py-3">
               <textarea
                 ref={inputRef}

@@ -23,6 +23,15 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-6",
+    date: "Sep 17, 2026",
+    items: [
+      "Short names like fungal star now match the dungeon item, including Crystal Cavern.",
+      "The message box suggests warmed item and dungeon names. Tab fills the first one in.",
+      "Limited Edition clones are replaced with the original item in answers.",
+    ],
+  },
+  {
     version: "2026.09.17-5",
     date: "Sep 17, 2026",
     items: [

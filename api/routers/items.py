@@ -20,6 +20,7 @@ from ..services.item_aliases import (
     MAX_PLAUSIBLE_ITEM_NAME_WORDS,
     resolve_item_query,
     resolve_item_query_with_trim,
+    suggest_terms,
 )
 from ..services.scraper import scrape_item, ScraperError
 from ..services.ingestion import ingest_item
@@ -33,6 +34,15 @@ from ..services.wiki_scaling import (
 )
 
 router = APIRouter(prefix="/items", tags=["items"])
+
+
+@router.get("/suggest")
+async def suggest_items(
+    redis: Annotated[aioredis.Redis, Depends(get_redis)],
+    q: str = Query("", min_length=0, max_length=80),
+) -> list[dict[str, str]]:
+    """Tab-complete warmed item and dungeon names as the user types."""
+    return await suggest_terms(redis, q)
 
 
 async def _with_wearable(

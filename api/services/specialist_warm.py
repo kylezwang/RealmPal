@@ -17,7 +17,7 @@ from .dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX, get_or_scrape_ind
 from .biomes import biome_index_entries
 from .enchanting import enchanting_store_status, warm_enchanting_store
 from .ingestion import WIKI_HUB_SLUGS
-from .item_aliases import load_item_catalog
+from .item_aliases import load_item_catalog, warm_suggest_index
 from .realmshark import GRAPH_CACHE_KEY, load_graph, load_top_loadouts
 from .skin_visualizer import CATALOG_KEY, load_outfit_catalog
 from .wiki_scaling import (
@@ -573,6 +573,10 @@ async def warm_all_specialists(
     await _phase(
         "sets",
         lambda: warm_set_catalog(redis, ttl_seconds=ttl_seconds),
+    )
+    await _phase(
+        "suggest",
+        lambda: warm_suggest_index(redis, ttl_seconds=ttl_seconds),
     )
     await _phase(
         "biomes",

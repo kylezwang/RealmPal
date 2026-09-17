@@ -381,3 +381,81 @@ async def test_named_bard_set_uses_realmeye_bow_kind_and_forgotten_crown(
     assert "https://www.realmeye.com/wiki/warmonger" in text
     assert "tracker.realmshark" not in text
     assert "Cite the RealmEye wiki URLs" in text
+
+
+async def test_fungal_star_resolves_from_drop_place(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    await _seed_catalog(
+        redis_client,
+        [("Crystalline Kunai", "ability", "stars")],
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Crystalline Kunai",
+            type="Star",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    assert (
+        await resolve_item_query(
+            redis_client, "fungal star", ttl_seconds=3600, allow_scrape=False
+        )
+        == "Crystalline Kunai"
+    )
+    assert (
+        await resolve_item_query(
+            redis_client, "crystal star", ttl_seconds=3600, allow_scrape=False
+        )
+        == "Crystalline Kunai"
+    )
+
+
+async def test_limited_clone_resolves_to_original(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    await _seed_catalog(
+        redis_client,
+        [("Coral Bow", "weapon", "bows")],
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Holiday Coral Bow",
+            limited_edition=True,
+            original_name="Coral Bow",
+        ),
+        3600,
+        "Holiday Coral Bow",
+    )
+    assert (
+        await resolve_item_query(
+            redis_client,
+            "Holiday Coral Bow",
+            ttl_seconds=3600,
+            allow_scrape=False,
+        )
+        == "Coral Bow"
+    )
+
+
+async def test_suggest_matches_place_slot_alias(redis_client):
+    from api.services.item_aliases import SUGGEST_KEY, suggest_terms
+
+    await redis_client.set(
+        SUGGEST_KEY,
+        json.dumps(
+            [
+                {"n": "Crystalline Kunai", "a": "fungal star", "k": "item"},
+                {"n": "Fungal Cavern", "a": "Fungal Cavern", "k": "dungeon"},
+            ]
+        ),
+    )
+    hits = await suggest_terms(redis_client, "fungal")
+    names = [row["name"] for row in hits]
+    assert "Crystalline Kunai" in names
+    assert "Fungal Cavern" in names
