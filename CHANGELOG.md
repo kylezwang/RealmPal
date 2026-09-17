@@ -27,6 +27,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Class wiki Maximum Achievable Stats** (`scrape_class_max_stats`, cache `wiki:class-maxstats:v1:{class}`): warmed with class abilities, injected cache-only into build context, labeled as a max-stat stack ranked last.
 
 ### Changed
+- **Paywall demo videos play on mobile** (`web/public/staticwebapp.config.json`, `PaywallModal`, remuxed MP4s): production was serving `/videos/paywall/*.mp4` as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so Safari and other phones refused to treat the files as video. SWA now maps `.mp4` to `video/mp4`. Both Clipchamp exports also had `moov` after `mdat`, so the player could not start until the whole file arrived; they are remuxed with `-movflags +faststart`. The player uses a `type="video/mp4"` source and `preload="metadata"`.
 - **Class progression briefs** (`api/services/progression.py`): "best early/mid/end game items for {class}" (and "X progression") is a stored three-band farm route with `[item:]` cards. Sorcerer is the hand-verified ratchet (Mad Lab / Cemetery / Snake Pit, Parasite + Cnidarian + Draconis, MV / O3 / Shadows). Other classes keep the same shape but use that family's dungeons and store cores (bows get Coral / Leaf / Maka + leather, staves get Unholy + Water Dragon Silk, and so on). Generic T0–T6 Nexus copy only remains when no class is named. Claude does not mint over these.
 - **Ability asks mint and replay** (`maybe_mint_brief`, `_ability_reply`, `chat.py` `_mint`): "Best druid abilities" has a class and the word ability, but no stat, so it never wrote `wiki:build:v1:{class}:{stat}`. Haiku replies were also skipped (`model != claude_model`). Live Sep 16: the same guest ask burned two in-depth turns. Class-only ability essays now store at `wiki:ability-brief:v1:{class}` (or `:{stat}` when named). The second identical ask is a stored hit. Haiku and Sonnet both mint. Constrained / dungeon / enchant asks still do not.
 - **Slot lists rank Umi + RealmShark, not hub T0 order** (`stored_answers._slot_reply`, `community_knowledge.rank_community_slot_names`, `realmshark.shark_name_counts`): "Best bows in the game" took the first six `wiki:hub-index:v8:bows` rows (Shortbow, Reinforced Bow, ...). RealmEye hubs are T0-first. Lists now seed family cores (Makakoyumi / Divinity+Damnation / robe+leather cores / TOP_RINGS), then cached RealmShark top-5 frequency, then UmiEnjoyers BIS names. Same path for swords, armor, rings, and other mapped slots. "Best equipment/gear/items for {stat}" (no class) aims to maximize that stat. Class+stat asks still defer to the build brief.
@@ -52,6 +53,9 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Player lookups are stored, not Claude** (`try_stored_reply` `_player_reply`): `Look up player X` scrapes/caches the RealmEye row and streams the fact bullets. No daily in-depth spend. After the cap this still 200s instead of 402.
 
 ### Tests
+- `test_static_web_app_serves_mp4_as_video`
+- `test_paywall_mp4s_are_faststart`
+- `test_paywall_player_declares_mp4_type`
 - `test_community_nicknames_for_bows_and_triangle`
 - `test_extract_mentioned_items_returns_cbow_and_lbow`
 - `test_one_letter_class_typo_still_resolves`
