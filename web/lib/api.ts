@@ -519,7 +519,9 @@ export async function fetchDungeon(name: string): Promise<DungeonGuide> {
   return res.json();
 }
 
-export async function fetchItemSuggest(query: string): Promise<{ name: string; kind: string }[]> {
+export async function fetchItemSuggest(
+  query: string,
+): Promise<{ name: string; kind: string; alias?: string }[]> {
   const q = query.trim();
   if (q.length < 2) return [];
   const res = await fetchWithTimeout(

@@ -345,6 +345,49 @@ async def test_shiny_alone_item_never_hits_the_llm_and_renders_shiny_only(
     assert "[item:Snake Eye Ring]" in text
 
 
+def test_legendary_item_extracts_like_divine():
+    assert _shiny_divine_item_name("What does legendary Crown look like") == "Crown"
+    assert _shiny_divine_item_name("I want to see a rare straitjacket") == (
+        "straitjacket"
+    )
+    assert _shiny_divine_item_name("make it legendary") is None
+    assert _shiny_divine_item_name("make it legendary please") is None
+    assert _shiny_divine_flags("What does legendary Crown look like") == (
+        False,
+        False,
+    )
+
+
+async def test_make_it_legendary_keeps_shiny_from_history(redis_client, anon_settings):
+    await write_cached_item(
+        redis_client,
+        ItemProfile(name="Cackling Straitjacket", drop_locations=["Parasite Chambers"]),
+        anon_settings.wiki_ttl_seconds,
+    )
+    reply = await _shiny_divine_reply(
+        redis_client,
+        "make it legendary",
+        anon_settings.wiki_ttl_seconds,
+        history=["I want to see a shiny straitjacket"],
+    )
+    assert reply is not None
+    assert "[loadout shiny legendary]" in reply.text
+    assert "[item:Cackling Straitjacket]" in reply.text
+
+    uncommon = await _shiny_divine_reply(
+        redis_client,
+        "make it uncommon",
+        anon_settings.wiki_ttl_seconds,
+        history=[
+            "I want to see a shiny straitjacket",
+            "make it legendary",
+        ],
+    )
+    assert uncommon is not None
+    assert "[loadout shiny uncommon]" in uncommon.text
+    assert "[item:Cackling Straitjacket]" in uncommon.text
+
+
 async def test_drop_question_never_hits_the_llm(stream_app, redis_client, anon_settings):
     client, calls = stream_app
     await write_cached_item(
@@ -1009,7 +1052,7 @@ async def test_nox_and_archmage_use_drops_from_not_dungeon_title(redis_client):
 
 
 @pytest.mark.asyncio
-async def test_shiny_fungal_star_uses_kunai_not_raw_name(redis_client):
+async def test_shiny_fungal_star_uses_ut_not_st_kunai(redis_client):
     from api.services.item_aliases import CATALOG_PREFIX
 
     await redis_client.set(
@@ -1021,7 +1064,13 @@ async def test_shiny_fungal_star_uses_kunai_not_raw_name(redis_client):
                     "slot": "ability",
                     "aliases": [],
                     "hub": "stars",
-                }
+                },
+                {
+                    "name": "Star of Enlightenment",
+                    "slot": "ability",
+                    "aliases": [],
+                    "hub": "stars",
+                },
             ]
         ),
     )
@@ -1030,7 +1079,19 @@ async def test_shiny_fungal_star_uses_kunai_not_raw_name(redis_client):
         ItemProfile(
             name="Crystalline Kunai",
             type="Star",
+            tier="ST",
             drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Star of Enlightenment",
+            type="Star",
+            tier="UT",
+            shiny_sprite_url="https://example.com/enlighten-shiny.png",
+            drop_locations=["Crystal Cavern"],
         ),
         3600,
     )
@@ -1041,6 +1102,7 @@ async def test_shiny_fungal_star_uses_kunai_not_raw_name(redis_client):
     )
     assert reply is not None
     assert reply.kind == "shiny"
-    assert "Crystalline Kunai" in reply.text
+    assert "Star of Enlightenment" in reply.text
+    assert "Kunai" not in reply.text
     assert "fungal star" not in reply.text.lower()
-    assert "[item:Crystalline Kunai]" in reply.text
+    assert "[item:Star of Enlightenment]" in reply.text

@@ -45,3 +45,10 @@ def test_system_prompt_never_invents_item_names_or_loot():
     assert "Do not turn a source name into a made-up item title" in prompt
     assert "dungeon, boss, NPC, or event" in prompt
     assert "name the original, not the LE title" in prompt
+
+
+def test_system_prompt_names_all_slot_rarities():
+    prompt = build_system_prompt("Source: https://example.test\nunused")
+    assert "Uncommon (1 diamond)" in prompt
+    assert "Legendary (3)" in prompt
+    assert "Do not say Legendary, Rare, or Uncommon is not a rarity" in prompt

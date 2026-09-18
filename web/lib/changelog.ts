@@ -23,6 +23,16 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.17-7",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking for a shiny item now uses the untiered version. Set pieces cannot be shiny.",
+      "Short names understand sister weapon types, like staff and spellblade.",
+      "The message box greys in the rest of the current word from the wiki store, even mid-sentence. Tab fills it in.",
+      "Uncommon, Rare, and Legendary items now show their slot diamonds, same as Divine.",
+    ],
+  },
+  {
     version: "2026.09.17-6",
     date: "Sep 17, 2026",
     items: [

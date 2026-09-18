@@ -86,6 +86,14 @@ def test_composer_wires_screenshot_thumbnails():
     assert "ComposerImages" in composer
     assert "CHAT_IMAGE_ACCEPT" in composer
     assert "onPaste={handleComposerPaste}" in composer
+    assert "pickGhostHit" in composer
+    suggest = (root / "web" / "components" / "chat" / "ComposerSuggest.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "ghostRemainder" in suggest
+    assert "lastSuggestToken" in suggest
+    assert "text-[#737373]" in suggest
+    assert "z-10" in suggest
     thumbs = (root / "web" / "components" / "chat" / "ComposerImages.tsx").read_text(
         encoding="utf-8"
     )

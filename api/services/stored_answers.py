@@ -33,6 +33,8 @@ from .enchanting import is_enchant_query
 from .item_aliases import (
     community_canonical,
     extract_set_item_names,
+    item_can_be_shiny,
+    parse_rarity,
     prefer_original_name,
     resolve_item_query,
     resolve_item_query_with_trim,
@@ -100,7 +102,9 @@ _SHINY_DIVINE_ITEM = re.compile(
     # clean name instead of swallowing "look like?" into it or, before this
     # fix, not matching at all and falling through to a real Claude call
     # that has no way to actually render anything.
-    r"(?:a\s+)?(?:shiny\s+divine|divine\s+shiny|shiny|divine)\s+"
+    r"(?:a\s+)?(?:shiny\s+(?:divine|legendary|rare|uncommon)"
+    r"|(?:divine|legendary|rare|uncommon)\s+shiny"
+    r"|shiny|divine|legendary|rare|uncommon)\s+"
     r"(.+?)"
     # Stop at the first sentence break (or " look(s) like", or end of
     # string) instead of the old bare `$` anchor, which forced the capture
@@ -122,13 +126,37 @@ _SHINY_DIVINE_ITEM = re.compile(
     re.I,
 )
 _SHINY_WORD = re.compile(r"\bshiny\b", re.I)
-_DIVINE_WORD = re.compile(r"\bdivine\b", re.I)
+_MAKE_IT_VISUAL = re.compile(
+    r"\b(?:make\s+(?:it|them|this|that)|show\s+(?:it|them)(?:\s+as)?)\b",
+    re.I,
+)
+_ITEM_TOKEN = re.compile(r"\[item:([^\]]+)\]")
+_FILLER_ITEM = frozenset(
+    {
+        "please",
+        "pls",
+        "thanks",
+        "it",
+        "this",
+        "that",
+        "them",
+        "now",
+        "too",
+        "again",
+        "also",
+    }
+)
+
+
+def _visual_flags(message: str) -> tuple[bool, Optional[str]]:
+    """Shiny plus the highest named slot rarity (Uncommon/Rare/Legendary/Divine)."""
+    return bool(_SHINY_WORD.search(message or "")), parse_rarity(message)
 
 
 def _shiny_divine_flags(message: str) -> tuple[bool, bool]:
     """Which of the two independent visual flags this message names."""
-    text = message or ""
-    return bool(_SHINY_WORD.search(text)), bool(_DIVINE_WORD.search(text))
+    shiny, rarity = _visual_flags(message)
+    return shiny, rarity == "divine"
 
 _EARLY = re.compile(
     r"\b(early[\s-]?game|beginner|new\s+player|starter)\b.+\b(items?|gear|loadout|equips?)\b"
@@ -396,25 +424,61 @@ def _shiny_divine_item_name(message: str) -> Optional[str]:
     words = [w.lower() for w in name.split()]
     if words and all(w in _BUILD_VOCAB_WORDS for w in words):
         return None
+    if name.lower() in _FILLER_ITEM:
+        return None
     return name
 
 
+def _last_visualized_item(
+    history: Optional[list[str]],
+) -> tuple[Optional[str], bool, Optional[str]]:
+    """Last named item plus the visual flags from that turn."""
+    if not history:
+        return None, False, None
+    for prev in reversed(history):
+        token = _ITEM_TOKEN.search(prev or "")
+        if token:
+            title = token.group(1).strip()
+            if title:
+                shiny, rarity = _visual_flags(prev)
+                return title, shiny, rarity
+        name = _shiny_divine_item_name(prev or "")
+        if name:
+            shiny, rarity = _visual_flags(prev)
+            return name, shiny, rarity
+    return None, False, None
+
+
 async def _shiny_divine_reply(
-    redis: aioredis.Redis, message: str, ttl: int
+    redis: aioredis.Redis,
+    message: str,
+    ttl: int,
+    history: Optional[list[str]] = None,
 ) -> Optional[StoredReply]:
+    shiny, rarity = _visual_flags(message)
     name = _shiny_divine_item_name(message)
-    if not name:
+    if not name and (shiny or rarity or _MAKE_IT_VISUAL.search(message or "")):
+        name, prior_shiny, prior_rarity = _last_visualized_item(history)
+        if not shiny:
+            shiny = prior_shiny
+        if not rarity:
+            rarity = prior_rarity
+    if not name or not (shiny or rarity):
         return None
     name = community_canonical(name) or name
     item = await read_cached_item(redis, name)
     if item is None:
         try:
             resolved = await resolve_item_query(
-                redis, name, ttl_seconds=ttl, allow_scrape=False
+                redis,
+                name,
+                ttl_seconds=ttl,
+                allow_scrape=False,
+                prefer_shiny_ut=shiny,
             )
             if not resolved:
                 resolved = await resolve_item_query_with_trim(
-                    redis, name, ttl_seconds=ttl
+                    redis, name, ttl_seconds=ttl, prefer_shiny_ut=shiny
                 )
         except Exception:
             resolved = None
@@ -429,8 +493,10 @@ async def _shiny_divine_reply(
     if not original:
         return None
     title = original
-    shiny, divine = _shiny_divine_flags(message)
-    flags = " ".join(flag for flag, on in (("shiny", shiny), ("divine", divine)) if on)
+    item = await read_cached_item(redis, title) or item
+    if shiny and item and not item_can_be_shiny(item):
+        return None
+    flags = " ".join(part for part in (("shiny" if shiny else None), rarity) if part)
     return StoredReply(
         text=f"[loadout {flags}]\n[item:{title}]",
         kind="shiny",
@@ -1076,7 +1142,9 @@ async def try_stored_reply(
     if skin:
         return skin
 
-    shiny = await _shiny_divine_reply(redis, message, ttl_seconds)
+    shiny = await _shiny_divine_reply(
+        redis, message, ttl_seconds, history=history
+    )
     if shiny:
         return shiny
 

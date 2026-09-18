@@ -17,7 +17,7 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Chat screenshot attachments** (`ChatInterface`, `ComposerImages`, `ChatRequest.attachments`): the composer takes PNG/JPEG/WebP/GIF screenshots (character stats, vault, inventory) via the paperclip, paste, or drag-and-drop. Up to 4 images render as thumbnails inside the input, the same shape as the Cursor composer. `streamChat` sends them as Claude vision blocks. `_user_content` was previously unused, so an attached file never reached the model. Clicking a thumbnail opens `SpriteZoomTrigger` `preview="image"` with the full encoded picture.
 - **Veteran biomes** (`api/services/biomes.py`): RealmEye pages for Floral Escape, Carboniferous, Sanguine Forest, Runic Tundra, and Deep Sea Abyss are merged into the dungeon index, warmed on boot, and served as stored answers. `carniferous` maps to Carboniferous. Potion sentences stay on biome pages (dungeon drop lists still skip potions). Daily quest rotation includes the other veteran biomes. Found live Sep 17: "What veteran biomes drop what potions" had no biome store and fell through to generic weapon/ability RAG.
 - **Item drop locations** (`_ITEM_PAGE_JS`): infobox rows `Drops from` / `Obtained through` / `Dropped by` / `Obtained from` are collected even when they are not the first table header. Item cards show `Drops from ...`.
-- **Composer name suggest** (`GET /items/suggest`, `ComposerSuggest`): warmed item names, dungeon titles, and place-slot aliases (`fungal star`) fill Tab chips as the user types. Index is `wiki:suggest:v1`, built on specialist warm from hubs, dungeon index, and item `drop_locations`. Fungal Cavern and Crystal Cavern share place-slot aliases.
+- **Composer name suggest** (`GET /items/suggest`, `ComposerSuggest`): grey remainder + Tab from `wiki:suggest:v2`. The index is one harvest of the scrape cache: hub lists, every `item:profile:v3`, dungeon index + `wiki:guide:v6` titles/drops/`drops_from` bosses, biomes, community nicknames, generated aliases, and place-slot nicks. First miss rebuilds it. Shiny typing skips ST. Overlay is painted on top of the input.
 - **Farm TLDR cards** (`api/services/farm_guides.py`, `web/components/chat/FarmTldr.tsx`): "how to farm Ogmur / Scythe" is a stored reply with `[farm:ogmur]` / `[farm:scythe]`. The UI paints a sprite panel (swap arrows, prohibition marks, short labels) using wiki item sprites plus simple pixel enemies. Ogmur: Lord of the Lost Lands in Runic Tundra, stun on last crystal, skip add-chasing. Scythe: Spectral Jailer in veteran biomes, loot under the Penitentiary portal, Skeletal Centipede as the easier source.
 - **Site Feedback modal** (`api/services/product_feedback.py`, `POST /chat/site-feedback`): the header/sidebar "N free in-depth responses left" chip is a Feedback button. Answers (rating, what works, what to fix, anything else, optional IGN, signed-in email) insert into `product_feedback`. Same Azure Postgres database as accounts/chat_sessions when `DATABASE_URL` is set. Scan with `SELECT created_at, rating, what_works, what_to_improve, anything_else, email FROM product_feedback ORDER BY created_at DESC LIMIT 100;`. Local SQLite is `data/product_feedback.db`. Capped at 5 submits/hour per IP or signed-in subject.
 - **Free in-depth remaining in the account menu** (`AccountMenu`): the old top-right / sidebar quota chip copy (`freeInDepthPromptsLeft`) is a menu item under Register (guest) or Billing (signed-in free). Clicking it opens `PaywallModal` the same way the chip did. Hidden for paid.
@@ -27,8 +27,9 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Paywall demo player on phones** (`PaywallDemoVideo`): production already serves `/videos/paywall/*.mp4` as `video/mp4` with byte ranges (H.264 Main 4.1, AAC, moov-first). Testers still saw a blank frame when autoplay was blocked or Safari clipped an `overflow-hidden` / absolutely-positioned video. The file is now `src` on `<video>` plus `<source type="video/mp4">`, `autoPlay` + muted `playsInline`, a tap-to-play overlay until `playing`, `translateZ(0)`, and no overflow clip on the video chrome. SWA also sets `Content-Type` on `/videos/*`. Deploy workflow sets `IS_STATIC_EXPORT=true` so Oryx keeps the `out/` export.
 - **Source loot stays in the wiki store** (`extract_drop_source_query`, `cached_drops_from_source`, `_source_drop_reply`): loot asks for any dungeon, boss, or NPC read `drops_from` on cached dungeon pages plus item `drop_locations`. "what Nox the wild shadow and the twilight archmage drops" splits into two sources and only lists that boss's rows. Empty store says so rather than guessing. `the-keyper` is still merged into the dungeon index. Claude prompt: never invent item names or turn a source into a made-up title.
 - **Item scrape loot rows** (`_ITEM_PAGE_JS`): drop places also come from `Drop location` / `Loot table` keys, two-cell infobox rows, and `Loot table` / `Drop locations` headings with wiki links. Dungeon pages also read `Loot table` / `Loot` / `Drops` headings. Ingested RAG text includes `Shiny sprite: yes/no`.
-- **Place-slot nicknames** (`resolve_place_slot`): `fungal star` / `crystal star` resolve from cached `drop_locations` plus item type/hub (Ninja star / kunai). Shiny asks no longer render an empty `[item:fungal star]` card when the catalog miss used to keep the raw nickname.
+- **Place-slot nicknames** (`resolve_place_slot`): `fungal star` / `crystal star` resolve from cached `drop_locations` plus item type/hub. Sister weapon hubs share a meaning (staff/spellblade, sword/flail, dagger/dual-blade, bow/longbow, wand/morning-star, katana/tachi). Shiny asks skip ST (set pieces cannot be shiny) and prefer UT, so `shiny fungal star` is Star of Enlightenment, not Crystalline Kunai.
 - **Limited Edition originals** (`original_name`, `prefer_original_name`): item scrape keeps `Reskin of` / `Original`. Resolve and shiny stored replies swap the clone for the original unless the user asked for LE. LE pages are not ingested into Qdrant. Claude prompt: name the original, not the LE title.
+- **Slot rarity frames** (`parse_rarity`, `LoadoutRarity`): Uncommon / Rare / Legendary use `slots.png` x=0 / 48 / 96 the same way Divine uses x=144. Stored `[loadout shiny legendary]` tokens, `make it {tier}` follow-ups reuse the last visualized item and keep shiny, and the Claude prompt lists all four enchantment slot tiers so it does not deny Legendary.
 
 ### Tests
 - `test_user_content_sends_image_blocks`
@@ -62,9 +63,35 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_fungal_star_resolves_from_drop_place`
 - `test_limited_clone_resolves_to_original`
 - `test_suggest_matches_place_slot_alias`
-- `test_shiny_fungal_star_uses_kunai_not_raw_name`
+- `test_shiny_fungal_star_uses_ut_not_st_kunai`
+- `test_shiny_fungal_star_prefers_ut_not_st`
+- `test_shiny_place_slot_skips_st_only`
+- `test_staff_synonym_resolves_spellblade`
+- `test_suggest_skips_st_when_query_is_shiny`
+- `test_warm_suggest_index_covers_scraped_stores`
+- `test_suggest_continues_last_word_in_a_sentence`
+- `test_parse_rarity_picks_the_highest_tier`
+- `test_legendary_item_extracts_like_divine`
+- `test_make_it_legendary_keeps_shiny_from_history`
+- `test_retrieve_set_visualizer_legendary_flags`
+- `test_system_prompt_names_all_slot_rarities`
 
 ## History
+### Until Sep 17, 2026
+Only Divine had a loadout diamond frame. "make it legendary" fell through to Claude, which said Legendary was not a rarity.
+
+### Until Sep 17, 2026
+Composer suggest matched the whole input as one prefix. After a space, mid-sentence words like `shiny strait` dropped the grey remainder.
+
+### Until Sep 17, 2026
+Suggest index `wiki:suggest:v1` only stored catalog titles, dungeon-index titles, and place-slot aliases when the item had a known slot. Cached hub rows, item profiles, boss `drops_from` names, biomes, and single-word aliases were left out.
+
+### Until Sep 17, 2026
+Composer suggest was a row of Tab chips above the input. It did not grey in the rest of the typed name.
+
+### Until Sep 17, 2026
+Shiny `fungal star` resolved to the first matching drop (Crystalline Kunai, ST). Place-slot kinds were only star/kunai, so `fungal staff` missed a spellblade.
+
 ### Until Sep 17, 2026
 Source loot stored path only matched dungeon-index titles (Keyper as an event page). Boss names like Nox the Wild Shadow and Twilight Archmage missed the store and returned "no loot table".
 

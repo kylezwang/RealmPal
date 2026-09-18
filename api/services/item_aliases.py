@@ -25,6 +25,7 @@ from ..models.item import ItemProfile
 from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
 from .wiki_scaling import (
     HUB_PREFIX,
+    ITEM_CACHE_PREFIX,
     _hub_index,
     _LE_CLONE,
     _SKIP_NAME,
@@ -321,6 +322,11 @@ _TYPE_WORDS = frozenset(
         "robe",
         "scythe",
         "cutlass",
+        "spellblade",
+        "flail",
+        "tachi",
+        "longbow",
+        "shuriken",
     }
 )
 
@@ -355,16 +361,35 @@ _QUALITY_WORDS_RE = re.compile(
 )
 _SHINY = re.compile(r"\b(?:all\s+)?shiny\b", re.I)
 _DIVINE = re.compile(r"\b(?:all\s+)?divine\b", re.I)
+# Enchantment slot rarities on RealmEye slots.png (1/2/3/4 diamonds).
+# Highest listed first so "shiny legendary divine" keeps Divine.
+RARITY_TIERS = ("divine", "legendary", "rare", "uncommon")
+_RARITY_ALT = "|".join(RARITY_TIERS)
+_VISUAL_FLAG = (
+    r"(?:all\s+)?"
+    rf"(?:shiny\s+(?:{_RARITY_ALT})|(?:{_RARITY_ALT})\s+shiny|shiny|{_RARITY_ALT})"
+)
 _WITH_ITEMS = re.compile(r"\bwith\s+([\s\S]+?)(?:[.!?]|$)", re.I)
 # "Full shiny divine A, B, C, and D" names a four-slot set without ever
 # saying "with" - see extract_set_item_names' fallback below.
 _AFTER_SHINY_DIVINE = re.compile(
-    r"\b(?:all\s+)?(?:shiny\s+divine|divine\s+shiny|shiny|divine)\b\s+(.+?)(?:[.!?]|$)",
+    rf"\b{_VISUAL_FLAG}\b\s+(.+?)(?:[.!?]|$)",
     re.I,
 )
 _LOOK_LIKE_TAIL = re.compile(r"\s+looks?\s+like\b.*$", re.I)
 _NAME_SPLIT = re.compile(r",\s*(?:and\s+)?|\s+and\s+", re.I)
-_SHINY_DIVINE_WORDS = re.compile(r"\b(?:all\s+)?(?:shiny|divine)\b", re.I)
+_SHINY_DIVINE_WORDS = re.compile(
+    rf"\b(?:all\s+)?(?:shiny|{_RARITY_ALT})\b", re.I
+)
+
+
+def parse_rarity(message: str) -> Optional[str]:
+    """Highest named slot rarity, or None. Shiny is a separate flag."""
+    text = (message or "").lower()
+    for tier in RARITY_TIERS:
+        if re.search(rf"\b{tier}\b", text):
+            return tier
+    return None
 _LEADING_AND = re.compile(r"^(?:and|&)\s+", re.I)
 # "Crown all shiny divine" is the last comma-segment when the user puts
 # "all shiny divine" after the list. Shiny/divine words are stripped
@@ -702,16 +727,55 @@ def resolve_against_catalog(
 
 
 # Fungal Cavern and Crystal Cavern are one dungeon chain. "fungal star"
-# and "crystal star" should resolve to the same Ninja star.
+# and "crystal star" share that loot. Shiny asks prefer the UT star.
 _LINKED_PLACES = {
     "fungal": ("crystal",),
     "crystal": ("fungal",),
 }
-_KIND_SYNONYMS = {
-    "star": ("star", "stars", "kunai"),
-    "stars": ("star", "stars", "kunai"),
-    "kunai": ("star", "stars", "kunai"),
-}
+
+
+def _kind_forms(text: str) -> set[str]:
+    """staff / staves / spellblade forms without splitting morning-star into star."""
+    raw = (text or "").replace("-", " ").strip().lower()
+    if not raw:
+        return set()
+    compact = raw.replace(" ", "")
+    forms = {raw, compact, _stem(compact)}
+    if " " not in raw:
+        if raw.endswith("s") and not raw.endswith("ss") and len(raw) > 3:
+            forms.add(raw[:-1])
+        elif len(raw) >= 3:
+            forms.add(raw + "s")
+    return {form for form in forms if len(form) >= 3}
+
+
+def _register_kind_group(members: set[str]) -> None:
+    group = tuple(sorted(members))
+    if not group:
+        return
+    for word in group:
+        prior = _KIND_SYNONYMS.get(word)
+        merged = tuple(sorted(set(prior or ()) | set(group)))
+        for item in merged:
+            _KIND_SYNONYMS[item] = merged
+
+
+# Sister weapon hubs share a meaning: staff ≈ spellblade, sword ≈ flail.
+_KIND_SYNONYMS: dict[str, tuple[str, ...]] = {}
+for _classes, _hubs, _label in WEAPON_FAMILIES:
+    family: set[str] = set()
+    for hub in _hubs:
+        family |= _kind_forms(hub)
+        noun = _HUB_KIND.get(hub)
+        if noun:
+            family |= _kind_forms(noun)
+    _register_kind_group(family)
+_register_kind_group(
+    _kind_forms("star")
+    | _kind_forms("stars")
+    | _kind_forms("kunai")
+    | _kind_forms("shuriken")
+)
 _PLACE_GENERIC = frozenset(
     {
         "cavern",
@@ -730,7 +794,39 @@ _PLACE_GENERIC = frozenset(
         "guide",
     }
 )
-SUGGEST_KEY = "wiki:suggest:v1"
+SUGGEST_KEY = "wiki:suggest:v2"
+SUGGEST_TTL_DEFAULT = 7 * 24 * 3600
+_SUGGEST_FILLER = frozenset(
+    {
+        "i",
+        "im",
+        "i'm",
+        "want",
+        "to",
+        "see",
+        "a",
+        "an",
+        "the",
+        "of",
+        "for",
+        "please",
+        "show",
+        "me",
+        "my",
+        "look",
+        "at",
+        "what",
+        "does",
+        "like",
+        "with",
+        "and",
+        "or",
+        "is",
+        "it",
+        "this",
+        "that",
+    }
+)
 
 
 def _is_limited_item(item: ItemProfile) -> bool:
@@ -741,9 +837,70 @@ def _is_limited_item(item: ItemProfile) -> bool:
     return bool(re.search(r"limited|\(le\)", item.tier or "", re.I))
 
 
+def _tier_code(item: ItemProfile) -> str:
+    raw = (item.tier or "").strip().upper()
+    match = re.search(r"\b(UT\+?|ST|L|T[0-7])\b", raw)
+    return match.group(1) if match else ""
+
+
+def _is_st_item(item: ItemProfile) -> bool:
+    return _tier_code(item) == "ST"
+
+
+def _is_ut_item(item: ItemProfile) -> bool:
+    code = _tier_code(item)
+    return code.startswith("UT") or code == "L"
+
+
+def item_can_be_shiny(item: ItemProfile) -> bool:
+    """ST set pieces cannot be shiny."""
+    return not _is_st_item(item)
+
+
+def _shiny_place_score(item: ItemProfile) -> Optional[int]:
+    """Higher is better. None means skip (ST, or no UT / shiny sprite)."""
+    if _is_st_item(item):
+        return None
+    has_shiny = bool(item.shiny_sprite_url)
+    is_ut = _is_ut_item(item)
+    if not has_shiny and not is_ut:
+        return None
+    return (20 if has_shiny else 0) + (10 if is_ut else 0)
+
+
+def _slot_keys(text: str) -> set[str]:
+    raw = (text or "").replace("-", " ").strip().lower()
+    if not raw:
+        return set()
+    compact = raw.replace(" ", "")
+    keys = {raw, compact, _stem(compact)}
+    for token in (compact, _stem(compact), raw):
+        keys.update(_KIND_SYNONYMS.get(token, ()))
+    return {key for key in keys if key}
+
+
 def _item_matches_kind(item: ItemProfile, kinds: tuple[str, ...], extra: str = "") -> bool:
-    blob = f"{item.type or ''} {item.name} {extra}".lower()
-    return any(kind in blob for kind in kinds if kind)
+    have = _slot_keys(item.type or "") | _slot_keys(extra)
+    want: set[str] = set()
+    for kind in kinds:
+        if kind:
+            want |= _slot_keys(kind)
+    return bool(have & want)
+
+
+def _split_place_kind(query: str) -> Optional[tuple[str, str]]:
+    parts = _tokens(query)
+    if len(parts) == 2:
+        return parts[0], _stem(parts[1])
+    if len(parts) < 3:
+        return None
+    compact = "".join(parts[-2:])
+    spaced = " ".join(parts[-2:])
+    if compact in _KIND_SYNONYMS or spaced in _KIND_SYNONYMS:
+        return parts[0], _stem(compact)
+    if parts[1] in _PLACE_GENERIC:
+        return parts[0], _stem(parts[-1])
+    return None
 
 
 def _explicit_limited_query(query: str) -> bool:
@@ -769,15 +926,23 @@ async def resolve_place_slot(
     redis: aioredis.Redis,
     query: str,
     catalog: list[CatalogItem],
+    *,
+    want_shiny: bool = False,
 ) -> Optional[str]:
-    """'fungal star' -> item whose drop_locations mention Fungal/Crystal and type is star."""
-    parts = _tokens(query)
-    if len(parts) != 2:
+    """'fungal star' -> item whose drop_locations mention Fungal/Crystal and type is star.
+
+    Shiny asks skip ST (set pieces cannot be shiny) and prefer UT, then a
+    recorded shiny sprite.
+    """
+    parsed = _split_place_kind(query)
+    if not parsed:
         return None
-    place, kind = parts[0], _stem(parts[1])
-    kinds = _KIND_SYNONYMS.get(kind, (kind,))
-    known = _TYPE_WORDS | set(_HUB_KIND.values()) | {"kunai"}
-    if kind not in known and not any(k in known for k in kinds):
+    place, kind = parsed
+    kinds = _KIND_SYNONYMS.get(kind) or _KIND_SYNONYMS.get(_stem(kind)) or (kind,)
+    known = _TYPE_WORDS | set(_HUB_KIND.values()) | set(_KIND_SYNONYMS)
+    if kind not in known and _stem(kind) not in known and not any(
+        token in known for token in kinds
+    ):
         return None
     by_name = {row.name.lower(): row for row in catalog}
     hits: list[ItemProfile] = []
@@ -793,6 +958,17 @@ async def resolve_place_slot(
                 hits.append(item)
     if not hits:
         return None
+    if want_shiny:
+        ranked: list[tuple[int, str]] = []
+        for item in hits:
+            score = _shiny_place_score(item)
+            if score is None:
+                continue
+            ranked.append((score, item.name))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda row: (-row[0], row[1].lower()))
+        return ranked[0][1]
     return hits[0].name
 
 
@@ -803,30 +979,48 @@ async def suggest_terms(
     limit: int = 8,
 ) -> list[dict[str, str]]:
     """Prefix match warmed item/dungeon names for composer Tab complete."""
-    text = (query or "").strip().lower()
+    raw_query = query or ""
+    want_shiny = bool(re.search(r"\bshin(?:y|ies)\b", raw_query, re.I))
+    text = raw_query.strip().lower()
     if len(text) < 2:
         return []
-    words = text.split()
-    needles = [text]
-    if words:
-        needles.append(words[-1])
+    words = [part for part in text.split() if part]
+    last = words[-1] if words else ""
+    needles: list[str] = []
+    if last and last not in _SUGGEST_FILLER and len(last) >= 2:
+        needles.append(last)
         if len(words) >= 2:
             needles.append(" ".join(words[-2:]))
+    elif len(words) <= 2 and len(text) >= 2:
+        needles.append(text)
+    if not needles:
+        return []
     raw = await redis.get(SUGGEST_KEY)
+    if not raw:
+        try:
+            await warm_suggest_index(redis, ttl_seconds=SUGGEST_TTL_DEFAULT)
+        except Exception:
+            logger.exception("Suggest index warm on miss failed")
+        raw = await redis.get(SUGGEST_KEY)
     if not raw:
         return []
     try:
         rows = json.loads(raw)
     except json.JSONDecodeError:
         return []
-    hits: list[dict[str, str]] = []
-    seen: set[str] = set()
+    picked: dict[str, dict] = {}
     for row in rows:
-        alias = (row.get("a") or "").lower()
+        alias_raw = (row.get("a") or "").strip()
+        alias = alias_raw.lower()
         name = (row.get("n") or "").strip()
-        if not name or name.lower() in seen:
+        if not name:
+            continue
+        if want_shiny and re.search(r"\bST\b", row.get("t") or "", re.I):
             continue
         matched = False
+        last_prefix = bool(last) and (
+            alias.startswith(last) or name.lower().startswith(last)
+        )
         for needle in needles:
             if len(needle) < 2:
                 continue
@@ -838,56 +1032,124 @@ async def suggest_terms(
                 break
         if not matched:
             continue
-        seen.add(name.lower())
-        hits.append({"name": name, "kind": row.get("k") or "item"})
-        if len(hits) >= limit:
-            break
-    return hits
+        shown = alias_raw or name
+        if last_prefix and alias.startswith(last):
+            shown = alias_raw
+        elif last and last_prefix and name.lower().startswith(last):
+            shown = name
+        key = name.lower()
+        prior = picked.get(key)
+        if prior and (prior["_last"] or not last_prefix):
+            continue
+        picked[key] = {
+            "name": name,
+            "kind": row.get("k") or "item",
+            "alias": shown,
+            "_last": last_prefix,
+        }
+    hits = sorted(
+        picked.values(),
+        key=lambda row: (not row["_last"], row["name"].lower()),
+    )
+    return [{k: v for k, v in row.items() if k != "_last"} for row in hits[:limit]]
+
+
+def _source_terms(text: str) -> list[str]:
+    raw = (text or "").strip()
+    if len(raw) < 3:
+        return []
+    parts = re.split(r"\s*(?:,|;|/|\band\b)\s*", raw, flags=re.I)
+    return [part.strip() for part in parts if len(part.strip()) >= 3]
+
+
+def _slug_alias(slug: str) -> str:
+    return (slug or "").replace("-", " ").strip()
 
 
 async def warm_suggest_index(
     redis: aioredis.Redis, *, ttl_seconds: int
 ) -> dict[str, int]:
-    """Build Tab-complete terms from warmed hubs, dungeon index, and drop places.
+    """Build Tab-complete terms from every scraped Redis store.
 
-    ponytail: one SCAN of item profiles at warm time, not on each keystroke.
+    One pass at warm / first miss. Hubs, item profiles, dungeon pages,
+    biomes, community nicknames, and place-slot aliases all go in.
     """
-    from .dungeon_guide import get_or_scrape_index
-    from .wiki_scaling import ITEM_CACHE_PREFIX
+    from .biomes import BIOMES, biome_index_entries
+    from .dungeon_guide import (
+        PAGE_CACHE_PREFIX,
+        _NICKNAMES,
+        event_index_entries,
+        get_or_scrape_index,
+    )
 
     rows: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
 
-    def add(canonical: str, alias: str, kind: str) -> None:
+    def add(canonical: str, alias: str, kind: str, tier: str = "") -> None:
         name = (canonical or "").strip()
         nick = (alias or "").strip()
         if not name or not nick or len(nick) < 2:
+            return
+        if kind == "item" and (
+            _SKIP_NAME.search(name) or _LE_CLONE.search(name)
+        ):
             return
         key = (name.lower(), nick.lower())
         if key in seen:
             return
         seen.add(key)
-        rows.append({"n": name, "a": nick, "k": kind})
+        rows.append(
+            {"n": name, "a": nick, "k": kind, "t": (tier or "").strip()}
+        )
+
+    def add_named(
+        canonical: str,
+        *,
+        kind: str,
+        tier: str = "",
+        extra: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        add(canonical, canonical, kind, tier)
+        for alias in extra:
+            add(canonical, alias, kind, tier)
+        if kind == "item":
+            for alias in generated_aliases(canonical):
+                add(canonical, alias, kind, tier)
 
     catalog = await load_item_catalog(
         redis, ttl_seconds=ttl_seconds, class_name=None, allow_scrape=False
     )
     by_name = {row.name.lower(): row for row in catalog}
     for item in catalog:
-        add(item.name, item.name, "item")
-        for alias in item.aliases:
-            if " " in alias:
-                add(item.name, alias, "item")
-    try:
-        entries = await get_or_scrape_index(
-            redis, ttl_seconds=ttl_seconds, cache_only=True
-        )
-    except Exception:
-        entries = []
-    for entry in entries:
-        title = (entry.get("title") or "").strip()
-        if title:
-            add(title, title, "dungeon")
+        add_named(item.name, kind="item", extra=tuple(item.aliases))
+
+    for nick, canonical in COMMUNITY_ALIASES.items():
+        add(canonical, nick, "item")
+
+    async for raw_key in redis.scan_iter(match=f"{HUB_PREFIX}:*", count=200):
+        raw = await redis.get(raw_key)
+        if not raw:
+            continue
+        try:
+            hub_rows = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(hub_rows, list):
+            continue
+        slug = str(raw_key).rsplit(":", 1)[-1]
+        for row in hub_rows:
+            if not isinstance(row, dict):
+                continue
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
+            add_named(
+                name,
+                kind="item",
+                tier=str(row.get("tier") or ""),
+                extra=(hub_kind(slug, ""),) if hub_kind(slug, "") else (),
+            )
+
     async for raw_key in redis.scan_iter(match=f"{ITEM_CACHE_PREFIX}:*", count=200):
         raw = await redis.get(raw_key)
         if not raw:
@@ -897,20 +1159,86 @@ async def warm_suggest_index(
         except Exception:
             continue
         if _is_limited_item(item):
+            original = (item.original_name or "").strip()
+            if original:
+                add_named(original, kind="item")
             continue
+        add_named(item.name, kind="item", tier=item.tier or "")
         cat = by_name.get(item.name.lower())
         kind = hub_kind(cat.hub, cat.slot) if cat else _stem((item.type or "").lower())
-        if not kind:
-            continue
+        nick_kinds = _KIND_SYNONYMS.get(kind) or _KIND_SYNONYMS.get(_stem(kind)) or (
+            (kind,) if kind else ()
+        )
         for loc in item.drop_locations or []:
+            add(item.name, loc, "item", item.tier or "")
             for word in _tokens(loc):
                 if word in _PLACE_GENERIC or len(word) < 3:
                     continue
-                add(item.name, f"{word} {kind}", "item")
-                for linked in _LINKED_PLACES.get(word, ()):
-                    add(item.name, f"{linked} {kind}", "item")
+                add(item.name, word, "item", item.tier or "")
+                for nick_kind in nick_kinds:
+                    add(item.name, f"{word} {nick_kind}", "item", item.tier or "")
+                    for linked in _LINKED_PLACES.get(word, ()):
+                        add(
+                            item.name,
+                            f"{linked} {nick_kind}",
+                            "item",
+                            item.tier or "",
+                        )
+
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl_seconds, cache_only=True
+        )
+    except Exception:
+        entries = []
+    for entry in list(entries) + event_index_entries() + biome_index_entries():
+        title = (entry.get("title") or "").strip()
+        kind = entry.get("kind") or "dungeon"
+        extras = [ _slug_alias(entry.get("slug") or "") ]
+        extras.extend(entry.get("aliases") or [])
+        if title:
+            add_named(title, kind=kind, extra=tuple(x for x in extras if x))
+
+    for biome in BIOMES:
+        add_named(
+            biome["title"],
+            kind="dungeon",
+            extra=tuple(biome.get("aliases") or ()),
+        )
+
+    async for raw_key in redis.scan_iter(match=f"{PAGE_CACHE_PREFIX}*", count=100):
+        raw = await redis.get(raw_key)
+        if not raw:
+            continue
+        try:
+            page = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(page, dict):
+            continue
+        title = (page.get("title") or "").strip()
+        slug = _slug_alias(page.get("slug") or str(raw_key).rsplit(":", 1)[-1])
+        if title:
+            add_named(title, kind="dungeon", extra=(slug,))
+        for row in page.get("drops") or []:
+            drop_name = (row.get("name") or "").strip()
+            if drop_name:
+                add_named(drop_name, kind="item")
+            for source in _source_terms(row.get("drops_from") or ""):
+                add_named(source, kind="dungeon")
+
+    titles = [row["n"] for row in rows if row.get("k") == "dungeon"]
+    for nick, target in _NICKNAMES.items():
+        needle = target.lower()
+        match = next(
+            (title for title in titles if needle in title.lower()),
+            target,
+        )
+        add(match, nick, "dungeon")
+
     if rows:
         await redis.setex(SUGGEST_KEY, ttl_seconds, json.dumps(rows))
+    logger.bind(terms=len(rows)).info("Suggest index warmed from scrape cache")
     return {"terms": len(rows)}
 
 
@@ -979,13 +1307,14 @@ def is_set_visualize_query(message: str) -> bool:
     # clarify instead of rendering the set. Previously this required either
     # an explicit intent verb or both shiny AND divine together.
     shiny = bool(_SHINY.search(text))
-    divine = bool(_DIVINE.search(text))
-    return shiny or divine
+    rarity = parse_rarity(text)
+    return bool(shiny or rarity)
 
 
-def set_visualize_flags(message: str) -> tuple[bool, bool]:
+def set_visualize_flags(message: str) -> tuple[bool, Optional[str]]:
+    """Independent shiny flag plus the highest named slot rarity."""
     text = message or ""
-    return bool(_SHINY.search(text)), bool(_DIVINE.search(text))
+    return bool(_SHINY.search(text)), parse_rarity(text)
 
 
 def is_stat_class_shiny_divine_query(
@@ -1012,8 +1341,8 @@ def is_stat_class_shiny_divine_query(
         return False
     if extract_set_item_names(message):
         return False
-    shiny, divine = set_visualize_flags(message)
-    return shiny or divine
+    shiny, rarity = set_visualize_flags(message)
+    return bool(shiny or rarity)
 
 
 def _equipment_hubs(class_name: Optional[str]) -> list[tuple[str, str]]:
@@ -1144,6 +1473,21 @@ async def load_item_catalog(
         return catalog
 
 
+async def _skip_st_for_shiny(
+    redis: aioredis.Redis,
+    hit: str,
+    *,
+    query: str,
+    catalog: list[CatalogItem],
+) -> Optional[str]:
+    item = await read_cached_item(redis, hit)
+    if not item or not _is_st_item(item):
+        return hit
+    if _norm(query) == _norm(item.name):
+        return None
+    return await resolve_place_slot(redis, query, catalog, want_shiny=True)
+
+
 async def resolve_item_query(
     redis: aioredis.Redis,
     query: str,
@@ -1152,6 +1496,7 @@ async def resolve_item_query(
     class_name: Optional[str] = None,
     slot_hint: Optional[str] = None,
     allow_scrape: bool = True,
+    prefer_shiny_ut: bool = False,
 ) -> Optional[str]:
     """Map a typed name or nickname to a wiki title."""
     raw = (query or "").strip()
@@ -1180,9 +1525,13 @@ async def resolve_item_query(
         if cached:
             hit = cached.name
     if not hit:
-        hit = await resolve_place_slot(redis, raw, catalog)
+        hit = await resolve_place_slot(
+            redis, raw, catalog, want_shiny=prefer_shiny_ut
+        )
     if hit:
         hit = await prefer_original_name(redis, hit, query=raw)
+    if hit and prefer_shiny_ut:
+        hit = await _skip_st_for_shiny(redis, hit, query=raw, catalog=catalog)
     if hit and hit.lower() != raw.lower():
         logger.bind(query=raw, canonical=hit, class_name=class_name).info(
             "Resolved item nickname"
@@ -1207,6 +1556,7 @@ async def resolve_item_query_with_trim(
     class_name: Optional[str] = None,
     slot_hint: Optional[str] = None,
     min_words: int = 2,
+    prefer_shiny_ut: bool = False,
 ) -> Optional[str]:
     """Like resolve_item_query, but when the full string doesn't resolve,
     retry against progressively shorter prefixes (drop one trailing word at
@@ -1253,6 +1603,10 @@ async def resolve_item_query_with_trim(
         if not candidate:
             continue
         hit = resolve_against_catalog(candidate, catalog, slot_hint=slot_hint)
+        if hit and prefer_shiny_ut:
+            hit = await _skip_st_for_shiny(
+                redis, hit, query=candidate, catalog=catalog
+            )
         if hit:
             if end != len(words):
                 logger.bind(query=raw, trimmed_to=candidate, canonical=hit).info(
@@ -1281,8 +1635,8 @@ async def retrieve_set_visualizer(
     names = extract_set_item_names(message)
     derived_from_build = False
     if not names and class_name and stat:
-        shiny, divine = set_visualize_flags(message)
-        if shiny or divine:
+        shiny, rarity = set_visualize_flags(message)
+        if shiny or rarity:
             picks = await top_build_items(
                 redis, class_name, stat, ttl_seconds=ttl_seconds,
                 cache_only=not allow_scrape,
@@ -1291,8 +1645,8 @@ async def retrieve_set_visualizer(
             derived_from_build = True
     if not names:
         return ""
-    shiny, divine = set_visualize_flags(message)
-    flags = [flag for flag, on in (("shiny", shiny), ("divine", divine)) if on]
+    shiny, rarity = set_visualize_flags(message)
+    flags = [part for part in (("shiny" if shiny else ""), rarity or "") if part]
 
     rows: list[tuple[str, str, Optional[str], str, str]] = []
     catalog: list[CatalogItem] = []

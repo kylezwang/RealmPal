@@ -14,6 +14,8 @@ from api.services.item_aliases import (
     generated_aliases,
     is_set_visualize_query,
     is_stat_class_shiny_divine_query,
+    parse_rarity,
+    set_visualize_flags,
     resolve_against_catalog,
     resolve_item_query,
     resolve_item_query_with_trim,
@@ -163,6 +165,17 @@ def test_shiny_only_item_list_with_no_set_intent_verb_routes_to_set_visualizer()
     assert is_set_visualize_query(message)
 
 
+def test_parse_rarity_picks_the_highest_tier():
+    assert parse_rarity("make it uncommon") == "uncommon"
+    assert parse_rarity("make it rare") == "rare"
+    assert parse_rarity("make it legendary") == "legendary"
+    assert parse_rarity("make it divine") == "divine"
+    assert parse_rarity("shiny legendary divine straitjacket") == "divine"
+    assert parse_rarity("what does shiny snake eye ring look like") is None
+    assert set_visualize_flags("make it legendary") == (False, "legendary")
+    assert set_visualize_flags("shiny uncommon Crown") == (True, "uncommon")
+
+
 def test_rarity_word_stripped_from_inside_a_segment_not_just_when_bare():
     """Regression, same live Sep 15 message: "rare genesis spell" and
     "rare diplomatic robe" used to keep their "rare" prefix (only a fully
@@ -254,6 +267,9 @@ def test_stat_class_shiny_divine_query_needs_shiny_or_divine_and_no_named_items(
         "Show me full shiny divine attack huntress", "Huntress", "Attack"
     )
     assert is_stat_class_shiny_divine_query(
+        "Show me full legendary attack huntress", "Huntress", "Attack"
+    )
+    assert is_stat_class_shiny_divine_query(
         "shiny dex huntress please", "Huntress", "Dexterity"
     )
     # No shiny/divine wording at all - a plain build ask stays on the text
@@ -299,6 +315,31 @@ async def test_retrieve_set_visualizer_derives_items_from_build_when_none_named(
     assert "[item:Lifebringing Lotus]" in text
     assert "[item:Puppy's Collar]" in text
     assert "[item:Ring of Transcendent Attack]" in text
+
+
+async def test_retrieve_set_visualizer_legendary_flags(
+    redis_client, monkeypatch
+):
+    async def fake_top_build_items(redis, class_name, stat, *, ttl_seconds, cache_only=True):
+        return {
+            "weapon": "Doom Bow",
+            "ability": "Lifebringing Lotus",
+            "armor": "Puppy's Collar",
+            "ring": "Ring of Transcendent Attack",
+        }
+
+    monkeypatch.setattr(item_aliases, "top_build_items", fake_top_build_items)
+
+    text = await retrieve_set_visualizer(
+        redis_client,
+        "Show me full legendary attack huntress",
+        ttl_seconds=60,
+        class_name="Huntress",
+        stat="Attack",
+        allow_scrape=False,
+    )
+    assert "[loadout legendary]" in text
+    assert "[item:Doom Bow]" in text
 
 
 async def test_retrieve_set_visualizer_stays_empty_without_shiny_divine_wording(
@@ -414,6 +455,149 @@ async def test_fungal_star_resolves_from_drop_place(redis_client):
     )
 
 
+async def test_shiny_fungal_star_prefers_ut_not_st(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    await _seed_catalog(
+        redis_client,
+        [
+            ("Crystalline Kunai", "ability", "stars"),
+            ("Star of Enlightenment", "ability", "stars"),
+        ],
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Crystalline Kunai",
+            type="Star",
+            tier="ST",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Star of Enlightenment",
+            type="Star",
+            tier="UT",
+            shiny_sprite_url="https://example.com/enlighten-shiny.png",
+            drop_locations=["Crystal Cavern"],
+        ),
+        3600,
+    )
+    assert (
+        await resolve_item_query(
+            redis_client,
+            "fungal star",
+            ttl_seconds=3600,
+            allow_scrape=False,
+            prefer_shiny_ut=True,
+        )
+        == "Star of Enlightenment"
+    )
+    assert (
+        await resolve_item_query(
+            redis_client,
+            "crystal star",
+            ttl_seconds=3600,
+            allow_scrape=False,
+            prefer_shiny_ut=True,
+        )
+        == "Star of Enlightenment"
+    )
+
+
+async def test_shiny_place_slot_skips_st_only(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    await _seed_catalog(
+        redis_client,
+        [("Crystalline Kunai", "ability", "stars")],
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Crystalline Kunai",
+            type="Star",
+            tier="ST",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    assert (
+        await resolve_item_query(
+            redis_client,
+            "fungal star",
+            ttl_seconds=3600,
+            allow_scrape=False,
+            prefer_shiny_ut=True,
+        )
+        is None
+    )
+
+
+async def test_staff_synonym_resolves_spellblade(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.wiki_scaling import write_cached_item
+
+    await _seed_catalog(
+        redis_client,
+        [("Test Spellblade", "weapon", "spellblades")],
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Test Spellblade",
+            type="Spellblade",
+            tier="UT",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    assert (
+        await resolve_item_query(
+            redis_client, "fungal staff", ttl_seconds=3600, allow_scrape=False
+        )
+        == "Test Spellblade"
+    )
+    assert (
+        await resolve_item_query(
+            redis_client, "crystal spellblade", ttl_seconds=3600, allow_scrape=False
+        )
+        == "Test Spellblade"
+    )
+
+
+async def test_suggest_skips_st_when_query_is_shiny(redis_client):
+    from api.services.item_aliases import SUGGEST_KEY, suggest_terms
+
+    await redis_client.set(
+        SUGGEST_KEY,
+        json.dumps(
+            [
+                {
+                    "n": "Crystalline Kunai",
+                    "a": "fungal star",
+                    "k": "item",
+                    "t": "ST",
+                },
+                {
+                    "n": "Star of Enlightenment",
+                    "a": "fungal star",
+                    "k": "item",
+                    "t": "UT",
+                },
+            ]
+        ),
+    )
+    shiny = [row["name"] for row in await suggest_terms(redis_client, "shiny fungal")]
+    assert "Star of Enlightenment" in shiny
+    assert "Crystalline Kunai" not in shiny
+
+
 async def test_limited_clone_resolves_to_original(redis_client):
     from api.models.item import ItemProfile
     from api.services.wiki_scaling import write_cached_item
@@ -443,6 +627,97 @@ async def test_limited_clone_resolves_to_original(redis_client):
     )
 
 
+async def test_warm_suggest_index_covers_scraped_stores(redis_client):
+    from api.models.item import ItemProfile
+    from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
+    from api.services.item_aliases import SUGGEST_KEY, suggest_terms, warm_suggest_index
+    from api.services.wiki_scaling import HUB_PREFIX, write_cached_item
+
+    await redis_client.set(
+        f"{HUB_PREFIX}:staves",
+        json.dumps([{"name": "Staff of Extreme Prejudice", "tier": "UT"}]),
+    )
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Crystal Sword",
+            type="Sword",
+            tier="UT",
+            drop_locations=["Fungal Cavern"],
+        ),
+        3600,
+    )
+    await redis_client.set(
+        INDEX_CACHE_KEY,
+        json.dumps([{"title": "The Shatters", "slug": "the-shatters"}]),
+    )
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}the-shatters",
+        json.dumps(
+            {
+                "title": "The Shatters",
+                "slug": "the-shatters",
+                "drops": [
+                    {
+                        "name": "Brilliance",
+                        "drops_from": "Nox the Wild Shadow",
+                    }
+                ],
+            }
+        ),
+    )
+    stats = await warm_suggest_index(redis_client, ttl_seconds=3600)
+    assert stats["terms"] > 8
+    raw = await redis_client.get(SUGGEST_KEY)
+    assert raw
+    names = {
+        name
+        for q in (
+            "extreme",
+            "crystal sword",
+            "shatts",
+            "nox",
+            "floral",
+            "qot",
+        )
+        for name in [row["name"] for row in await suggest_terms(redis_client, q)]
+    }
+    assert "Staff of Extreme Prejudice" in names
+    assert "Crystal Sword" in names
+    assert "The Shatters" in names
+    assert "Nox the Wild Shadow" in names
+    assert "Floral Escape" in names
+    assert "Quiver of Thunder" in names
+
+
+async def test_suggest_continues_last_word_in_a_sentence(redis_client):
+    from api.services.item_aliases import SUGGEST_KEY, suggest_terms
+
+    await redis_client.set(
+        SUGGEST_KEY,
+        json.dumps(
+            [
+                {
+                    "n": "Cackling Straitjacket",
+                    "a": "Cackling Straitjacket",
+                    "k": "item",
+                },
+                {
+                    "n": "Cackling Straitjacket",
+                    "a": "straitjacket",
+                    "k": "item",
+                },
+            ]
+        ),
+    )
+    hits = await suggest_terms(
+        redis_client, "I want to see a shiny strait"
+    )
+    assert hits
+    assert hits[0]["name"] == "Cackling Straitjacket"
+    assert hits[0]["alias"].lower().startswith("strait")
+
+
 async def test_suggest_matches_place_slot_alias(redis_client):
     from api.services.item_aliases import SUGGEST_KEY, suggest_terms
 
@@ -459,3 +734,5 @@ async def test_suggest_matches_place_slot_alias(redis_client):
     names = [row["name"] for row in hits]
     assert "Crystalline Kunai" in names
     assert "Fungal Cavern" in names
+    kunai = next(row for row in hits if row["name"] == "Crystalline Kunai")
+    assert kunai.get("alias") == "fungal star"
