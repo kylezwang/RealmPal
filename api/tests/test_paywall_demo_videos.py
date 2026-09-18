@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PAYWALL_VIDEOS = ROOT / "web" / "public" / "videos" / "paywall"
 SWA_CONFIG = ROOT / "web" / "public" / "staticwebapp.config.json"
 PAYWALL_MODAL = ROOT / "web" / "components" / "chat" / "PaywallModal.tsx"
-DEMO_FILES = ("set-building-demo.mp4", "visualizer.mp4")
+DEMO_FILES = ("set-building-demo.mp4", "dps-demo.mp4", "visualizer.mp4")
 
 
 def _top_level_boxes(path: Path) -> list[str]:

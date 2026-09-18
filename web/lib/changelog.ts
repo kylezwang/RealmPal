@@ -41,6 +41,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Wis class builds no longer recommend a T7 katana as the weapon.",
       "Asking for a different class build no longer repeats the last answer.",
       "Class builds wait until the ability list is ready, so they do not skip the scaling ability.",
+      "The upgrade preview now includes a DPS demo between set-building and the visualizer.",
     ],
   },
   {
