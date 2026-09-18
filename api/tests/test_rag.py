@@ -37,6 +37,9 @@ def test_system_prompt_ranks_realmshark_first():
     assert "Fungal Breastplate" in prompt
     assert "Warmonger is a bow" in prompt
     assert "Crown means The Forgotten Crown" in prompt
+    assert "potential-DPS and stat numbers" in prompt
+    assert "T7 weapons are not best-in-slot" in prompt
+    assert "Do not infer that class's usual stat" in prompt
 
 
 def test_system_prompt_never_invents_item_names_or_loot():
@@ -52,3 +55,14 @@ def test_system_prompt_names_all_slot_rarities():
     assert "Uncommon (1 diamond)" in prompt
     assert "Legendary (3)" in prompt
     assert "Do not say Legendary, Rare, or Uncommon is not a rarity" in prompt
+
+
+def test_system_prompt_forbids_disowning_numbers_it_was_given():
+    """Regression, found live Sep 17: asked "what do the numbers look like?"
+    right after a correct DPS reconstruct, the model apologised and called its
+    own number made up, which reads as the whole feature being broken."""
+    prompt = build_system_prompt("Source: https://example.test\nunused")
+    assert "Never say you invented" in prompt
+    assert "HOW THIS RECONSTRUCT WAS BUILT" in prompt
+    assert "rather than disowning the earlier answer" in prompt
+    assert "rescale from the reconstruct in context" in prompt

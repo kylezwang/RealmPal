@@ -197,6 +197,14 @@ class Settings(BaseSettings):
     product_feedback_limit: int = 5
     product_feedback_window_seconds: int = 3600
 
+    # Admin notifications feed (Claude turn costs). Same DATABASE_URL as the
+    # other stores when set; SQLite file locally.
+    admin_events_db_path: str = "data/admin_events.db"
+    # Comma-separated IGNs / emails that may open the admin notifications
+    # modal. Server-checked on every /admin call. Default is the founder IGN.
+    admin_igns: str = "Turbine"
+    admin_emails: str = ""
+
     # Auth (magic link JWT) | legacy, being replaced by the identity provider
     # below. Kept so existing paid tokens keep working during the migration.
     jwt_secret: str = "change-me-in-production"
@@ -254,6 +262,22 @@ class Settings(BaseSettings):
         return frozenset(
             name.strip().lower()
             for name in self.debug_unlimited_igns.split(",")
+            if name.strip()
+        )
+
+    @property
+    def admin_ign_set(self) -> frozenset[str]:
+        return frozenset(
+            name.strip().lower()
+            for name in self.admin_igns.split(",")
+            if name.strip()
+        )
+
+    @property
+    def admin_email_set(self) -> frozenset[str]:
+        return frozenset(
+            name.strip().lower()
+            for name in self.admin_emails.split(",")
             if name.strip()
         )
 

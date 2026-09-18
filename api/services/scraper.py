@@ -132,7 +132,10 @@ _CHARACTER_TABLE_JS = """
       const hasSlot = before.backgroundImage && before.backgroundImage !== 'none' && before.width !== 'auto';
       const a = w.querySelector('a');
       return {
-        tooltip: w.getAttribute('title') || '',
+        tooltip: w.getAttribute('data-original-title')
+          || w.getAttribute('title')
+          || (itemEl && (itemEl.getAttribute('data-original-title') || itemEl.getAttribute('title')))
+          || '',
         wiki_href: a ? a.getAttribute('href') : null,
         bg_image: istyle ? istyle.backgroundImage : null,
         bg_position: itemEl ? itemEl.style.backgroundPosition : null,
@@ -520,18 +523,24 @@ def _leading_int(text: Optional[str]) -> Optional[int]:
 
 
 async def _read_top_pet_from_page(page: Page, username: str) -> Optional[PetInfo]:
-    """Pet Yard tab only | skips characters, exaltations, and summary extras."""
+    """Pet Yard table | prefers /pets-of, never clicks through ads to open it."""
     try:
-        pet_tab = page.get_by_text("Pet Yard", exact=False)
-        if await pet_tab.count() == 0:
-            return None
-        await pet_tab.first.click(timeout=3000)
         pets: list[dict] = []
         for _ in range(16):
             pets = await page.evaluate(_PET_YARD_JS)
             if pets and any(pet.get("levels") for pet in pets):
                 break
             await asyncio.sleep(0.25)
+        if not (pets and any(pet.get("levels") for pet in pets)):
+            pet_tab = page.get_by_text("Pet Yard", exact=False)
+            if await pet_tab.count() > 0:
+                # Ads sit over the tab on /player; force skips the intercept.
+                await pet_tab.first.click(timeout=3000, force=True)
+                for _ in range(16):
+                    pets = await page.evaluate(_PET_YARD_JS)
+                    if pets and any(pet.get("levels") for pet in pets):
+                        break
+                    await asyncio.sleep(0.25)
         picked = _pick_top_pet(pets)
         if not picked or picked.get("x") is None or picked.get("y") is None:
             return None
@@ -556,14 +565,18 @@ async def _read_top_pet_from_page(page: Page, username: str) -> Optional[PetInfo
 
 
 async def scrape_player_pet(username: str) -> PlayerProfile:
-    """Fast sidebar lookup: load the player page, open Pet Yard, return top pet only."""
+    """Fast sidebar lookup: open /pets-of, skip the ad-blocked Pet Yard click."""
 
     async def _run() -> PlayerProfile:
-        url = f"{REALMEYE_BASE}/player/{username}"
-        logger.bind(username=username, url=url).info("Scraping player pet (compact)")
+        pets_url = f"{REALMEYE_BASE}/pets-of/{username}"
+        player_url = f"{REALMEYE_BASE}/player/{username}"
+        logger.bind(username=username, url=pets_url).info("Scraping player pet (compact)")
         async with _playwright_browser() as browser:
             page = await _new_page(browser)
-            await _goto_with_retry(page, url, ready_selector="table.summary")
+            try:
+                await _goto_with_retry(page, pets_url, ready_selector="table")
+            except ScraperError:
+                await _goto_with_retry(page, player_url, ready_selector="table.summary")
             title = await page.title()
             if "404" in title or "Private" in title.lower():
                 raise ScraperError(f"Player '{username}' not found or profile is private")
@@ -1619,7 +1632,13 @@ _CLASS_MAX_STATS_JS = """() => {
       seen.add(key);
       unique.push(name);
     }
-    rows.push({ stat: hit[1], items: unique.slice(0, 8) });
+    const nums = [];
+    for (const cell of cells.slice(1)) {
+      const t = (cell.innerText || '').replace(/\\s+/g, ' ').trim();
+      for (const m of t.matchAll(/[+-]?\\d+/g)) nums.push(Number(m[0]));
+    }
+    const total = nums.length ? nums[nums.length - 1] : null;
+    rows.push({ stat: hit[1], items: unique.slice(0, 8), total, bonuses: nums });
   }
   return { rows };
 }"""

@@ -71,6 +71,15 @@ def test_truncated_rogue_build_stays_on_sonnet():
     )
 
 
+def test_player_dps_ask_stays_on_sonnet_even_if_flagged_player_only():
+    settings = _settings()
+    msg = "What's the DPS for Turbine's bard?"
+    assert (
+        pick_chat_model(msg, settings, player_only=True, context="x" * 500)
+        == settings.claude_model
+    )
+
+
 def test_rich_rag_context_uses_haiku():
     settings = _settings()
     context = "x" * 500

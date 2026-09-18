@@ -47,12 +47,20 @@ function diamondSlotX(slotX: number): number | null {
 export function PlayerCard({
   profile,
   showExaltationTable,
+  highlightClass,
+  focusCharacter,
 }: {
   profile: PlayerProfile;
   /** Render the full per-class exaltations breakdown | only when the user
    * actually asked about exaltations, since it's a lot of extra detail
    * nobody wants tacked onto every player lookup by default. */
   showExaltationTable?: boolean;
+  /** Class named in this turn. The full character list still renders with
+   * the same hover tooltips; this row just gets a ring so a DPS ask does
+   * not look like a generic account lookup. */
+  highlightClass?: string;
+  /** DPS asks: render only this class's row, not the rest of the account. */
+  focusCharacter?: boolean;
 }) {
   const [live, setLive] = useState(profile);
   const needsStats = (live.characters ?? []).some(
@@ -82,16 +90,35 @@ export function PlayerCard({
 
   if (!live.characters || live.characters.length === 0) return null;
 
+  const classKey = (highlightClass || "").toLowerCase();
+  const focused = (live.characters ?? []).filter(
+    (character) =>
+      Boolean(focusCharacter) &&
+      Boolean(classKey) &&
+      (character.class_name || "").toLowerCase() === classKey,
+  );
+  const rows = focused.length > 0 ? focused : live.characters;
+  const heading =
+    focusCharacter && highlightClass && focused.length > 0 ? highlightClass : "Characters";
+
   return (
     <div className="mt-3 flex flex-col gap-1.5 max-w-full">
       {/* Same size/weight as the player name heading above the AI's reply |
        * this is the section label for the character rows below, which sit
        * at the very end of the message (after the reply text and Sources). */}
-      <p className="text-lg font-semibold text-[#ececec] leading-tight mb-1">Characters</p>
-      {live.characters.map((character, i) => (
-        <CharacterRow key={i} character={character} pet={live.top_pet} />
+      <p className="text-lg font-semibold text-[#ececec] leading-tight mb-1">{heading}</p>
+      {rows.map((character, i) => (
+        <CharacterRow
+          key={i}
+          character={character}
+          pet={live.top_pet}
+          highlighted={
+            Boolean(classKey) &&
+            (character.class_name || "").toLowerCase() === classKey
+          }
+        />
       ))}
-      {showExaltationTable && live.exaltations && live.exaltations.length > 0 && (
+      {!focusCharacter && showExaltationTable && live.exaltations && live.exaltations.length > 0 && (
         <div className="mt-2">
           <div className="text-[11px] font-semibold text-[#8a8a8a] uppercase tracking-wide mb-1.5 px-1">
             Exaltations
@@ -110,9 +137,11 @@ export function PlayerCard({
 function CharacterRow({
   character,
   pet,
+  highlighted,
 }: {
   character: CharacterSummary;
   pet?: PlayerProfile["top_pet"];
+  highlighted?: boolean;
 }) {
   const hasSprite =
     character.sprite_sheet_url != null &&
@@ -121,7 +150,13 @@ function CharacterRow({
     character.sprite_width != null;
 
   const row = (
-    <div className="flex items-center gap-3 rounded-xl bg-[#212121] border border-[#333333] px-3 py-2.5">
+    <div
+      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 border ${
+        highlighted
+          ? "bg-[#2a261c] border-[#7c6a46]"
+          : "bg-[#212121] border-[#333333]"
+      }`}
+    >
       {hasSprite ? (
         <SpriteIcon
           sheetUrl={character.sprite_sheet_url!}

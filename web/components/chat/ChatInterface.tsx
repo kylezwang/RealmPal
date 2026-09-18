@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { streamChat, fetchPlayer, fetchPlayerPet, fetchItem, fetchItemSuggest, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
-import { extractPlayerLookup, wantsExaltationTable } from "@/lib/playerLookup";
+import { extractPlayerLookup, isAccountPlayerLookup, shouldReusePlayerCard, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { ExamplePrompt } from "./ExamplePrompt";
@@ -160,6 +160,12 @@ interface Message {
    * PlayerCard only renders the full per-class breakdown table when this
    * is true, since it's a lot of extra detail nobody wants by default. */
   showExaltationTable?: boolean;
+  /** Class named in this turn (or the last DPS turn), so the Characters
+   * card can highlight that row the way a lookup already shows every
+   * character with item hover tooltips. */
+  highlightClass?: string;
+  /** "character" is a DPS ask: one class row, no Fame/Guild account chrome. */
+  playerCardScope?: "account" | "character";
   /** Wiki infobox cards for items named in the assistant reply. */
   items?: ItemProfile[];
   /** Unique item names spotted in the reply, in order | drives card
@@ -181,6 +187,13 @@ function findRecentPlayerName(messages: Message[]): string | null {
     if (fromText) return fromText;
   }
   return null;
+}
+
+function findRecentHighlightClass(messages: Message[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].highlightClass) return messages[i].highlightClass;
+  }
+  return undefined;
 }
 
 export function ChatInterface() {
@@ -652,19 +665,30 @@ export function ChatInterface() {
     });
 
     // If this looks like a player lookup ("Look up player Turbine", "/player
-    // Turbine", "What characters does Turbine have?"), fetch that player's
-    // profile in parallel so we can attach a rich character/equipment card
-    // (sprites + hover tooltips) to the response once it resolves. This is
-    // independent of the text stream | whichever finishes first, the other
-    // just fills in afterward.
+    // Turbine", "What characters does Turbine have?") or a named-character
+    // DPS ask ("What's the DPS for Turbine's bard?"), fetch that player's
+    // profile in parallel so we can attach the same character/equipment card
+    // (sprites + hover tooltips including on-character enchants) the lookup
+    // path already uses. The model then does not have to reprint that loadout.
     const asksAboutExaltations = /exalt/i.test(trimmed);
     const showExaltationTable = wantsExaltationTable(trimmed);
+    const accountLookup = isAccountPlayerLookup(trimmed);
+    const highlightClass =
+      extractClassFromPrompt(trimmed) ??
+      (!accountLookup ? findRecentHighlightClass(messages) : undefined);
     // Player name in this message, or fall back to the most recent player
     // looked up in this chat (e.g. "How many exaltations does Turbine have?"
-    // after an earlier "Look up player Turbine").
+    // or "what do the numbers look like?" after an earlier "Turbine's bard").
     const lookupName =
       extractPlayerLookup(trimmed) ??
-      (asksAboutExaltations ? findRecentPlayerName(messages) : null);
+      (asksAboutExaltations || shouldReusePlayerCard(trimmed)
+        ? findRecentPlayerName(messages)
+        : null);
+    const playerCardScope: "account" | "character" | undefined = lookupName
+      ? accountLookup || !highlightClass
+        ? "account"
+        : "character"
+      : undefined;
     if (lookupName) {
       // The backend's own player-brief scrape (for the text summary above)
       // and this card fetch hit the same short-TTL cache but race the same
@@ -684,6 +708,8 @@ export function ChatInterface() {
                 ...updated[assistantMsgIndex],
                 playerProfile: profile,
                 showExaltationTable,
+                highlightClass: playerCardScope === "character" ? highlightClass : undefined,
+                playerCardScope,
               };
               return updated;
             });
@@ -1429,6 +1455,8 @@ export function ChatInterface() {
                     playerProfile={msg.playerProfile}
                     playerLookupFailed={msg.playerLookupFailed}
                     showExaltationTable={msg.showExaltationTable}
+                    highlightClass={msg.highlightClass}
+                    playerCardScope={msg.playerCardScope}
                     items={msg.items}
                     pendingItemNames={msg.pendingItemNames}
                     dungeonGuide={msg.dungeonGuide}

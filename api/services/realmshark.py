@@ -28,12 +28,19 @@ from ..models.build import (
     weapon_family,
     AbilityScalingEdge,
     EquipmentSlot,
+    ItemEnchant,
     Loadout,
     StatScalingGraph,
 )
 from .dungeon_guide import extract_dungeon_query
 from .biomes import extract_biome_query, retrieve_biome_context
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
+from .dps_specialist import (
+    dps_subject_from_history,
+    is_dps_follow_up,
+    is_dps_query,
+    is_stat_number_query,
+)
 from .fuzzy_match import fuzzy_closed_vocab
 from .item_aliases import (
     SET_SLOTS,
@@ -54,6 +61,8 @@ from .wiki_scaling import (
 REALMSHARK_API = "https://tracker.realmshark.cc/api/v1"
 REALMSHARK_PAGE = "https://tracker.realmshark.cc/dps-leaderboards"
 GRAPH_CACHE_KEY = "dps:graph:seasonal:v2"
+# v2 keeps per-slot enchants, weapon/ability damage split, and calculator debug.
+LOADOUT_CACHE_PREFIX = "dps:top:v2"
 TOP_N = 5
 
 # RealmShark's dps-builds list is "items the calculator allows on this
@@ -369,6 +378,40 @@ def graph_from_builds(payload: dict, *, seasonal: bool = True) -> StatScalingGra
     )
 
 
+def _parse_enchants(raw: object) -> list[ItemEnchant]:
+    out: list[ItemEnchant] = []
+    if not isinstance(raw, list):
+        return out
+    for enc in raw:
+        if not isinstance(enc, dict):
+            continue
+        name = (enc.get("enchantName") or enc.get("name") or "").strip()
+        if not name:
+            continue
+        slot = enc.get("slot")
+        try:
+            slot_n = int(slot) if slot is not None else None
+        except (TypeError, ValueError):
+            slot_n = None
+        out.append(
+            ItemEnchant(
+                slot=slot_n,
+                name=name,
+                value=str(enc.get("value") or ""),
+            )
+        )
+    return out
+
+
+def _float_or_none(raw: object) -> Optional[float]:
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def loadouts_from_rows(payload: dict) -> list[Loadout]:
     out: list[Loadout] = []
     for row in payload.get("rows") or []:
@@ -378,7 +421,12 @@ def loadouts_from_rows(payload: dict) -> list[Loadout]:
             slot = eq.get("slot")
             if name and slot:
                 slots.append(
-                    EquipmentSlot(slot=slot, item_name=name, rarity=eq.get("rarity"))
+                    EquipmentSlot(
+                        slot=slot,
+                        item_name=name,
+                        rarity=eq.get("rarity"),
+                        enchants=_parse_enchants(eq.get("enchants")),
+                    )
                 )
         stats = {}
         raw_stats = row.get("stats") or {}
@@ -394,15 +442,20 @@ def loadouts_from_rows(payload: dict) -> list[Loadout]:
         ):
             if key in raw_stats and raw_stats[key] is not None:
                 stats[canon] = int(raw_stats[key])
+        debug = row.get("debug") if isinstance(row.get("debug"), dict) else {}
         out.append(
             Loadout(
                 rank=int(row.get("rank") or 0),
                 player_name=row.get("playerName") or "unknown",
-                dps=row.get("dps"),
+                dps=_float_or_none(row.get("dps")),
                 ability_name=row.get("abilityName"),
                 weapon_name=row.get("weaponName"),
                 equipment=slots,
                 stats=stats,
+                total_damage=_float_or_none(row.get("totalDamage")),
+                weapon_damage=_float_or_none(row.get("weaponDamage")),
+                ability_damage=_float_or_none(row.get("abilityDamage")),
+                debug=debug,
             )
         )
     return out
@@ -587,7 +640,7 @@ async def load_top_loadouts(
     cache_only: bool = False,
     force: bool = False,
 ) -> list[Loadout]:
-    cache_key = f"dps:top:{edge.build_id}"
+    cache_key = f"{LOADOUT_CACHE_PREFIX}:{edge.build_id}"
     if not force:
         cached = await redis.get(cache_key)
         if cached:
@@ -733,10 +786,22 @@ async def retrieve_build_knowledge(
     player_ign = extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
     biome_ask = extract_biome_query(message)
-    set_visualize = is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
-        message, class_name, stat
+    # A breakdown or what-if turn continues the previous DPS answer. It has to
+    # be resolved before the set/skin/player branches below, because those
+    # match on loose wording a follow-up shares ("what if he swapped to a Doom
+    # Bow?" matched the skin visualizer and never reached the DPS slot).
+    dps_follow_up = is_dps_follow_up(message, history=history)
+    if dps_follow_up:
+        prior_ign, prior_class = dps_subject_from_history(history)
+        player_ign = player_ign or prior_ign
+        class_name = class_name or prior_class
+    set_visualize = not dps_follow_up and (
+        is_set_visualize_query(message)
+        or is_stat_class_shiny_divine_query(message, class_name, stat)
     )
-    skin_visualize = is_skin_visualize_query(message, history=history)
+    skin_visualize = not dps_follow_up and is_skin_visualize_query(
+        message, history=history
+    )
     # "What enchants on QOT" has no class/stat/build keyword, so it isn't
     # buildish on its own | without this it would fall through the gate
     # below with no context and Claude would have to invent roll numbers.
@@ -749,7 +814,12 @@ async def retrieve_build_knowledge(
     # brief entirely and fell through to the generic DPS-graph context for
     # an unrelated class/stat. Only a real class+stat pair (an actual
     # combined build+enchant ask) should still skip the enchant-only path.
-    enchant_only = is_enchant_query(message) and not (class_name and stat)
+    enchant_only = (
+        is_enchant_query(message)
+        and not (class_name and stat)
+        and not dps_follow_up
+    )
+    numbers_only = is_stat_number_query(message, history=history)
     if (
         not buildish
         and not player_ign
@@ -757,6 +827,7 @@ async def retrieve_build_knowledge(
         and not set_visualize
         and not skin_visualize
         and not enchant_only
+        and not numbers_only
         and not biome_ask
     ):
         return ""
@@ -811,7 +882,11 @@ async def retrieve_build_knowledge(
     player_lookup_turn = bool(extract_player_ign(message)) or (
         bool(player_ign) and not this_class
     )
-    if player_lookup_turn:
+    if (
+        player_lookup_turn
+        and not numbers_only
+        and not is_dps_query(message, history=history)
+    ):
         try:
             return await run_slot_agents(
                 redis,
@@ -861,6 +936,23 @@ async def retrieve_build_knowledge(
             )
         except Exception as e:
             logger.bind(error=str(e)).warning("Enchantment specialist unavailable")
+            return ""
+
+    if numbers_only:
+        try:
+            return await run_slot_agents(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                player_ttl_seconds=player_ttl_seconds,
+                user_history=history,
+                class_name=class_name,
+                stat=stat,
+                player_ign=player_ign,
+                dungeon_name=dungeon_name,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("DPS specialist unavailable")
             return ""
 
     effective_stat = stat

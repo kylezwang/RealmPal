@@ -55,6 +55,9 @@ class UsageResponse(BaseModel):
     on_demand_spent_usd: float = 0
     # Seconds until the free daily bucket rolls. 0 if it has not started.
     resets_in_seconds: int = 0
+    # Server-checked admin role. The notifications modal keys off this,
+    # not a client IGN guess or a JWT claim.
+    is_admin: bool = False
 
 
 class PaywallResponse(BaseModel):

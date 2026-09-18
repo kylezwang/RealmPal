@@ -46,10 +46,12 @@ from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.biomes import extract_biome_query
 from ..services.enchanting import is_enchant_query
+from ..services.dps_specialist import is_dps_query, is_stat_number_query
 from ..services.item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
 from ..services.player_lookup import extract_player_ign
 from ..services.skin_visualizer import is_skin_visualize_query, outfit_history_from_messages
 from ..services.dev_access import is_debug_unlimited
+from ..services.admin_access import is_admin
 from ..services.rate_limit import (
     USER_SCOPE,
     Quota,
@@ -62,9 +64,10 @@ from ..services.rate_limit import (
     product_feedback_quota_for,
     quota_for,
 )
-from ..services.budget import disabled_reason, record_llm_failure, record_usage
+from ..services.budget import cost_micros, disabled_reason, record_llm_failure, record_usage
 from ..services.llm import build_chat_client
 from ..services.model_route import pick_chat_model
+from ..services import admin_events
 from ..services import entitlements
 from ..services import product_feedback
 from ..services.claude_billing import consume_claude_reply, peek_claude_usage
@@ -342,6 +345,10 @@ async def _stream_response(
     redis: aioredis.Redis,
     mint=None,
     model: str = "",
+    *,
+    chat_tier: str = "guest",
+    chat_email: Optional[str] = None,
+    chat_ign: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream Claude response as SSE chunks.
@@ -384,6 +391,19 @@ async def _stream_response(
                     output_tokens=final.usage.output_tokens,
                     provider=provider,
                     model=model_id,
+                )
+                micros = cost_micros(
+                    settings,
+                    final.usage.input_tokens,
+                    final.usage.output_tokens,
+                    model=model_id,
+                )
+                await admin_events.record_chat_turn(
+                    settings,
+                    tier=chat_tier,
+                    cost_usd=round(micros / 1_000_000, 6),
+                    email=chat_email,
+                    ign=chat_ign,
                 )
             except Exception:
                 logger.exception("Could not record spend for a completed stream")
@@ -428,6 +448,7 @@ async def chat_usage(
     reliable key.
     """
     quota = quota_for(user, request, settings)
+    admin = await is_admin(user, settings)
     if await is_debug_unlimited(user, settings):
         return UsageResponse(
             used=0,
@@ -437,6 +458,7 @@ async def chat_usage(
             tier="paid",
             claude_limit=settings.paid_claude_included,
             claude_remaining=settings.paid_claude_included,
+            is_admin=admin,
         )
     if user and user.email and await entitlements.is_active(user.email, settings):
         claude = await peek_claude_usage(redis, user.email, settings)
@@ -451,6 +473,7 @@ async def chat_usage(
             claude_remaining=claude.remaining,
             spend_cap_usd=claude.spend_cap_usd,
             on_demand_spent_usd=claude.on_demand_spent_usd,
+            is_admin=admin,
         )
     try:
         used = await peek(redis, quota)
@@ -469,6 +492,7 @@ async def chat_usage(
         scope=quota.scope,
         tier="free" if quota.scope == USER_SCOPE else "guest",
         resets_in_seconds=resets_in,
+        is_admin=admin,
     )
 
 
@@ -701,24 +725,21 @@ async def chat_stream(
             bool(extract_dungeon_query(query_text, history=user_history))
             or bool(extract_biome_query(query_text))
         ) and not buildish
+        enchant_only = is_enchant_query(query_text) and not (class_name and stat)
+        numbers_only = is_stat_number_query(query_text)
+        dps_ask = is_dps_query(query_text)
         # This-turn IGN lookups stay off the wiki/DPS path even if an
         # earlier Bard/Huntress question would inherit as buildish.
-        player_only = bool(extract_player_ign(query_text)) or (
-            bool(extract_player_ign(query_text, history=user_history))
-            and not this_class
+        # A player's class DPS ask still has an IGN, but it is a numbers
+        # turn: scrape the character inside the DPS specialist, do not
+        # treat it as a fame/guild lookup.
+        player_only = (not numbers_only and not dps_ask) and (
+            bool(extract_player_ign(query_text))
+            or (
+                bool(extract_player_ign(query_text, history=user_history))
+                and not this_class
+            )
         )
-        # "What enchants on QOT" has no class/stat, so it isn't buildish |
-        # gate on the same is_enchant_query the enchantment specialist uses.
-        # Use (class_name and stat), not the raw `buildish` flag: buildish
-        # also flips True on a bare slot noun (ring/armor/weapon/ability)
-        # with no class or stat at all, and almost every enchant question
-        # names one of those nouns (it's asking about gear). Found live
-        # Sep 14: "...insane with the awakened enchantment?" (about a ring)
-        # had buildish=True from "ring" alone, so this always fell through
-        # to the full RAG/Claude path and skipped the enchant specialist's
-        # injected brief. Only a real class+stat pair (an actual combined
-        # build+enchant ask) should still get the full build context here.
-        enchant_only = is_enchant_query(query_text) and not (class_name and stat)
         # Specialists already inject the right chunk. Extra wiki RAG pads
         # the bill and, if we glue on the previous user turn, mixes topics
         # (player lookup + Bard attack → off-class bows). Class+stat and
@@ -728,6 +749,7 @@ async def chat_stream(
             dungeon_only
             or player_only
             or enchant_only
+            or numbers_only
             or is_skin_visualize_query(query_text, history=outfit_history)
             or is_set_visualize_query(query_text)
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
@@ -833,7 +855,15 @@ async def chat_stream(
 
     return StreamingResponse(
         _stream_response(
-            messages, system_prompt, settings, redis, mint=_mint, model=model
+            messages,
+            system_prompt,
+            settings,
+            redis,
+            mint=_mint,
+            model=model,
+            chat_tier="paid" if paid else ("free" if quota.scope == USER_SCOPE else "guest"),
+            chat_email=(user.email if user else None),
+            chat_ign=str((user.claims or {}).get("ign") or "").strip() if user else "",
         ),
         media_type="text/event-stream",
         headers={

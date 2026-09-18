@@ -18,7 +18,7 @@ from .biomes import biome_index_entries
 from .enchanting import enchanting_store_status, warm_enchanting_store
 from .ingestion import WIKI_HUB_SLUGS
 from .item_aliases import load_item_catalog, warm_suggest_index
-from .realmshark import GRAPH_CACHE_KEY, load_graph, load_top_loadouts
+from .realmshark import GRAPH_CACHE_KEY, LOADOUT_CACHE_PREFIX, load_graph, load_top_loadouts
 from .skin_visualizer import CATALOG_KEY, load_outfit_catalog
 from .wiki_scaling import (
     CACHE_PREFIX,
@@ -38,7 +38,7 @@ from .wiki_scaling import (
 )
 
 UMI_PREFIX = UMI_BIS_PREFIX
-LOADOUT_PREFIX = "dps:top:"
+LOADOUT_PREFIX = f"{LOADOUT_CACHE_PREFIX}:"
 ITEM_CHUNK = 25
 # Category pages, not item tables. Warm the index; do not scrape every link.
 INDEX_HUB_SLUGS = frozenset({"weapons", "ability-items", "armor", "enchanting"})

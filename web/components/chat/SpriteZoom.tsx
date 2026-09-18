@@ -280,8 +280,12 @@ export function SpriteZoomTrigger({
   const [zoomOpen, setZoomOpen] = useState(false);
   const [cardScale, setCardScale] = useState(1.25);
   const [cardWidth, setCardWidth] = useState<number | undefined>(undefined);
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  // Spans, not divs: an item token renders inside a markdown paragraph, and a
+  // div inside a <p> is invalid HTML that the browser reparents, which breaks
+  // hydration. Display is set by class (inline-block / block / flex), so the
+  // layout is unchanged.
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const title = details?.title || source?.alt || "Zoom";
 
@@ -372,7 +376,7 @@ export function SpriteZoomTrigger({
 
   return (
     <>
-      <div ref={anchorRef} className={`relative ${direct ? "block" : "inline-block"} ${className}`}>
+      <span ref={anchorRef} className={`relative ${direct ? "block" : "inline-block"} ${className}`}>
         <span
           role="button"
           tabIndex={0}
@@ -398,7 +402,7 @@ export function SpriteZoomTrigger({
           {children}
         </span>
         {!direct && menuOpen && (
-          <div
+          <span
             ref={menuRef}
             className="absolute z-50 left-1/2 top-full mt-1 -translate-x-1/2 flex items-center gap-0.5 rounded-md border border-[#404040] bg-[#0d0d0d] px-1.5 py-1 shadow-xl"
             role="menu"
@@ -413,9 +417,9 @@ export function SpriteZoomTrigger({
             {details?.wikiUrl ? (
               <MenuIconButton label={`Open ${title} on RealmEye`} href={details.wikiUrl} />
             ) : null}
-          </div>
+          </span>
         )}
-      </div>
+      </span>
       {zoomOpen && typeof document !== "undefined" && (
         <ZoomModal title={title} onClose={() => setZoomOpen(false)} frame={preview === "sprite" ? "sprite" : "card"}>
           {zoomBody}

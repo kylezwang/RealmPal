@@ -12,6 +12,11 @@ export interface ChangelogEntry {
    * the change is actually committed.
    */
   timestamp?: string;
+  /**
+   * True for a labeled era, not a ship date. The timeline shows `date` as a
+   * heading and hides the version badge.
+   */
+  phase?: boolean;
   /** Short, plain-language, user-facing bullets. See .cursor/rules/changelog.mdc. */
   items: string[];
 }
@@ -22,6 +27,94 @@ export interface ChangelogEntry {
  * .cursor/rules/changelog.mdc for the house style.
  */
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "2026.09.18",
+    date: "Sep 18, 2026",
+    items: [
+      "The DPS specialist is now live. Ask for a class ceiling or a named character and you will get dummy numbers you can check in the guild hall.",
+      "A named-player DPS reply now shows only that one character, not fame or the rest of the account.",
+      "A DPS breakdown now walks every worn piece, and a stat-tradeoff enchant only changes the numbers those stats actually feed.",
+    ],
+  },
+  {
+    version: "2026.09.17-16",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking for a player's DPS now attaches the same character card as a player lookup, with item hovers that show on-character enchants, so the reply can stay on the numbers.",
+      "Those on-character enchants are now counted in the dummy figure, including when the tooltip is a single line or the prompt names them.",
+    ],
+  },
+  {
+    version: "2026.09.17-15",
+    date: "Sep 17, 2026",
+    items: [
+      "A dummy DPS figure now uses only the debuffs that character's own gear inflicts, so a Huntress trap's Curse is not copied onto a Bard in the same chat.",
+      "When Attack or Dexterity differs from the character sheet, the answer names every item that moved it, so both on-ability boosts are visible.",
+    ],
+  },
+  {
+    version: "2026.09.17-14",
+    date: "Sep 17, 2026",
+    items: [
+      "DPS answers now also give the damage you would see testing alone on the guild hall dummy, next to the fully buffed number, so you can check it against your own game.",
+      "Enemy defense is now taken off each shot, so fast multi-shot weapons are no longer overrated.",
+      "Shots that ignore defense are now tracked per shot, so a summon's piercing no longer inflates the weapon it came with.",
+    ],
+  },
+  {
+    version: "2026.09.17-13",
+    date: "Sep 17, 2026",
+    items: [
+      "DPS for weapons that fire two kinds of shot at different speeds is now correct. Some, like Makakoyumi, were badly understated.",
+      "A player's DPS answer now lists that character's eight stats, so you can see exactly what was measured.",
+      "Item stat penalties like -3 DEX now count, and abilities with flat damage are no longer left out of the total.",
+      "DPS answers no longer assume a Berserk buff the set cannot actually provide.",
+    ],
+  },
+  {
+    version: "2026.09.17-12",
+    date: "Sep 17, 2026",
+    items: [
+      "Ask for a breakdown after a DPS answer and RealmPal now shows the full math instead of losing track of its own numbers.",
+      "What-if questions like \"what if he swapped to a Doom Bow?\" now stay on DPS and rescale from the set you were just looking at.",
+      "Everyday words no longer get mistaken for stat names, so a plain follow-up question stops pulling in an unrelated build.",
+    ],
+  },
+  {
+    version: "2026.09.17-11",
+    date: "Sep 17, 2026",
+    items: [
+      "Fixed a bug that could leave the whole page unresponsive after an update. RealmPal now refreshes itself instead.",
+      "Ability damage in DPS answers now comes from the item's real damage line, so the scaling stat is right.",
+      "A player's DPS no longer comes back blank when one of their equipped items is new to us.",
+      "When part of a set's damage cannot be measured, RealmPal says so instead of showing it as the full total.",
+    ],
+  },
+  {
+    version: "2026.09.17-10",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking for a player's class DPS now uses that character's RealmEye gear and stats, not only the leaderboard.",
+      "The account-menu notifications panel opens as an overlay instead of freezing chat.",
+    ],
+  },
+  {
+    version: "2026.09.17-9",
+    date: "Sep 17, 2026",
+    items: [
+      "Potential DPS now reads every equipped piece's wiki page for buffs and procs, then counts the ones that stay up on the dummy.",
+    ],
+  },
+  {
+    version: "2026.09.17-8",
+    date: "Sep 17, 2026",
+    items: [
+      "Asking for max stats or potential DPS now answers with RealmShark numbers, including the enchants already on those sets, instead of only listing gear.",
+      "If you swap a piece, the reply scales that board number instead of inventing a new DPS.",
+      "Ability damage now follows wiki scaling and ability enchants, so armor procs like Vesture's Attack boost count when you swap.",
+      "Potential DPS now tracks RealmShark more closely, including wiki Vulnerable and weapon enchants.",
+    ],
+  },
   {
     version: "2026.09.17-7",
     date: "Sep 17, 2026",
@@ -193,6 +286,13 @@ export const CHANGELOG: ChangelogEntry[] = [
       "The free-message popup now tells you exactly how many free messages you have left, instead of always showing a countdown.",
       "Creating an account now loads your pet into the sidebar right away.",
       "Starting a chat from a daily quest or a suggested question now shows up in your chat list like any other chat.",
+    ],
+  },
+  {
+    version: "prelaunch",
+    date: "Development phases before going live",
+    phase: true,
+    items: [
       "Fixed a rare case where the daily quest bonus message could disappear or reset too early.",
       "Pro members can now manage or cancel their subscription right from the billing menu, no more emailing support.",
       "The Quests progress bar sits under the Quests label.",

@@ -217,10 +217,19 @@ def weapon_family(class_name: str) -> tuple[tuple[str, ...], str]:
     return (), ""
 
 
+class ItemEnchant(BaseModel):
+    """One on-character enchant from a RealmShark leaderboard row."""
+
+    slot: Optional[int] = None
+    name: str = ""
+    value: str = ""
+
+
 class EquipmentSlot(BaseModel):
     slot: str
     item_name: str
     rarity: Optional[str] = None
+    enchants: list[ItemEnchant] = Field(default_factory=list)
 
 
 class Loadout(BaseModel):
@@ -231,6 +240,10 @@ class Loadout(BaseModel):
     weapon_name: Optional[str] = None
     equipment: list[EquipmentSlot] = Field(default_factory=list)
     stats: dict[str, int] = Field(default_factory=dict)
+    total_damage: Optional[float] = None
+    weapon_damage: Optional[float] = None
+    ability_damage: Optional[float] = None
+    debug: dict = Field(default_factory=dict)
 
 
 class AbilityScalingEdge(BaseModel):

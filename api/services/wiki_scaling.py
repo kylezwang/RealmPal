@@ -168,15 +168,20 @@ def _pick_ability_pages(items: list[dict]) -> tuple[list[dict], list[dict]]:
     return first, ut
 
 
+# The sign is captured, not assumed. Requiring a literal "+" made every stat
+# penalty in the game invisible: Mad Javelin's "+10 ATT, -3 DEX" parsed as
+# Attack 10 with no Dexterity entry at all, so a DPS reconstruct kept the DEX
+# the character did not have. 78 of 1444 cached items state at least one
+# negative On Equip modifier (audit: api/scripts/audit_item_parsing.py).
 _BONUS_PAT: dict[str, re.Pattern[str]] = {
-    "HP": re.compile(r"\+(\d+)\s*(?:HP|Life)\b", re.I),
-    "MP": re.compile(r"\+(\d+)\s*(?:MP|Mana)\b", re.I),
-    "Attack": re.compile(r"\+(\d+)\s*(?:ATT|Attack|ATK)\b", re.I),
-    "Defense": re.compile(r"\+(\d+)\s*(?:DEF|Defense)\b", re.I),
-    "Speed": re.compile(r"\+(\d+)\s*(?:SPD|Speed)\b", re.I),
-    "Dexterity": re.compile(r"\+(\d+)\s*(?:DEX|Dexterity)\b", re.I),
-    "Vitality": re.compile(r"\+(\d+)\s*(?:VIT|Vitality)\b", re.I),
-    "Wisdom": re.compile(r"\+(\d+)\s*(?:WIS|Wisdom)\b", re.I),
+    "HP": re.compile(r"([+-]\d+)\s*(?:HP|Life)\b", re.I),
+    "MP": re.compile(r"([+-]\d+)\s*(?:MP|Mana)\b", re.I),
+    "Attack": re.compile(r"([+-]\d+)\s*(?:ATT|Attack|ATK)\b", re.I),
+    "Defense": re.compile(r"([+-]\d+)\s*(?:DEF|Defense)\b", re.I),
+    "Speed": re.compile(r"([+-]\d+)\s*(?:SPD|Speed)\b", re.I),
+    "Dexterity": re.compile(r"([+-]\d+)\s*(?:DEX|Dexterity)\b", re.I),
+    "Vitality": re.compile(r"([+-]\d+)\s*(?:VIT|Vitality)\b", re.I),
+    "Wisdom": re.compile(r"([+-]\d+)\s*(?:WIS|Wisdom)\b", re.I),
 }
 
 
@@ -702,6 +707,28 @@ def _on_equip_text(item: ItemProfile) -> str:
     return ""
 
 
+def on_equip_bonuses(item: ItemProfile) -> dict[str, int]:
+    """Parse every +N / -N STAT from an item's On Equip line.
+
+    Penalties count. A DPS reconstruct that drops "-3 DEX" overstates attack
+    speed for the whole window, and the same sheet feeds enchant and build
+    advice.
+    """
+    on_equip = _on_equip_text(item)
+    if not on_equip:
+        return {}
+    # Not _bonus_value: its plausibility cap is tuned for T7 combat rings
+    # (+11 max), but a robe/weapon's own On Equip bonus is often +16-30.
+    scored: dict[str, int] = {}
+    for stat, pat in _BONUS_PAT.items():
+        hits = [int(n) for n in pat.findall(on_equip)]
+        if hits:
+            # Largest stated modifier, by magnitude, so a line that mentions a
+            # stat twice still resolves and a lone penalty is not read as a gain.
+            scored[stat] = max(hits, key=abs)
+    return scored
+
+
 def infer_item_base_stat(item: ItemProfile) -> Optional[str]:
     """The stat an item's own On Equip line favors, e.g. '+20 ATT' -> Attack.
 
@@ -710,16 +737,7 @@ def infer_item_base_stat(item: ItemProfile) -> Optional[str]:
     because that item's own base bonus is +20 Attack). Returns None on no
     bonus or a tie between two stats | the caller should not guess further.
     """
-    on_equip = _on_equip_text(item)
-    if not on_equip:
-        return None
-    # Not _bonus_value: its plausibility cap is tuned for T7 combat rings
-    # (+11 max), but a robe/weapon's own On Equip bonus is often +16-30.
-    scored: dict[str, int] = {}
-    for stat, pat in _BONUS_PAT.items():
-        hits = [int(n) for n in pat.findall(on_equip)]
-        if hits:
-            scored[stat] = max(hits)
+    scored = on_equip_bonuses(item)
     if not scored:
         return None
     best_value = max(scored.values())
@@ -1484,7 +1502,11 @@ def format_class_max_stats(
         if not items:
             continue
         tagged = ", ".join(f"[item:{name}]" for name in items[:6])
-        lines.append(f"  {row.get('stat')}: {tagged}")
+        total = row.get("total")
+        if total is not None and tagged:
+            lines.append(f"  {row.get('stat')}: {tagged} (wiki total {total})")
+        else:
+            lines.append(f"  {row.get('stat')}: {tagged}")
     if not lines:
         return ""
     class_name = payload.get("class_name") or "this class"

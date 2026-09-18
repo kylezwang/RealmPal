@@ -35,7 +35,7 @@ def wrap_slot_chunk(slot: str, body: str, *, source: str = "") -> str:
     # ended up detached from their stat column. Player summaries must stay
     # one list so Fame/Guild cannot collapse onto a single line.
     has_table = "| --- |" in text
-    keep_whole = has_table or slot in {"player", "set", "skin"}
+    keep_whole = has_table or slot in {"player", "set", "skin", "dps"}
     parts = (
         SLOT_SPLITTER.split_text(text)
         if len(text) > 1100 and not keep_whole

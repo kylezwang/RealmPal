@@ -235,6 +235,17 @@ def test_cors_adds_localhost_only_in_debug():
     assert "https://realmpal.example.com" in settings.cors_allowed_origins
 
 
+def test_cors_allows_put_and_delete_for_chat_sessions():
+    from starlette.middleware.cors import CORSMiddleware
+
+    from api.main import create_app
+
+    app = create_app()
+    cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
+    methods = {method.upper() for method in cors.kwargs["allow_methods"]}
+    assert {"PUT", "DELETE", "OPTIONS", "PATCH"} <= methods
+
+
 def test_default_jwt_secret_is_detected(anon_settings):
     from api.config import Settings
 

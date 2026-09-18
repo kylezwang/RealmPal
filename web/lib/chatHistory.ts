@@ -29,6 +29,8 @@ export interface StoredMessage {
   feedback?: StoredFeedback;
   playerProfile?: PlayerProfile;
   showExaltationTable?: boolean;
+  highlightClass?: string;
+  playerCardScope?: "account" | "character";
   items?: ItemProfile[];
   dungeonGuide?: DungeonGuide;
   images?: Array<{ name: string; thumb: string; src?: string }>;
