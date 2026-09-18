@@ -232,6 +232,22 @@ async def _ensure_uploads_db(settings) -> None:
         )
 
 
+async def _ensure_chat_sessions_db(settings) -> None:
+    """Create chat_sessions and widen leftover int32 timestamp columns.
+
+    Found live Sep 18: POST /chat/sessions/sync 500ed because updated_at
+    is a millisecond Date.now() value and Postgres INTEGER is int32.
+    """
+    from .services import chat_sessions
+
+    try:
+        await chat_sessions.init_db(settings)
+    except Exception as exc:
+        logger.bind(path=settings.chat_sessions_db_path, error=str(exc)).warning(
+            "Could not open the chat sessions DB; signed-in history will not sync"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -251,6 +267,7 @@ async def lifespan(app: FastAPI):
     await _ensure_accounts_db(settings)
     await _ensure_admin_events_db(settings)
     await _ensure_uploads_db(settings)
+    await _ensure_chat_sessions_db(settings)
     await _ensure_specialist_stores(settings)
     yield
     logger.info("Realm Pal API shutting down")

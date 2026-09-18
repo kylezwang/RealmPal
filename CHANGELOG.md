@@ -19,6 +19,8 @@ Format: each version has technical notes, linked commits, migration guides (if n
 ### Fixed
 - **8/8-stat enchants were treated as fire rate** (`classify_enchant`, `weapon_enchant_multipliers`, `format_enchant_channel`, `format_slot_contributions`). A live Bard breakdown blamed `Vitality -Speed Tradeoff III` for APS 8.87 vs an invented `DEX × RoF / 8 = 10.2`. That enchant (and every other 8/8 pair: ATT/DEF, DEX/SPD, WIS/HP, Life/Mana, ...) is a sheet-stat channel: already inside the RealmEye totals, never a RoF multiplier. Fire Rate Tradeoff / Damage Tradeoff / Flurry stay `weapon_shot`. Projectile Speed is `projectile_travel`. APS is `(1.5 + 6.5 × DEX/75) × item Rate of Fire`. A sheet-stat still counts when Attack, Dexterity, or the ability's wiki scaling stat is that sheet value, so a Speed-scaling ability is not starved of Speed. Breakdowns must walk weapon, ability, armor, and ring from `HOW EACH WORN PIECE`. Found live: Turbine's Bard.
 - **Board-row brief still taught the old APS shorthand and "Damaging is weapons-only"** (`format_reconstruction`). A live Archer breakdown copied `APS(DEX × Rate of Fire)` into the heading while the step-by-step used the real formula, and said Damaging was weapon-only while the ability half already included it. The board reconstruct copy now matches `format_dps_derivation`. Found live: Turbine's Archer.
+- **Signed-in chat sync 500ed on Postgres INTEGER** (`api/services/db.py` `postgres_ddl`, `widen_existing_integers`). The browser sends `Date.now()` milliseconds (`1789716549690`) as `updated_at`. SQLite INTEGER is 64-bit so local tests passed; Postgres INTEGER is int32. `POST /chat/sessions/sync` and `PUT /chat/sessions/{id}` raised `asyncpg.exceptions.DataError: value out of int32 range`. All SQLite INTEGER DDL is now BIGINT on Postgres, and existing int32 columns are ALTERed on startup. Found live: revision `realmpal-api--0000052`.
+- **DPS follow-up picked Haiku** (`pick_chat_model`). `is_dps_query` already takes history, but the model picker did not pass it, so "Break it down" after a Bard DPS turn was treated as a short stored-context ask. History is now passed through.
 
 ### Tests
 - `test_sheet_stat_tradeoffs_are_not_fire_rate_enchants`
@@ -28,6 +30,9 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_sheet_stat_channel_names_every_reconstruct_feed`
 - `test_slot_contributions_name_all_four_pieces`
 - `test_board_reconstruction_copy_matches_the_real_formulas`
+- `test_postgres_ddl_widens_integer_to_bigint`
+- `test_upsert_accepts_a_javascript_millisecond_timestamp`
+- `test_dps_breakdown_follow_up_stays_on_sonnet`
 
 ## [2026.09.17] - Sep 17, 2026
 
