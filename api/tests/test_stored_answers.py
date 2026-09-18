@@ -30,10 +30,11 @@ from api.services.stored_answers import (
     ability_brief_key,
     build_brief_key,
     is_ability_ask,
+    is_retry_query,
     maybe_mint_brief,
     try_stored_reply,
 )
-from api.services.wiki_scaling import HUB_PREFIX, write_cached_item
+from api.services.wiki_scaling import CACHE_PREFIX, HUB_PREFIX, write_cached_item
 
 from .conftest import build_request
 
@@ -90,6 +91,26 @@ class _FakeClient:
 
     async def close(self):
         return None
+
+
+async def _seed_class_scaling(
+    redis, class_name: str, item_name: str, stat: str
+) -> None:
+    await redis.set(
+        f"{CACHE_PREFIX}:{class_name.lower()}",
+        json.dumps(
+            {
+                "class_name": class_name,
+                "abilities": [
+                    {
+                        "name": item_name,
+                        "tier": "UT",
+                        "scales": {stat: f"per {stat}"},
+                    }
+                ],
+            }
+        ),
+    )
 
 
 def _client(app, redis_client, settings) -> httpx.AsyncClient:
@@ -306,10 +327,11 @@ async def test_enchant_question_about_a_ring_does_not_reuse_a_cached_build_brief
     in from history no matter how unrelated the actual question was.
     Enchant questions have their own specialist and must never be
     intercepted by the generic class+stat build-brief cache."""
+    await _seed_class_scaling(redis_client, "Ninja", "Poison Fang Star", "Attack")
     await maybe_mint_brief(
         redis_client,
         "Best attack ninja build",
-        "The stored Attack Ninja brief.",
+        "The stored Attack Ninja brief. [item:Poison Fang Star]",
         ttl_seconds=anon_settings.wiki_ttl_seconds,
     )
     assert await redis_client.get(build_brief_key("Ninja", "Attack"))
@@ -502,6 +524,9 @@ async def test_cached_build_does_not_resurface_on_an_unrelated_follow_up(
     again. Found live Sep 16: after a Dexterity Huntress brief, a later
     LLM-bound prompt inherited Huntress/Dexterity from history and
     streamed the same loadout instead of falling through to Claude."""
+    await _seed_class_scaling(
+        redis_client, "Huntress", "Lifebringing Lotus", "Dexterity"
+    )
     await maybe_mint_brief(
         redis_client,
         "Best items for a dex huntress",
@@ -528,6 +553,9 @@ async def test_guest_at_limit_gets_paywall_not_a_prior_build_brief(
     client, calls = stream_app
     quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
     await redis_client.set(quota.key, anon_settings.anonymous_message_limit)
+    await _seed_class_scaling(
+        redis_client, "Huntress", "Lifebringing Lotus", "Dexterity"
+    )
     await maybe_mint_brief(
         redis_client,
         "Best items for a dex huntress",
@@ -767,6 +795,7 @@ async def test_second_druid_ability_ask_uses_the_minted_brief(
 ):
     """Live Sep 16: the same 'Best druid abilities' ask burned Claude twice
     because mint required a named stat and skipped Haiku."""
+    await _seed_class_scaling(redis_client, "Druid", "Sigil of the Rhino", "Wisdom")
     minted = await maybe_mint_brief(
         redis_client,
         "Best druid abilities",
@@ -784,6 +813,7 @@ async def test_second_druid_ability_stream_does_not_call_claude(
     stream_app, redis_client, anon_settings
 ):
     client, calls = stream_app
+    await _seed_class_scaling(redis_client, "Druid", "Sigil of the Rhino", "Wisdom")
     async with client as http:
         first = await http.post(
             "/chat/stream",
@@ -815,10 +845,11 @@ async def test_best_items_for_dex_huntress_is_not_a_slot_list(
 
 async def test_second_wis_kensei_is_a_cache_hit(stream_app, redis_client, anon_settings):
     client, calls = stream_app
+    await _seed_class_scaling(redis_client, "Kensei", "Volcanic Sheath", "Wisdom")
     await maybe_mint_brief(
         redis_client,
         "Best items for a Wis Kensei",
-        "Rift Rippers and a sheath. [item:Rift Ripper]",
+        "Volcanic Sheath and Rift Rippers. [item:Volcanic Sheath] [item:Rift Ripper]",
         ttl_seconds=anon_settings.wiki_ttl_seconds,
     )
     assert await redis_client.get(build_brief_key("Kensei", "Wisdom"))
@@ -830,17 +861,18 @@ async def test_second_wis_kensei_is_a_cache_hit(stream_app, redis_client, anon_s
         assert response.status_code == 200
         text = await _read_sse_text(response)
     assert calls == []
-    assert "Rift Ripper" in text
+    assert "Volcanic Sheath" in text
 
 
 async def test_constrained_follow_up_still_streams(
     stream_app, redis_client, anon_settings
 ):
     client, calls = stream_app
+    await _seed_class_scaling(redis_client, "Kensei", "Volcanic Sheath", "Wisdom")
     await maybe_mint_brief(
         redis_client,
         "Best items for a Wis Kensei",
-        "The stored Wis Kensei brief.",
+        "The stored Wis Kensei brief. [item:Volcanic Sheath]",
         ttl_seconds=anon_settings.wiki_ttl_seconds,
     )
     async with client as http:
@@ -853,14 +885,80 @@ async def test_constrained_follow_up_still_streams(
     assert calls == [anon_settings.claude_model]
 
 
+def test_retry_phrasing_is_constrained():
+    assert is_retry_query("Give me a different wisdom kensei")
+    assert is_retry_query("try again")
+    assert not is_retry_query("Best items for a Wis Kensei")
+
+
+async def test_retry_drops_the_minted_build_brief(
+    stream_app, redis_client, anon_settings
+):
+    """Found live Sep 18: Wis Kensei minted while sheaths were still
+    scraping, then 'give me a different wisdom kensei' replayed it."""
+    client, calls = stream_app
+    await _seed_class_scaling(redis_client, "Kensei", "Volcanic Sheath", "Wisdom")
+    await maybe_mint_brief(
+        redis_client,
+        "Best items for a Wis Kensei",
+        "The stored Wis Kensei brief. [item:Volcanic Sheath]",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    key = build_brief_key("Kensei", "Wisdom")
+    assert await redis_client.get(key)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "Give me a different wisdom kensei",
+                "session_id": "s-retry",
+            },
+        )
+        assert response.status_code == 200
+        await _read_sse_text(response)
+    assert await redis_client.get(key) is None
+    assert calls == [anon_settings.claude_model]
+
+
+async def test_does_not_mint_while_ability_store_is_empty(
+    redis_client, anon_settings
+):
+    minted = await maybe_mint_brief(
+        redis_client,
+        "Best items for a Wis Kensei",
+        "No ability slot token was provided. [item:Buster Katana]",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert minted is None
+    assert await redis_client.get(build_brief_key("Kensei", "Wisdom")) is None
+
+
+async def test_does_not_mint_when_reply_omits_the_scaling_ability(
+    redis_client, anon_settings
+):
+    await _seed_class_scaling(redis_client, "Kensei", "Volcanic Sheath", "Wisdom")
+    minted = await maybe_mint_brief(
+        redis_client,
+        "Best items for a Wis Kensei",
+        "Sage's Wakibiki and a T7 katana. [item:Buster Katana]",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert minted is None
+
+
 async def test_dungeon_guide_without_a_brief_streams_haiku(
     stream_app, anon_settings
 ):
+    """A dungeon that is not a core fallback still streams Haiku when unwarmed.
+
+    The Shatters is always merged into an empty index, so that ask now dumps
+    the wiki page instead of calling Claude.
+    """
     client, calls = stream_app
     async with client as http:
         response = await http.post(
             "/chat/stream",
-            json={"message": "Guide to complete The Shatters", "session_id": "s4"},
+            json={"message": "Guide to complete Cursed Library", "session_id": "s4"},
         )
         assert response.status_code == 200
         await _read_sse_text(response)

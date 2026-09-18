@@ -37,6 +37,10 @@ export const CHANGELOG: ChangelogEntry[] = [
       "A named-player DPS reply now shows only that one character, not fame or the rest of the account.",
       "A DPS breakdown now walks every worn piece, and a stat-tradeoff enchant only changes the numbers those stats actually feed.",
       "Wis and Vit class builds now name the abilities that actually scale with those stats, instead of saying the class has none.",
+      "Asking for a Hardmode Shatters guide no longer pretends RealmEye has no page for it.",
+      "Wis class builds no longer recommend a T7 katana as the weapon.",
+      "Asking for a different class build no longer repeats the last answer.",
+      "Class builds wait until the ability list is ready, so they do not skip the scaling ability.",
     ],
   },
   {

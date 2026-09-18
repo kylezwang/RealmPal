@@ -54,6 +54,43 @@ _NICKNAMES = {
     "keypers": "the keyper",
 }
 
+# Always-on wiki pages for dungeons the daily quests and guide asks use.
+# Hardmode Shatters is a section on The Shatters, not its own index row.
+# If the scraped index is empty (API boot, TTL), cache-only chat used to
+# match nothing and tell Claude the indexes have no page.
+CORE_DUNGEON_PAGES = (
+    {
+        "title": "The Shatters",
+        "slug": "the-shatters",
+        "kind": "dungeon",
+        "aliases": ("shatters", "shatts", "shaters"),
+    },
+    {
+        "title": "Moonlight Village",
+        "slug": "moonlight-village",
+        "kind": "dungeon",
+        "aliases": ("mv", "moonlite"),
+    },
+    {
+        "title": "Oryx's Sanctuary",
+        "slug": "oryxs-sanctuary",
+        "kind": "dungeon",
+        "aliases": ("o3", "oryx sanctuary"),
+    },
+    {
+        "title": "The Nest",
+        "slug": "the-nest",
+        "kind": "dungeon",
+        "aliases": ("nest",),
+    },
+    {
+        "title": "Cultist Hideout",
+        "slug": "cultist-hideout",
+        "kind": "dungeon",
+        "aliases": ("cultist",),
+    },
+)
+
 # RealmEye event/NPC pages that are loot sources but often missing from
 # /wiki/dungeons. Same merge pattern as veteran biomes.
 EVENT_PAGES = (
@@ -294,6 +331,36 @@ def merge_event_entries(entries: list[dict]) -> list[dict]:
     seen = {(row.get("slug") or "").lower() for row in entries}
     extra = [row for row in event_index_entries() if row["slug"] not in seen]
     return list(entries) + extra
+
+
+def core_dungeon_index_entries() -> list[dict]:
+    return [
+        {
+            "title": row["title"],
+            "slug": row["slug"],
+            "kind": row.get("kind") or "dungeon",
+            "portal_url": None,
+            "difficulty": None,
+            "aliases": list(row.get("aliases") or ()),
+        }
+        for row in CORE_DUNGEON_PAGES
+    ]
+
+
+def merge_core_dungeon_entries(entries: list[dict]) -> list[dict]:
+    seen = {(row.get("slug") or "").lower() for row in entries}
+    extra = [
+        row for row in core_dungeon_index_entries() if row["slug"] not in seen
+    ]
+    return list(entries) + extra
+
+
+def _index_with_fallbacks(entries: list[dict]) -> list[dict]:
+    from .biomes import merge_biome_entries
+
+    return merge_core_dungeon_entries(
+        merge_event_entries(merge_biome_entries(entries))
+    )
 
 
 def extract_dungeon_query(
@@ -546,17 +613,15 @@ async def get_or_scrape_index(
     force: bool = False,
     cache_only: bool = False,
 ) -> list[dict]:
-    from .biomes import merge_biome_entries
-
     if not force:
         cached = await redis.get(INDEX_CACHE_KEY)
         if cached:
-            return merge_event_entries(merge_biome_entries(json.loads(cached)))
+            return _index_with_fallbacks(json.loads(cached))
         if cache_only:
-            return merge_event_entries(merge_biome_entries([]))
+            return _index_with_fallbacks([])
     entries = await scrape_dungeon_indexes()
     await redis.setex(INDEX_CACHE_KEY, ttl_seconds, json.dumps(entries))
-    return merge_event_entries(merge_biome_entries(entries))
+    return _index_with_fallbacks(entries)
 
 
 async def get_or_scrape_wiki(
@@ -620,12 +685,17 @@ async def retrieve_dungeon_guide(
 
     pages: list[dict[str, str]] = []
     for entry in matches:
+        slug = entry.get("slug") or ""
         page = await get_or_scrape_wiki(
             redis,
-            entry["slug"],
+            slug,
             ttl_seconds=ttl_seconds,
             cache_only=cache_only,
         )
+        if not page and cache_only and slug:
+            page = await get_or_scrape_wiki(
+                redis, slug, ttl_seconds=ttl_seconds, cache_only=False
+            )
         if page:
             pages.append(page)
 

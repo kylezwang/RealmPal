@@ -55,6 +55,7 @@ ITEM_CACHE_PREFIX = "item:profile:v3"
 LEGACY_ITEM_CACHE_PREFIX = "item:profile:v2"
 CLASS_MAXSTATS_PREFIX = "wiki:class-maxstats:v1"
 UMI_BIS_PREFIX = "umi:bis:v2:"
+STAT_MISS_PREFIX = "wiki:ability-stat-miss:v1"
 MAX_UT = 8
 
 _SKIP_NAME = re.compile(
@@ -539,6 +540,20 @@ async def cached_class_wiki_scaling(
         return json.loads(cached)
     except json.JSONDecodeError:
         return None
+
+
+def payload_scales_with(payload: Optional[dict], stat: Optional[str]) -> bool:
+    """True when the stored class payload already lists that stat."""
+    if not payload or not stat:
+        return False
+    return any(
+        stat in (row.get("scales") or {})
+        for row in (payload.get("abilities") or [])
+    )
+
+
+def ability_stat_miss_key(class_name: str, stat: str) -> str:
+    return f"{STAT_MISS_PREFIX}:{class_name.lower()}:{stat.lower()}"
 
 
 async def specialist_store_status(redis: aioredis.Redis) -> list[dict]:
@@ -1169,32 +1184,47 @@ async def retrieve_weapon_brief(
     core = weapon_core_note(class_name)
     if core:
         lines.append(core)
+    unique = False
+    try:
+        unique = is_unique_stat_build(
+            class_name,
+            stat,
+            infer_class_primary_stat(
+                await cached_class_wiki_scaling(redis, class_name)
+            ),
+        )
+    except Exception:
+        unique = False
     named: list[str] = []
-    if stat and rows:
-        top = _top_stat_items(rows, stat, limit=limit, include_t7=True)
+    if unique:
+        lines.append(
+            f"Unique {stat} {class_name}: do not rank hub On Equip {stat} "
+            f"{label}. Stay on the overall base {label}. Never recommend a "
+            f"T7 {label}."
+        )
+    elif stat and rows:
+        ranked = _top_stat_items(rows, stat, limit=max(limit, 8), include_t7=False)
+        top = [row for row in ranked if _tier_bucket(row) != "t7"][:limit]
         if top:
             if brief:
                 lines.append(
                     f"Give 2-3 {label} alternatives from the Umi general-tab "
-                    f"chunk for a {stat} build, not extra hub T7s."
+                    f"chunk for a {stat} build, not extra hub T7s. Never list "
+                    f"a T7 {label} as a recommendation."
                 )
             for row in top:
-                ranked = f"+{row.get('stat_value')} {stat}"
+                ranked_txt = f"+{row.get('stat_value')} {stat}"
                 extra = row.get("bonus") or ""
-                shown = ranked + (f" — {extra}" if extra else "")
+                shown = ranked_txt + (f" - {extra}" if extra else "")
                 lines.append(
                     f"  [item:{row['name']}] ({row.get('tier') or '?'}) {shown}"
                 )
                 named.append(row["name"])
         else:
-            t7 = [r for r in rows if _tier_bucket(r) == "t7"][:1]
-            if t7:
-                lines.append(
-                    "No On Equip "
-                    f"{stat} on these weapons. Still prefer high-tier {label} "
-                    f"such as [item:{t7[0]['name']}]."
-                )
-                named.append(t7[0]["name"])
+            lines.append(
+                f"No On Equip {stat} on these {label}. Stay on the overall "
+                f"base {label} above. Never recommend a T7 {label}."
+            )
     notes = upgrade_notes_for(named)
     if notes:
         lines.append(notes)
@@ -1211,10 +1241,41 @@ async def retrieve_ability_brief(
     cache_only: bool = False,
 ) -> str:
     try:
+        payload = await cached_class_wiki_scaling(redis, class_name)
         if cache_only:
-            payload = await cached_class_wiki_scaling(redis, class_name)
+            # Same scrape-on-miss as dungeon pages: an empty key, or a store
+            # that finished warming before this stat's formulas were parsed,
+            # must not tell Claude the class has no ability. Found live
+            # Sep 18: Wis Kensei asked while sheaths were still scraping,
+            # then the minted brief hid Volcanic Sheath after the store
+            # filled. Vit Kensei on the same store worked because it had
+            # no mint yet.
             if not payload:
-                return ""
+                payload = await load_class_wiki_scaling(
+                    redis, class_name, ttl_seconds=ttl_seconds, stat=stat
+                )
+            if (
+                payload
+                and stat
+                and not payload_scales_with(payload, stat)
+            ):
+                miss_key = ability_stat_miss_key(class_name, stat)
+                if not await redis.get(miss_key):
+                    payload = await load_class_wiki_scaling(
+                        redis,
+                        class_name,
+                        ttl_seconds=ttl_seconds,
+                        stat=stat,
+                        force=True,
+                    )
+                    if (
+                        payload
+                        and (payload.get("abilities") or [])
+                        and not payload_scales_with(payload, stat)
+                    ):
+                        await redis.setex(
+                            miss_key, min(int(ttl_seconds), 86_400), "1"
+                        )
         else:
             payload = await load_class_wiki_scaling(
                 redis, class_name, ttl_seconds=ttl_seconds, stat=stat
@@ -1223,6 +1284,8 @@ async def retrieve_ability_brief(
         logger.bind(class_name=class_name, error=str(e)).warning(
             "RealmEye wiki scaling unavailable"
         )
+        return ""
+    if not payload:
         return ""
     text = format_wiki_scaling(payload, stat=stat)
     if not text:
@@ -1326,9 +1389,12 @@ async def top_build_items(
         redis, class_name, stat=stat, ttl_seconds=ttl_seconds, brief=True,
         cache_only=cache_only,
     )
-    ability = _first_visualizer_item(ability_text)
-    if ability:
-        picks["ability"] = ability
+    # Empty-stat copy still mentions family weapons in other agents.
+    # Never promote one of those into this slot.
+    if ability_text and "No stored T7" not in ability_text:
+        ability = _first_visualizer_item(ability_text)
+        if ability:
+            picks["ability"] = ability
 
     armor_text = await retrieve_armor_brief(
         redis, class_name, stat, ttl_seconds=ttl_seconds, limit=2, brief=True,

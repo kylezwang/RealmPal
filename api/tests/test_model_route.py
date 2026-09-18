@@ -32,6 +32,14 @@ def test_constrained_build_stays_on_sonnet():
     )
 
 
+def test_retry_build_stays_on_sonnet():
+    settings = _settings()
+    assert (
+        pick_chat_model("Give me a different wisdom kensei", settings)
+        == settings.claude_model
+    )
+
+
 def test_first_time_stat_class_brief_stays_on_sonnet():
     settings = _settings()
     assert pick_chat_model("best items for a vitality rogue", settings) == settings.claude_model
