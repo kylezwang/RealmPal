@@ -23,11 +23,12 @@ import {
 /** Extra free in-depth responses a guest gets by creating an account. */
 export const ACCOUNT_BONUS_MESSAGES = 2;
 
-const LAST_STEP = 2;
-const REMINDER_STEP = 3;
+const LAST_STEP = 3;
+const REMINDER_STEP = 4;
 const MIN_PASSWORD_LENGTH = 8;
 
 export const PAYWALL_SET_BUILDING_DEMO = "/videos/paywall/set-building-demo.mp4";
+export const PAYWALL_DPS_DEMO = "/videos/paywall/dps-demo.mp4";
 export const PAYWALL_VISUALIZER_DEMO = "/videos/paywall/visualizer.mp4";
 
 function formatResetWait(seconds: number): string {
@@ -171,6 +172,7 @@ interface Props {
   resetsInSeconds?: number;
   /** Optional MP4/WebM URLs once demos are recorded. Empty = placeholder. */
   setBuildingDemoSrc?: string;
+  dpsDemoSrc?: string;
   visualizerDemoSrc?: string;
 }
 
@@ -305,7 +307,7 @@ function StepDots({ step, total, onJump }: { step: number; total: number; onJump
 }
 
 /**
- * Two value slides, then the last slide swaps:
+ * Three value slides, then the last slide swaps:
  * guests get the full register form, signed-in users get Pro pricing.
  */
 export function PaywallModal({
@@ -322,14 +324,17 @@ export function PaywallModal({
   onDemandSpentUsd = 0,
   resetsInSeconds = 0,
   setBuildingDemoSrc = PAYWALL_SET_BUILDING_DEMO,
+  dpsDemoSrc = PAYWALL_DPS_DEMO,
   visualizerDemoSrc = PAYWALL_VISUALIZER_DEMO,
 }: Props) {
   const isOnDemand = reason === "claude_pool" || reason === "spend_cap";
   const startOnSignup = reason === "create_account";
   const [step, setStep] = useState(isOnDemand || startOnSignup ? LAST_STEP : 0);
   const setBuildingRef = useRef<HTMLVideoElement>(null);
+  const dpsRef = useRef<HTMLVideoElement>(null);
   const visualizerRef = useRef<HTMLVideoElement>(null);
   const [setBuildingDone, setSetBuildingDone] = useState(false);
+  const [dpsDone, setDpsDone] = useState(false);
   const [visualizerDone, setVisualizerDone] = useState(false);
   const [ign, setIgn] = useState(
     () => defaultIgn.trim() || loadSavedAccountProfile()?.ign || "",
@@ -354,7 +359,7 @@ export function PaywallModal({
 
   const isLast = step === LAST_STEP;
   const isReminder = step === REMINDER_STEP;
-  const isVideoSlide = step === 0 || step === 1;
+  const isVideoSlide = step === 0 || step === 1 || step === 2;
   const isSignup = isLast && !signedIn && !isOnDemand;
   const isPricing = isLast && signedIn && !isOnDemand;
 
@@ -366,30 +371,20 @@ export function PaywallModal({
   useEffect(() => {
     if (isOnDemand || isReminder) return;
 
-    const first = setBuildingRef.current;
-    const second = visualizerRef.current;
-
-    if (step === 0) {
-      second?.pause();
-      if (first && !setBuildingDone) {
-        void first.play().catch(() => {});
+    const clips = [
+      { el: setBuildingRef.current, done: setBuildingDone, active: step === 0 },
+      { el: dpsRef.current, done: dpsDone, active: step === 1 },
+      { el: visualizerRef.current, done: visualizerDone, active: step === 2 },
+    ];
+    for (const clip of clips) {
+      if (!clip.el) continue;
+      if (clip.active && !clip.done) {
+        void clip.el.play().catch(() => {});
+      } else {
+        clip.el.pause();
       }
-      return;
     }
-
-    if (step === 1) {
-      if (first && !setBuildingDone) {
-        first.pause();
-      }
-      if (second && !visualizerDone) {
-        void second.play().catch(() => {});
-      }
-      return;
-    }
-
-    first?.pause();
-    second?.pause();
-  }, [step, setBuildingDone, visualizerDone, isOnDemand, isReminder]);
+  }, [step, setBuildingDone, dpsDone, visualizerDone, isOnDemand, isReminder]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -488,10 +483,9 @@ export function PaywallModal({
       onClose();
       return;
     }
-    // Steps 0/1 are the value-prop carousel (video demo slides, no form
-    // inputs to protect) - clicking the dimmed backdrop advances or goes
-    // back, Stories-style, instead of doing nothing. Left half of the
-    // backdrop goes back, right half goes next.
+    // Video demo slides have no form inputs to protect. Clicking the
+    // dimmed backdrop advances or goes back, Stories-style. Left half
+    // of the backdrop goes back, right half goes next.
     const rect = e.currentTarget.getBoundingClientRect();
     const clickedRightHalf = e.clientX - rect.left > rect.width / 2;
     if (clickedRightHalf) {
@@ -558,6 +552,27 @@ export function PaywallModal({
         )}
 
         {step === 1 && (
+          <div key="slide-dps" className="animate-fade-in">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[#737373]">
+              Check it in the guild hall
+            </p>
+            <h2 id="paywall-title" className="mb-2 text-xl font-semibold text-[#ececec]">
+              DPS calculations and potential estimates. See what a set actually does before you farm it.
+            </h2>
+            <p className="mb-4 text-sm leading-relaxed text-[#a3a3a3]">
+              Ask for a class ceiling or a named character. You get dummy numbers you can
+              check in the guild hall, plus a breakdown of every worn piece.
+            </p>
+            <VideoPlaceholder
+              src={dpsDemoSrc}
+              label="DPS calculations and potential estimates demo"
+              videoRef={dpsRef}
+              onEnded={() => setDpsDone(true)}
+            />
+          </div>
+        )}
+
+        {step === 2 && (
           <div key="slide-viz" className="animate-fade-in">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[#737373]">
               See it before you farm it
