@@ -21,8 +21,15 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Board-row brief still taught the old APS shorthand and "Damaging is weapons-only"** (`format_reconstruction`). A live Archer breakdown copied `APS(DEX × Rate of Fire)` into the heading while the step-by-step used the real formula, and said Damaging was weapon-only while the ability half already included it. The board reconstruct copy now matches `format_dps_derivation`. Found live: Turbine's Archer.
 - **Signed-in chat sync 500ed on Postgres INTEGER** (`api/services/db.py` `postgres_ddl`, `widen_existing_integers`). The browser sends `Date.now()` milliseconds (`1789716549690`) as `updated_at`. SQLite INTEGER is 64-bit so local tests passed; Postgres INTEGER is int32. `POST /chat/sessions/sync` and `PUT /chat/sessions/{id}` raised `asyncpg.exceptions.DataError: value out of int32 range`. All SQLite INTEGER DDL is now BIGINT on Postgres, and existing int32 columns are ALTERed on startup. Found live: revision `realmpal-api--0000052`.
 - **DPS follow-up picked Haiku** (`pick_chat_model`). `is_dps_query` already takes history, but the model picker did not pass it, so "Break it down" after a Bard DPS turn was treated as a short stored-context ask. History is now passed through.
+- **Class ability scaling missed Effect(s) formulas and hub-table boosts** (`scaling_from_item`, `scaling_from_text`, `load_class_wiki_scaling`, `_ITEM_PAGE_JS`, `_ABILITY_HUB_JS`). The store only kept a `Damage: (+N per STAT)` infobox row, so Volcanic Sheath (`Effect(s): Area Damage: 400 (+10 per WIS over 50)`) and Elegant Parasol (flat trail `Damage: 200-300`, VIT on Effect(s) / hub "scaling with VIT") never entered `wiki:ability-scaling`. Wis/Vit Kensei then told Claude the class had no such ability. Every class hub now treats Effect(s) formulas, `scaling with STAT`, and `N% STAT Boost` as scaling, keeps hub `rowText` when the item page is thin, reads sprite `alt` when the name link has no text, and finds an infobox by any Tier/MP Cost/On Equip row. Formula evidence ranks above boost-only so Parasol beats Paper Machete on Vitality. Cache `wiki:ability-scaling:v7`; minted essays move to `wiki:build:v2` / `wiki:ability-brief:v2` so the old "no ability" replies are not replayed. Found live: Wis Kensei / Vit Kensei.
 
 ### Tests
+- `test_effect_area_damage_per_wis_is_scaling`
+- `test_effect_scaling_with_vit_is_scaling`
+- `test_stat_multiplier_percent_boost_is_scaling`
+- `test_hub_row_scaling_with_vit_does_not_tag_on_equip_att`
+- `test_kensei_store_keeps_wis_and_vit_sheaths_from_hub_or_effects`
+- `test_wis_kensei_ability_brief_names_volcanic_sheath`
 - `test_sheet_stat_tradeoffs_are_not_fire_rate_enchants`
 - `test_fire_rate_and_damage_tradeoffs_still_change_the_weapon_shot`
 - `test_projectile_speed_is_not_damage_or_fire_rate`

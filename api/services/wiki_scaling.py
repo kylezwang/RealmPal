@@ -49,7 +49,7 @@ from .scraper import (
     ScraperError,
 )
 
-CACHE_PREFIX = "wiki:ability-scaling:v6"
+CACHE_PREFIX = "wiki:ability-scaling:v7"
 HUB_PREFIX = "wiki:hub-index:v8"
 ITEM_CACHE_PREFIX = "item:profile:v3"
 LEGACY_ITEM_CACHE_PREFIX = "item:profile:v2"
@@ -83,32 +83,82 @@ _STAT_TOKEN: dict[str, re.Pattern[str]] = {
     "Wisdom": re.compile(r"\b(?:wis(?:dom)?)\b", re.I),
 }
 
-_SCALING_HIT = re.compile(
-    r"(?:per|/|for every)\s*(?:\d+\s+)?"
+# Stat names as they appear next to a scaling verb. Keep this in lockstep
+# with _STAT_TOKEN so a hub "WIS Boost" and an infobox "per Wisdom" both hit.
+_STAT_ALTS = (
     r"(?:DEX|ATT|ATK|WIS|VIT|SPD|DEF|HP|MP|"
     r"Dexterity|Attack|Wisdom|Vitality|Speed|Defense|Mana|Life)"
-    r"|scales?\s+with\s+(?:DEX|ATT|ATK|WIS|VIT|SPD|DEF|HP|MP|"
-    r"Dexterity|Attack|Wisdom|Vitality|Speed|Defense)",
+)
+
+# Real formulas: "per WIS", "for every DEX", "scaling with VIT".
+_FORMULA_HIT = re.compile(
+    rf"(?:per|/|for every)\s*(?:\d+\s+)?{_STAT_ALTS}"
+    rf"|scal(?:e|es|ing)\s+with\s+{_STAT_ALTS}",
+    re.I,
+)
+# Dash-stack / Stat Multiplier columns: "8/12/17/23/30% WIS Boost".
+_BOOST_HIT = re.compile(
+    rf"(?:\d+\s*/\s*)*\d+\s*%\s*{_STAT_ALTS}\s+Boost",
+    re.I,
+)
+_SCALING_HIT = re.compile(
+    rf"(?:{_FORMULA_HIT.pattern})|(?:{_BOOST_HIT.pattern})",
     re.I,
 )
 
 
-def scaling_from_item(item: ItemProfile) -> dict[str, str]:
+def _stats_in_scaling_hits(text: str) -> set[str]:
+    """Stats named inside a scaling match, not every stat on the same row.
+
+    Hub rows mix On Equip (+8 ATT) with 'scaling with VIT'. Tagging the
+    whole row would call Elegant Parasol an Attack ability.
+    """
+    found: set[str] = set()
+    for match in _SCALING_HIT.finditer(text or ""):
+        snippet = match.group(0)
+        for stat, pat in _STAT_TOKEN.items():
+            if pat.search(snippet):
+                found.add(stat)
+    return found
+
+
+def scaling_from_text(*blobs: str) -> dict[str, str]:
+    """Stat -> evidence, from wiki infobox lines or an ability-hub row."""
+    found: dict[str, list[str]] = {}
+    for blob in blobs:
+        if not blob:
+            continue
+        pieces = [p.strip() for p in str(blob).splitlines() if p.strip()] or [
+            str(blob).strip()
+        ]
+        for piece in pieces:
+            for stat in _stats_in_scaling_hits(piece):
+                found.setdefault(stat, []).append(piece)
+    return {stat: "; ".join(rows) for stat, rows in found.items()}
+
+
+def scaling_from_item(item: ItemProfile | None, extra: str = "") -> dict[str, str]:
     """Stat -> evidence string, from infobox rows that are real formulas.
 
     On Equip / +DEX bonuses do not count; '675 (+14 per DEX over 32)' does.
+    Effect(s) Area Damage, 'scaling with VIT', and hub Stat Multiplier
+    boosts count. `extra` is the ability-hub row text, used when the item
+    page is thin or the scrape missed the infobox.
     """
     found: dict[str, list[str]] = {}
-    for key, val in (item.stats or {}).items():
+    for key, val in ((item.stats if item else None) or {}).items():
         if _ON_EQUIP.search(str(key)):
             continue
-        text = f"{key}: {val}"
-        if not _SCALING_HIT.search(str(val)) and not _SCALING_HIT.search(str(key)):
-            continue
-        for stat, pat in _STAT_TOKEN.items():
-            if pat.search(str(val)) or pat.search(str(key)):
-                found.setdefault(stat, []).append(text)
+        for stat, evidence in scaling_from_text(f"{key}: {val}").items():
+            found.setdefault(stat, []).append(evidence)
+    for stat, evidence in scaling_from_text(extra).items():
+        found.setdefault(stat, []).append(evidence)
     return {stat: "; ".join(rows) for stat, rows in found.items()}
+
+
+def _formula_rank(evidence: str) -> int:
+    """0 if the evidence is a damage/effect formula, 1 if boost-only."""
+    return 0 if _FORMULA_HIT.search(evidence or "") else 1
 
 
 _NOTABLE_EFFECT = re.compile(
@@ -118,15 +168,26 @@ _NOTABLE_EFFECT = re.compile(
 )
 
 
-def notable_effects(item: ItemProfile) -> str:
+def notable_effects(item: ItemProfile | None, extra: str = "") -> str:
     """Effect(s), procs, and auras that change which item is actually best."""
     chunks: list[str] = []
-    for key, val in (item.stats or {}).items():
+    for key, val in ((item.stats if item else None) or {}).items():
         if re.search(r"effect|proc|aura|activate|awakened", str(key), re.I):
             chunks.append(f"{key}: {val}")
         elif _NOTABLE_EFFECT.search(str(val)):
             chunks.append(f"{key}: {val}")
+    if not chunks and extra and _NOTABLE_EFFECT.search(extra):
+        chunks.append(extra.strip())
     return "; ".join(chunks)
+
+
+def _hub_row_extra(row: dict) -> str:
+    """Ability-hub cells the item page may omit (Damage and Effects, boosts)."""
+    return " ".join(
+        str(part).strip()
+        for part in (row.get("rowText"), row.get("bonus"), row.get("effects"))
+        if part and str(part).strip()
+    )
 
 
 def _tier_bucket(row: dict) -> str:
@@ -551,6 +612,7 @@ async def load_class_wiki_scaling(
         return empty
 
     first, ut_all = _pick_ability_pages(hub_rows)
+    wanted = first + ut_all
     profiles = await _profiles_for_names(
         redis, [row["name"] for row in first], ttl_seconds, force=force
     )
@@ -564,22 +626,33 @@ async def load_class_wiki_scaling(
                 redis, [row["name"] for row in batch], ttl_seconds, force=force
             )
         )
+    by_name = {item.name.lower(): item for item in profiles}
 
     abilities = []
-    for item in profiles:
-        if item.limited_edition or re.search(
-            r"limited|\(le\)", item.tier or "", re.I
+    seen_ability: set[str] = set()
+    for row in wanted:
+        name = (row.get("name") or "").strip()
+        key = name.lower()
+        if not key or key in seen_ability:
+            continue
+        item = by_name.get(key)
+        extra = _hub_row_extra(row)
+        if item and (
+            item.limited_edition
+            or re.search(r"limited|\(le\)", item.tier or "", re.I)
         ):
             continue
-        scales = scaling_from_item(item)
-        effects = notable_effects(item)
+        scales = scaling_from_item(item, extra=extra)
+        effects = notable_effects(item, extra=extra)
         if not scales and not effects:
             continue
+        seen_ability.add(key)
         abilities.append(
             {
-                "name": item.name,
-                "wiki_url": item.wiki_url or f"{REALMEYE_BASE}/wiki/{slug}",
-                "tier": item.tier,
+                "name": item.name if item else name,
+                "wiki_url": (item.wiki_url if item else "")
+                or f"{REALMEYE_BASE}/wiki/{slug}",
+                "tier": (item.tier if item else None) or row.get("tier"),
                 "scales": scales,
                 "effects": effects,
             }
@@ -639,13 +712,16 @@ def format_wiki_scaling(
         abilities = [a for a in abilities if stat in (a.get("scales") or {})]
 
     lines = [
-        "RealmEye wiki ability scaling (infobox damage/effect formulas, "
-        "not RealmShark DPS boards). An ability scales with a stat only when "
-        "its formula uses that stat (e.g. '+14 per DEX over 32'). A +DEX On "
-        "Equip bonus is not scaling. When RealmShark has no board for a "
-        "class+stat, use this section — do not say the build does not exist "
+        "RealmEye wiki ability scaling (item infobox Effect(s)/Damage rows "
+        "and the class ability-hub table, not RealmShark DPS boards). An "
+        "ability scales with a stat when its formula uses that stat "
+        "(e.g. '+10 per WIS over 50', 'scaling with VIT') or its Stat "
+        "Multiplier is a dash-stack STAT Boost. A +DEX On Equip bonus is "
+        "not scaling. When RealmShark has no board for a class+stat, use "
+        "this section — do not say the class has no ability for that stat "
         "if an ability is listed here. When several abilities scale, prefer "
-        "the one whose Effect(s) on that same item help more. Do not invent "
+        "a damage/effect formula over a boost-only row, then prefer the "
+        "one whose Effect(s) on that same item help more. Do not invent "
         "or copy status effects from another item."
         + (
             " Lifebringing Lotus over Honeytomb Snare because Lotus also "
@@ -658,8 +734,9 @@ def format_wiki_scaling(
     ]
     if not abilities:
         lines.append(
-            f"T7 / ST / UT {class_name} ability infoboxes did not list a "
-            f"per-{stat or 'stat'} damage formula. Still recommend a "
+            f"No stored T7 / ST / UT {class_name} ability had a per-"
+            f"{stat or 'stat'} formula or {stat or 'stat'} boost on its "
+            f"wiki page or ability-hub row. Still recommend a "
             f"{stat or 'stat'} {class_name} build using armor and rings that "
             f"stack that stat, plus weapons from classes that share the same "
             f"weapon. Do not say the build does not exist."
@@ -676,9 +753,13 @@ def format_wiki_scaling(
     lines.append(f"{class_name}:")
     order = [s for s in PLAYER_STATS if s in by_stat]
     for scale_stat in order:
-        names = ", ".join(f"[item:{name}]" for name, _ in by_stat[scale_stat])
+        ranked = sorted(
+            by_stat[scale_stat],
+            key=lambda pair: (_formula_rank(pair[1]), pair[0].lower()),
+        )
+        names = ", ".join(f"[item:{name}]" for name, _ in ranked)
         lines.append(f"  {scale_stat} -> {names}")
-        for name, evidence in by_stat[scale_stat]:
+        for name, evidence in ranked:
             extra = next(
                 (a.get("effects") for a in abilities if a["name"] == name),
                 "",
