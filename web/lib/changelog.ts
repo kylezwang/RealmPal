@@ -28,18 +28,12 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "2026.09.18-2",
-    date: "Sep 18, 2026",
-    items: [
-      "Signing in no longer fails to save your chats.",
-      "A follow-up like Break it down on a DPS answer now keeps the same depth as the first answer.",
-    ],
-  },
-  {
     version: "2026.09.18",
     date: "Sep 18, 2026",
     items: [
       "The DPS specialist is now live. Ask for a class ceiling or a named character and you will get dummy numbers you can check in the guild hall.",
+      "Signing in no longer fails to save your chats.",
+      "A follow-up like Break it down on a DPS answer now keeps the same depth as the first answer.",
       "A named-player DPS reply now shows only that one character, not fame or the rest of the account.",
       "A DPS breakdown now walks every worn piece, and a stat-tradeoff enchant only changes the numbers those stats actually feed.",
     ],
