@@ -1063,6 +1063,7 @@ async def _in_depth_build_extras(
         tokens = " ".join(
             f"[item:{picks[slot]}]" for slot in SET_SLOTS if picks.get(slot)
         )
+        missing = [slot for slot in SET_SLOTS if not picks.get(slot)]
         if tokens:
             pick_note = (
                 "SET VISUALIZER PICKS in weapon, ability, armor, ring order. "
@@ -1074,6 +1075,13 @@ async def _in_depth_build_extras(
                     "Ability, armor, and ring should follow the Maximum "
                     "Achievable Stats row above, not these tokens, unless a "
                     "token is the overall family weapon. "
+                )
+            if missing:
+                pick_note += (
+                    "Missing slots ("
+                    + ", ".join(missing)
+                    + "): leave them empty. Never copy a weapon into the "
+                    "ability slot or fill a gap from another slot. "
                 )
             bits.append(
                 pick_note

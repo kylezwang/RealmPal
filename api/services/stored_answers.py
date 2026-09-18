@@ -54,10 +54,17 @@ from .community_knowledge import (
 from .progression import compose_progression_brief, parse_progression_query
 from .realmshark import parse_query, shark_name_counts
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
-from .wiki_scaling import HUB_PREFIX, UMI_BIS_PREFIX, cached_items_from_place, read_cached_item
+from .wiki_scaling import (
+    HUB_PREFIX,
+    UMI_BIS_PREFIX,
+    cached_class_wiki_scaling,
+    cached_items_from_place,
+    payload_scales_with,
+    read_cached_item,
+)
 
-BUILD_PREFIX = "wiki:build:v2"
-ABILITY_PREFIX = "wiki:ability-brief:v2"
+BUILD_PREFIX = "wiki:build:v3"
+ABILITY_PREFIX = "wiki:ability-brief:v3"
 GUIDE_BRIEF_PREFIX = "wiki:guide-brief:v2"
 BRIEF_INDEX_KEY = "wiki:brief-index"
 MAX_BRIEF_CHARS = 8_000
@@ -71,6 +78,26 @@ _CONSTRAINT = re.compile(
     r"with\s+my\s+mule|on\s+my\s+mule|"
     r"f2p\s+only|budget\s+only|no\s+st/?ut"
     r")\b",
+    re.I,
+)
+# "Give me a different wisdom kensei" / "try again" is a new ask, not a
+# cache hit. Found live Sep 18: the first Wis Kensei minted while the
+# sheath hub was still scraping, then every retry replayed that essay.
+_RETRY = re.compile(
+    r"\b("
+    r"different|another(?:\s+(?:one|build|set|loadout))?|"
+    r"try\s+again|do\s+(?:it|that)\s+again|"
+    r"retry|something\s+else|not\s+that|"
+    r"wrong(?:\s+(?:build|one))?|that'?s\s+wrong|"
+    r"redo"
+    r")\b",
+    re.I,
+)
+_INCOMPLETE_BUILD = re.compile(
+    r"no ability slot token|"
+    r"ability specialist did not return|"
+    r"no stored t7|"
+    r"no ability scales",
     re.I,
 )
 _DROP = re.compile(
@@ -270,8 +297,15 @@ class StoredReply:
     key: str = ""
 
 
+def is_retry_query(message: str) -> bool:
+    """True for 'try again' / 'give me a different wisdom kensei'."""
+    return bool(_RETRY.search(message or ""))
+
+
 def is_constrained(message: str) -> bool:
-    return bool(_CONSTRAINT.search(message or ""))
+    return bool(
+        _CONSTRAINT.search(message or "") or is_retry_query(message)
+    )
 
 
 _ABILITY_ASK = re.compile(
@@ -295,6 +329,55 @@ def ability_brief_key(class_name: str, stat: Optional[str] = None) -> str:
     if stat:
         return f"{ABILITY_PREFIX}:{slug}:{stat.lower()}"
     return f"{ABILITY_PREFIX}:{slug}"
+
+
+def _reply_names_scaling(
+    reply: str, payload: dict, stat: Optional[str]
+) -> bool:
+    abilities = list(payload.get("abilities") or [])
+    if stat:
+        abilities = [
+            row for row in abilities if stat in (row.get("scales") or {})
+        ]
+    if not abilities:
+        return False
+    lower = (reply or "").lower()
+    return any((row.get("name") or "").lower() in lower for row in abilities)
+
+
+async def _specialist_ready_to_mint(
+    redis: aioredis.Redis,
+    class_name: str,
+    stat: Optional[str],
+    reply: str,
+) -> bool:
+    """Do not freeze an essay written while the ability store was empty.
+
+    Found live Sep 18: Wis Kensei minted before sheaths finished scraping.
+    Vit Kensei on the same store was fine because that key was not minted.
+    """
+    if _INCOMPLETE_BUILD.search(reply or ""):
+        return False
+    payload = await cached_class_wiki_scaling(redis, class_name)
+    abilities = (payload or {}).get("abilities") or []
+    if not abilities:
+        return False
+    if stat and not payload_scales_with(payload, stat):
+        return False
+    if stat:
+        return _reply_names_scaling(reply, payload, stat)
+    return True
+
+
+async def _drop_matching_briefs(redis: aioredis.Redis, message: str) -> None:
+    class_name, stat, _buildish = parse_query(message)
+    if not class_name or class_name not in CLASS_ABILITY_HUB:
+        return
+    keys = [ability_brief_key(class_name)]
+    if stat:
+        keys.append(build_brief_key(class_name, stat))
+        keys.append(ability_brief_key(class_name, stat))
+    await redis.delete(*keys)
 
 
 def guide_brief_key(dungeon_name: str) -> str:
@@ -1027,12 +1110,17 @@ async def _compose_guide_brief(
     matches = match_index_pages(dungeon, entries)
     pages: list[dict] = []
     for entry in matches:
+        slug = entry.get("slug") or ""
         page = await get_or_scrape_wiki(
             redis,
-            entry.get("slug") or "",
+            slug,
             ttl_seconds=ttl,
             cache_only=True,
         )
+        if not page and slug:
+            page = await get_or_scrape_wiki(
+                redis, slug, ttl_seconds=ttl, cache_only=False
+            )
         if page:
             pages.append(page)
     if not pages:
@@ -1130,6 +1218,8 @@ async def try_stored_reply(
     if has_attachment or not (message or "").strip():
         return None
     if is_constrained(message):
+        if is_retry_query(message):
+            await _drop_matching_briefs(redis, message)
         return None
     if not is_stat_number_query(message) and not is_dps_query(message):
         player = await _player_reply(
@@ -1215,12 +1305,16 @@ async def maybe_mint_brief(
     text = reply.strip()[:MAX_BRIEF_CHARS]
     class_name, stat, buildish = parse_query(message)
     if is_ability_ask(message) and class_name and class_name in CLASS_ABILITY_HUB:
+        if not await _specialist_ready_to_mint(redis, class_name, stat, text):
+            return None
         key = ability_brief_key(class_name, stat)
         if await redis.get(key):
             return None
         await _write_brief(redis, key, text, ttl_seconds, kind="ability")
         return key
     if not (buildish and class_name and stat):
+        return None
+    if not await _specialist_ready_to_mint(redis, class_name, stat, text):
         return None
     key = build_brief_key(class_name, stat)
     if await redis.get(key):

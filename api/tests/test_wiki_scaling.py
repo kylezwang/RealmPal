@@ -436,6 +436,76 @@ async def test_ability_brief_cache_only_does_not_scrape(redis_client, monkeypatc
     assert "Lifebringing Lotus" in text
 
 
+async def test_ability_brief_reloads_when_asked_stat_is_missing(
+    redis_client, monkeypatch
+):
+    """Found live Sep 18: Wis Kensei during a v7 warm had Dex sheaths in
+    Redis and never force-scraped Wisdom, so Volcanic Sheath stayed out."""
+    await redis_client.set(
+        f"{wiki_scaling.CACHE_PREFIX}:kensei",
+        json.dumps(
+            {
+                "class_name": "Kensei",
+                "abilities": [
+                    {
+                        "name": "Paper Machete",
+                        "tier": "UT",
+                        "scales": {"Vitality": "VIT Boost"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    async def fake_load(redis, class_name, *, ttl_seconds, stat=None, force=False):
+        assert force is True
+        return {
+            "class_name": "Kensei",
+            "abilities": [
+                {
+                    "name": "Volcanic Sheath",
+                    "tier": "UT",
+                    "scales": {"Wisdom": "+10 per WIS over 50"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(wiki_scaling, "load_class_wiki_scaling", fake_load)
+    text = await wiki_scaling.retrieve_ability_brief(
+        redis_client, "Kensei", stat="Wisdom", ttl_seconds=60, cache_only=True
+    )
+    assert "[item:Volcanic Sheath]" in text
+    assert "No stored T7" not in text
+
+
+async def test_ability_brief_does_not_loop_scrape_when_stat_has_no_ability(
+    redis_client, monkeypatch
+):
+    payload = {
+        "class_name": "Wizard",
+        "abilities": [
+            {"name": "Spell of the Grotesque", "tier": "UT", "scales": {"Attack": "x"}}
+        ],
+    }
+    await redis_client.set(
+        f"{wiki_scaling.CACHE_PREFIX}:wizard", json.dumps(payload)
+    )
+    loads = {"n": 0}
+
+    async def fake_load(redis, class_name, *, ttl_seconds, stat=None, force=False):
+        loads["n"] += 1
+        return payload
+
+    monkeypatch.setattr(wiki_scaling, "load_class_wiki_scaling", fake_load)
+    await wiki_scaling.retrieve_ability_brief(
+        redis_client, "Wizard", stat="Wisdom", ttl_seconds=60, cache_only=True
+    )
+    await wiki_scaling.retrieve_ability_brief(
+        redis_client, "Wizard", stat="Wisdom", ttl_seconds=60, cache_only=True
+    )
+    assert loads["n"] == 1
+
+
 async def test_top_build_items_picks_one_item_per_slot(redis_client, monkeypatch):
     """top_build_items backs the shiny/divine "full build" set visualizer
     (found live Sep 14: "show me full shiny divine attack huntress" landed
@@ -517,7 +587,7 @@ async def test_dungeon_guide_cache_only_does_not_scrape(redis_client, monkeypatc
     monkeypatch.setattr(dungeon_guide, "scrape_dungeon_indexes", boom)
     monkeypatch.setattr(dungeon_guide, "scrape_wiki_article", boom)
     text = await dungeon_guide.retrieve_dungeon_guide(
-        redis_client, "The Shatters", ttl_seconds=60, cache_only=True
+        redis_client, "Puppet Master's Theatre", ttl_seconds=60, cache_only=True
     )
     assert "could not" in text.lower() or "no page" in text.lower() or "no RealmEye" in text
 
@@ -566,6 +636,38 @@ async def test_weapon_brief_names_doom_bow_upgrade(redis_client, monkeypatch):
     )
     assert "[item:Doom Bow]" in text
     assert "[item:Clockwork Repeater]" in text
+
+
+async def test_weapon_brief_never_names_a_t7_katana(redis_client, monkeypatch):
+    """Found live Sep 18: Wis Kensei visualized Buster Katana because hub
+    On Equip WIS ranking included T7 and used it as the first [item:] token."""
+
+    async def fake_hub_index(redis, slug, ttl, *, cache_only=False, force=False):
+        if slug in {"katanas", "tachis"}:
+            return [
+                {"name": "Buster Katana", "tier": "T7", "bonus": "+2 WIS"},
+                {"name": "Enforcer", "tier": "UT", "bonus": "+0 WIS"},
+            ]
+        return []
+
+    monkeypatch.setattr(wiki_scaling, "_hub_index", fake_hub_index)
+    await redis_client.set(
+        f"{wiki_scaling.CACHE_PREFIX}:kensei",
+        json.dumps(
+            {
+                "class_name": "Kensei",
+                "abilities": [
+                    {"name": "Sheath", "scales": {"Dexterity": "per DEX"}}
+                ],
+            }
+        ),
+    )
+    text = await wiki_scaling.retrieve_weapon_brief(
+        redis_client, "Kensei", "Wisdom", ttl_seconds=60, cache_only=True
+    )
+    assert "Buster Katana" not in text
+    assert "[item:Enforcer]" in text
+    assert "Never recommend a T7" in text
 
 
 def test_ring_brief_always_names_kage_with_lean_crown_and_gem():

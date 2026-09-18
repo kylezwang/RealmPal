@@ -41,6 +41,43 @@ def test_hardmode_shatters_uses_source_dome():
     assert portal_for_dungeon("The Shatters Hard Mode") == _SOURCE_SPRITE_FALLBACK
 
 
+def test_hardmode_shatters_matches_core_pages_when_index_is_empty():
+    """Found live Sep 18: after an API restart the dungeon index was empty,
+    cache-only chat only merged biomes + Keyper, and Claude was told the
+    RealmEye indexes have no Hardmode Shatters page."""
+    from api.services.dungeon_guide import _index_with_fallbacks
+
+    assert extract_dungeon_query("Guide to complete Hardmode Shatters") == (
+        "Hardmode Shatters"
+    )
+    hits = match_index_pages("Hardmode Shatters", _index_with_fallbacks([]))
+    assert hits
+    assert any(row.get("slug") == "the-shatters" for row in hits)
+
+
+async def test_hardmode_shatters_guide_does_not_claim_missing_index(
+    redis_client, monkeypatch
+):
+    from api.services import dungeon_guide
+
+    async def fake_wiki(redis, slug, *, ttl_seconds, force=False, cache_only=False):
+        if slug != "the-shatters":
+            return None
+        return {
+            "title": "The Shatters",
+            "slug": "the-shatters",
+            "url": "https://www.realmeye.com/wiki/the-shatters",
+            "text": "Hard Mode\n\nKill the Source then Valen, Nox, and Azamoth.\n",
+        }
+
+    monkeypatch.setattr(dungeon_guide, "get_or_scrape_wiki", fake_wiki)
+    text = await dungeon_guide.retrieve_dungeon_guide(
+        redis_client, "Hardmode Shatters", ttl_seconds=60, cache_only=True
+    )
+    assert "no page that matches" not in text
+    assert "Kill the Source" in text
+
+
 def test_merge_media_prefers_index_difficulty_over_page_grave_count():
     pages = [
         {
