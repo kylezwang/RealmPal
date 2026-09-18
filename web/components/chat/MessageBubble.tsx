@@ -38,6 +38,10 @@ interface Props {
   /** Only render PlayerCard's full per-class exaltations breakdown when
    * the user actually asked about exaltations. */
   showExaltationTable?: boolean;
+  /** Highlight this class row on the Characters card (DPS asks name one). */
+  highlightClass?: string;
+  /** DPS asks show one class row and skip Fame/Guild/account heading. */
+  playerCardScope?: "account" | "character";
   /** Dedicated wiki infobox cards for items named in this reply. */
   items?: ItemProfile[];
   /** Names we have started fetching, used for glimmer placeholders. */
@@ -370,6 +374,8 @@ export function MessageBubble({
   playerProfile,
   playerLookupFailed,
   showExaltationTable,
+  highlightClass,
+  playerCardScope,
   items,
   pendingItemNames,
   dungeonGuide,
@@ -460,10 +466,12 @@ export function MessageBubble({
             ))}
           </div>
         )}
-        {!isUser && playerProfile && (
+        {!isUser && playerProfile && playerCardScope !== "character" && (
           <p className="text-xl font-semibold text-[#ececec] leading-tight mb-2">{playerProfile.username}</p>
         )}
-        {!isUser && playerProfile && <PlayerSummary profile={playerProfile} />}
+        {!isUser && playerProfile && playerCardScope !== "character" && (
+          <PlayerSummary profile={playerProfile} />
+        )}
         {!isUser && dungeonGuide && <DungeonHeader guide={dungeonGuide} />}
         {showThinking ? (
           <ThinkingLabel />
@@ -485,7 +493,12 @@ export function MessageBubble({
           <span className="inline-block w-2 h-4 bg-white ml-1 animate-cursor-blink" aria-label="typing" />
         )}
         {!isUser && playerProfile && (
-          <PlayerCard profile={playerProfile} showExaltationTable={showExaltationTable} />
+          <PlayerCard
+            profile={playerProfile}
+            showExaltationTable={showExaltationTable}
+            highlightClass={highlightClass}
+            focusCharacter={playerCardScope === "character"}
+          />
         )}
         {!isUser && !playerProfile && playerLookupFailed && (
           <p className="text-sm text-[#8a8a8a] italic mt-1">

@@ -71,35 +71,49 @@ function TimelineView({ entries }: { entries: ChangelogEntry[] }) {
   const groups = useMemo(() => groupByDate(entries), [entries]);
   return (
     <div className="relative space-y-6 border-l border-[#333333] pl-4">
-      {groups.map((group) => (
-        <div key={group.date} className="relative">
+      {groups.map((group) => {
+        const isPhase = group.entries.some((entry) => entry.phase);
+        return (
+        <div
+          key={group.date}
+          className={`relative ${isPhase ? "border-t border-[#404040] pt-6 mt-2" : ""}`}
+        >
           <span
             className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-white ring-4 ring-[#1e1e1e]"
             aria-hidden="true"
           />
-          <p className="text-sm font-semibold text-[#ececec] mb-3">{group.date}</p>
+          <p
+            className={`mb-3 text-sm font-semibold ${
+              isPhase ? "text-[#a3a3a3]" : "text-[#ececec]"
+            }`}
+          >
+            {group.date}
+          </p>
           <div className="space-y-4">
             {group.entries.map((entry, i) => (
               <div
                 key={entry.version}
                 className={i > 0 ? "border-t border-[#2a2a2a] pt-4" : undefined}
               >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="rounded border border-[#333333] bg-[#262626] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#737373]">
-                    {entry.version}
-                  </span>
-                  {entry.timestamp && (
-                    <span className="text-[10px] text-[#525252]">
-                      {formatEntryTime(entry.timestamp)}
+                {!entry.phase && (
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="rounded border border-[#333333] bg-[#262626] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#737373]">
+                      {entry.version}
                     </span>
-                  )}
-                </div>
+                    {entry.timestamp && (
+                      <span className="text-[10px] text-[#525252]">
+                        {formatEntryTime(entry.timestamp)}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <ItemBullets items={entry.items} />
               </div>
             ))}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

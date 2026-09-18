@@ -1106,3 +1106,29 @@ async def test_shiny_fungal_star_uses_ut_not_st_kunai(redis_client):
     assert "Kunai" not in reply.text
     assert "fungal star" not in reply.text.lower()
     assert "[item:Star of Enlightenment]" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_player_dps_ask_does_not_use_stored_player_lookup(
+    redis_client, monkeypatch
+):
+    async def boom(*args, **kwargs):
+        raise AssertionError("player DPS must not use the stored fame/guild lookup")
+
+    monkeypatch.setattr(
+        "api.services.stored_answers.get_or_scrape_player", boom
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "What's the DPS for Turbine's bard?",
+        ttl_seconds=60,
+        player_ttl_seconds=120,
+    )
+    assert reply is None
+    reply = await try_stored_reply(
+        redis_client,
+        "How much potential DPS does Turbine's bard have?",
+        ttl_seconds=60,
+        player_ttl_seconds=120,
+    )
+    assert reply is None

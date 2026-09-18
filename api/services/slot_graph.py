@@ -24,7 +24,13 @@ from loguru import logger
 
 from .community_knowledge import store_ranking_brief
 from .chunks import wrap_slot_chunk
-from .dps_specialist import is_dps_query, retrieve_dps_brief
+from .dps_specialist import (
+    dps_subject_from_history,
+    is_dps_follow_up,
+    is_dps_query,
+    is_stat_number_query,
+    retrieve_dps_brief,
+)
 from .dungeon_guide import extract_dungeon_query, retrieve_dungeon_guide
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .item_aliases import (
@@ -96,8 +102,14 @@ def route_slots(
     A player lookup adds the player specialist. A guide question adds
     dungeon."""
     lower = message.lower()
-    if is_set_visualize_query(message) or is_stat_class_shiny_divine_query(
-        message, class_name, stat
+    # A breakdown or what-if turn continues the previous DPS answer, so it must
+    # be settled before the set/skin branches: they match on wording a
+    # follow-up shares, and "what if he swapped to a Doom Bow?" was landing on
+    # the skin visualizer with the DPS reconstruct nowhere in the context.
+    dps_follow_up = is_dps_follow_up(message, history=history)
+    if not dps_follow_up and (
+        is_set_visualize_query(message)
+        or is_stat_class_shiny_divine_query(message, class_name, stat)
     ):
         extras: list[SlotName] = []
         if player_ign:
@@ -105,7 +117,7 @@ def route_slots(
         if dungeon_name:
             extras.append("dungeon")
         return ["set", *extras], "deep"
-    if is_skin_visualize_query(message, history=history):
+    if not dps_follow_up and is_skin_visualize_query(message, history=history):
         extras: list[SlotName] = []
         if player_ign:
             extras.append("player")
@@ -127,15 +139,27 @@ def route_slots(
     ):
         named.append("ability")
 
+    # A what-if names the swapped-in piece ("a Doom Bow" -> weapon), and that
+    # slot's wiki page is what lets the reconstruct be rescaled, so keep it
+    # alongside dps rather than letting it displace dps.
+    if dps_follow_up:
+        return ["dps", *named], "deep"
+
     enchant_only = is_enchant_query(message)
-    dps_only = is_dps_query(message)
+    dps_only = is_dps_query(message, history=history)
+    numbers_only = is_stat_number_query(message, history=history)
     buildish = bool(
         re.search(r"\b(build|loadout|gear|equip|best items?)\b", lower)
         or (class_name and stat and not named)
     )
     slots: list[SlotName] = []
     depth: Depth = "brief"
-    if enchant_only and not buildish and not named:
+    if numbers_only and not named:
+        slots = ["dps"]
+        if enchant_only:
+            slots.append("enchantment")
+        depth = "deep"
+    elif enchant_only and not buildish and not named:
         slots = ["enchantment"]
         if len(extract_mentioned_items(message)) >= 2:
             slots.append("dps")
@@ -162,7 +186,8 @@ def route_slots(
         depth = "brief"
 
     extras: list[SlotName] = []
-    if player_ign:
+    dps_owns_player = "dps" in slots and (numbers_only or (dps_only and not buildish))
+    if player_ign and not dps_owns_player:
         extras.append("player")
     if dungeon_name:
         extras.append("dungeon")
@@ -431,10 +456,23 @@ def _join_reports(state: SlotState) -> str:
         )
     elif slots == ["dps"] or (depth == "deep" and slots == ["dps"]):
         header = (
-            "DPS FOLLOW-UP. Use the wiki formula numbers from the dps "
-            "chunk. Treat RealmShark rows as potential-DPS reference "
-            "(5s window, 8 ability uses), not live combat logs. Do not "
-            "invent Damage, Shots, or Rate of Fire."
+            "DPS FOLLOW-UP. RealmShark potential-DPS numbers in the chunk "
+            "are the source of truth (5s window, 8 ability uses, 0 DEF, "
+            "full buffs, on-character enchants already applied). Copy DPS, "
+            "the weapon/ability split, and the listed stats. Do not invent "
+            "a different number. Do not recommend a set unless the user "
+            "asked for gear. Wiki Damage/Shots/Rate of Fire are formula "
+            "inputs. If the chunk scales a RealmShark weapon or ability "
+            "number after a swap, copy that scaled number and say it is "
+            "estimated from the board row, not a new leaderboard entry. "
+            "Ability scaling uses the wiki formula and Stat Mod Multiplier "
+            "on the scaling stat. A breakdown must name weapon, ability, armor, "
+            "and ring. Armor and ring On Equip stats and On Ability procs "
+            "change those stats; do not ignore Vesture's On Ability Attack "
+            "proc. APS is (1.5 + 6.5 × DEX/75) × item fire rate, not "
+            "DEX × RoF / 8. An 8/8-stat tradeoff is a sheet change, not a "
+            "fire-rate enchant; it still counts when the ability formula or "
+            "working Attack/Dexterity uses that stat."
         )
     elif "dungeon" in slots and not any(slot in slots for slot in _GEAR_SLOTS):
         header = (
@@ -508,7 +546,8 @@ def _join_reports(state: SlotState) -> str:
     ranking = ""
     real_class = state.get("class_name")
     real_stat = state.get("stat")
-    if real_class and real_stat and any(slot in slots for slot in (*_GEAR_SLOTS, "enchantment", "dps")):
+    gearish = any(slot in slots for slot in (*_GEAR_SLOTS, "enchantment"))
+    if real_class and real_stat and gearish:
         ranking = store_ranking_brief(
             real_class,
             real_stat,
@@ -666,13 +705,26 @@ async def _enchantment_agent(redis: aioredis.Redis, state: SlotState) -> str:
 
 
 async def _dps_agent(redis: aioredis.Redis, state: SlotState) -> str:
+    history = list(state.get("user_history") or [])
+    ign = state.get("player_ign")
+    class_name = state.get("class_name")
+    # A breakdown or what-if names neither the player nor the class, so recover
+    # what the conversation's last DPS turn was about. Without this the slot
+    # answers with a class-ceiling board and no worn set, which reads to the
+    # model as "I have no numbers" right after it gave the user real ones.
+    if is_dps_follow_up(state["message"], history=history):
+        prior_ign, prior_class = dps_subject_from_history(history)
+        ign = ign or prior_ign
+        class_name = class_name or prior_class
     try:
         return await retrieve_dps_brief(
             redis,
             state["message"],
             ttl_seconds=state["ttl_seconds"],
-            class_name=state.get("class_name"),
+            class_name=class_name,
             stat=state.get("stat"),
+            player_ign=ign,
+            player_ttl_seconds=int(state.get("player_ttl_seconds") or 120),
             cache_only=True,
         )
     except Exception as e:

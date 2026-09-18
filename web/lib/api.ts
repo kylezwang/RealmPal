@@ -197,6 +197,7 @@ export interface ChatUsage {
   spend_cap_usd?: number;
   on_demand_spent_usd?: number;
   resets_in_seconds?: number;
+  is_admin?: boolean;
 }
 
 export interface OnDemandUsage {
@@ -743,6 +744,50 @@ export async function fetchChatUsage(): Promise<ChatUsage> {
   );
   if (!res.ok) throw new Error("Failed to load usage");
   return res.json();
+}
+
+export type AdminFeedKind = "chat" | "feedback" | "account" | "subscription";
+
+export interface AdminFeedItem {
+  kind: AdminFeedKind;
+  created_at: string;
+  email?: string | null;
+  ign?: string | null;
+  tier?: "guest" | "free" | "paid" | string;
+  cost_usd?: number;
+  rating?: string;
+  what_works?: string;
+  what_to_improve?: string;
+  anything_else?: string;
+  reply_email?: string | null;
+  reply_subject?: string;
+  reply_body?: string;
+  mailto?: string;
+  status?: string;
+  stripe_subscription_id?: string | null;
+}
+
+export interface AdminNotificationsFeed {
+  spend_today_usd: number;
+  spend_budget_usd: number;
+  items: AdminFeedItem[];
+}
+
+export async function fetchAdminNotifications(): Promise<AdminNotificationsFeed> {
+  const res = await fetch(`${API_URL}/admin/notifications`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 403) {
+    throw new Error("Admin only");
+  }
+  if (!res.ok) {
+    throw new Error(
+      typeof data.detail === "string" ? data.detail : "Could not load notifications",
+    );
+  }
+  return data as AdminNotificationsFeed;
 }
 
 export async function createCheckout(email?: string): Promise<string> {

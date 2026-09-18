@@ -11,6 +11,7 @@ from typing import Optional
 import re
 
 from ..config import Settings
+from .dps_specialist import is_dps_query, is_stat_number_query
 from .item_aliases import is_set_visualize_query
 from .realmshark import parse_query
 from .skin_visualizer import is_skin_visualize_query
@@ -46,6 +47,9 @@ def pick_chat_model(
     haiku = settings.claude_light_model or sonnet
     if has_attachment or is_constrained(message):
         return sonnet
+    if is_dps_query(message) or is_stat_number_query(message):
+        return sonnet
+    class_name, stat, buildish = parse_query(message, history=history)
     class_name, stat, buildish = parse_query(message, history=history)
     if buildish and class_name and stat:
         return sonnet

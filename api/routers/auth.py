@@ -19,6 +19,7 @@ from ..auth import create_jwt, email_from_session_header, send_magic_link
 from ..config import Settings, get_settings
 from ..dependencies import enforce_lookup_rate_limit
 from ..services import accounts, entitlements
+from ..services.admin_access import jwt_role
 from ..services.validation import sanitize_lookup_name, validate_email, validate_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -41,8 +42,11 @@ class RegisterBody(PasswordBody):
 async def _session_for(email: str, settings: Settings) -> dict:
     paid = await entitlements.is_active(email, settings)
     ign = await accounts.get_ign(email, settings)
-    token = create_jwt({"email": email, "paid": paid, "ign": ign}, settings)
-    return {"token": token, "email": email, "paid": paid, "ign": ign}
+    role = await jwt_role(email, ign, settings)
+    token = create_jwt(
+        {"email": email, "paid": paid, "ign": ign, "role": role}, settings
+    )
+    return {"token": token, "email": email, "paid": paid, "ign": ign, "role": role}
 
 
 @router.post("/register", dependencies=[Depends(enforce_lookup_rate_limit)])

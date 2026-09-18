@@ -53,6 +53,7 @@ def auth_settings(tmp_path) -> Settings:
         uploads_db_path=str(tmp_path / "uploads.db"),
         chat_sessions_db_path=str(tmp_path / "chat_sessions.db"),
         product_feedback_db_path=str(tmp_path / "product_feedback.db"),
+        admin_events_db_path=str(tmp_path / "admin_events.db"),
     )
 
 
@@ -69,6 +70,7 @@ def anon_settings(tmp_path) -> Settings:
         uploads_db_path=str(tmp_path / "uploads.db"),
         chat_sessions_db_path=str(tmp_path / "chat_sessions.db"),
         product_feedback_db_path=str(tmp_path / "product_feedback.db"),
+        admin_events_db_path=str(tmp_path / "admin_events.db"),
     )
 
 

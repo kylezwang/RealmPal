@@ -21,6 +21,7 @@ from ..auth import create_jwt, decode_magic_token, email_from_session_header
 from ..config import Settings, get_settings
 from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..services import accounts, billing_prefs, entitlements
+from ..services.admin_access import jwt_role
 from ..services.claude_billing import peek_claude_usage
 from ..services.validation import validate_email
 
@@ -56,8 +57,11 @@ def _success_url(settings: Settings) -> str:
 async def _session_payload(email: str, settings: Settings) -> dict:
     paid = await entitlements.is_active(email, settings)
     ign = await accounts.get_ign(email, settings)
-    token = create_jwt({"email": email, "paid": paid, "ign": ign}, settings)
-    return {"token": token, "email": email, "paid": paid, "ign": ign}
+    role = await jwt_role(email, ign, settings)
+    token = create_jwt(
+        {"email": email, "paid": paid, "ign": ign, "role": role}, settings
+    )
+    return {"token": token, "email": email, "paid": paid, "ign": ign, "role": role}
 
 
 @router.post(

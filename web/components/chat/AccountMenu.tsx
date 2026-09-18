@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { PlayerProfile, ChatUsage } from "@/lib/api";
 import { AUTH_CHANGED_EVENT, clearAuthToken, decodeAuthEmail, decodeAuthIgn } from "@/lib/api";
 import { BillingModal } from "./BillingModal";
+import { AdminNotificationsModal } from "./AdminNotificationsModal";
 import { GuestAvatar } from "./GuestAvatar";
 import { freeInDepthPromptsLeft, showsFreeInDepthQuota } from "@/lib/usageCopy";
 
@@ -135,7 +136,7 @@ function MenuItem({
 }: {
   icon: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   danger?: boolean;
 }) {
   return (
@@ -190,6 +191,7 @@ export function AccountMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [ign, setIgn] = useState<string | null>(null);
@@ -249,6 +251,7 @@ export function AccountMenu({
   const primaryLabel = isSignedIn ? ign || email || "Account" : "Guest";
   const showQuota = showsFreeInDepthQuota(usage) && Boolean(onOpenPaywall);
   const remaining = usage?.remaining ?? 0;
+  const showAdminNotifications = Boolean(usage?.is_admin);
 
   function openQuotaPaywall() {
     setOpen(false);
@@ -310,7 +313,18 @@ export function AccountMenu({
                   onClick={openQuotaPaywall}
                 />
               )}
-              <MenuItem icon={<BellIcon />} label="Notifications" onClick={() => { setOpen(false); router.push("/account/notifications"); }} />
+              {showAdminNotifications && (
+                <MenuItem
+                  icon={<BellIcon />}
+                  label="Notifications"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowNotifications(true);
+                    setOpen(false);
+                  }}
+                />
+              )}
               <MenuItem icon={<AboutIcon />} label="About" onClick={() => { setOpen(false); setShowAbout(true); }} />
               <div className="border-t border-[#303030] my-1" />
               <MenuItem icon={<LogoutIcon />} label="Log out" onClick={handleLogout} danger />
@@ -334,6 +348,9 @@ export function AccountMenu({
       )}
 
       {showBilling && <BillingModal onClose={() => setShowBilling(false)} />}
+      {showNotifications && (
+        <AdminNotificationsModal onClose={() => setShowNotifications(false)} />
+      )}
       {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
     </div>
   );

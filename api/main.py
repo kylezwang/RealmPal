@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from .config import get_settings
-from .routers import auth, chat, chat_sessions, players, payments, sprite, items, dungeons, skins, uploads
+from .routers import admin, auth, chat, chat_sessions, players, payments, sprite, items, dungeons, skins, uploads
 
 # loguru's logger.info(msg, key=value) does NOT attach key/value as structured
 # fields | those kwargs are only used for str.format() substitution in the
@@ -208,6 +208,19 @@ async def _ensure_specialist_stores(settings) -> None:
     asyncio.create_task(_warm())
 
 
+async def _ensure_admin_events_db(settings) -> None:
+    """Create the admin chat-cost table if missing. Non-fatal: the bell
+    still lists feedback/accounts/Stripe if this store cannot open."""
+    from .services import admin_events
+
+    try:
+        await admin_events.init_db(settings)
+    except Exception as exc:
+        logger.bind(path=settings.admin_events_db_path, error=str(exc)).warning(
+            "Could not open the admin events DB; Claude-turn costs will not land"
+        )
+
+
 async def _ensure_uploads_db(settings) -> None:
     from .services import uploads
 
@@ -236,6 +249,7 @@ async def lifespan(app: FastAPI):
     await _ensure_qdrant_collection(settings)
     await _ensure_entitlements_db(settings)
     await _ensure_accounts_db(settings)
+    await _ensure_admin_events_db(settings)
     await _ensure_uploads_db(settings)
     await _ensure_specialist_stores(settings)
     yield
@@ -258,11 +272,12 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
     app.include_router(auth.router)
+    app.include_router(admin.router)
     app.include_router(chat.router)
     app.include_router(chat_sessions.router)
     app.include_router(players.router)

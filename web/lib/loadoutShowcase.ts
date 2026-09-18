@@ -36,7 +36,7 @@ export function parseLoadoutToken(content: string): LoadoutShowcase | null {
 
 export const SET_SLOT_COUNT = 4;
 
-const CLASS_NAMES = [
+export const CLASS_NAMES = [
   "Rogue",
   "Archer",
   "Wizard",

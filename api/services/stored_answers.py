@@ -30,6 +30,7 @@ from .dungeon_guide import (
 from .biomes import compose_biome_brief, extract_biome_query
 from .farm_guides import extract_farm_guide, farm_reply_text
 from .enchanting import is_enchant_query
+from .dps_specialist import is_dps_query, is_stat_number_query
 from .item_aliases import (
     community_canonical,
     extract_set_item_names,
@@ -920,14 +921,16 @@ async def _slot_reply(
 async def _build_reply(
     redis: aioredis.Redis, message: str
 ) -> Optional[StoredReply]:
-    if is_enchant_query(message):
+    if is_enchant_query(message) or is_stat_number_query(message):
         # An enchant question (e.g. "...insane with the awakened
         # enchantment?") almost always names a slot noun (ring/armor/weapon/
         # ability), which alone flips parse_query's weak `buildish` regex to
         # True even with no class or stat in *this* message. Enchant
         # questions have their own specialist (is_enchant_query is the same
         # gate api/routers/chat.py uses to route to it) - never let the
-        # generic class+stat build cache intercept them first.
+        # generic class+stat build cache intercept them first. Max-stat /
+        # potential-DPS number asks ("What's the max defense for necro?")
+        # used to replay a cached loadout brief with no numbers.
         return None
     # Stored briefs are "ask this again" hits, not conversation memory.
     # parse_query's history inheritance is for Claude follow-ups
@@ -1128,14 +1131,15 @@ async def try_stored_reply(
         return None
     if is_constrained(message):
         return None
-    player = await _player_reply(
-        redis,
-        message,
-        history=history,
-        ttl_seconds=player_ttl_seconds,
-    )
-    if player:
-        return player
+    if not is_stat_number_query(message) and not is_dps_query(message):
+        player = await _player_reply(
+            redis,
+            message,
+            history=history,
+            ttl_seconds=player_ttl_seconds,
+        )
+        if player:
+            return player
     skin = await _skin_reply(
         redis, message, history=history, ttl_seconds=ttl_seconds
     )
@@ -1202,10 +1206,11 @@ async def maybe_mint_brief(
         return None
     if parse_progression_query(message):
         return None
-    if is_enchant_query(message):
+    if is_enchant_query(message) or is_stat_number_query(message):
         # Same reasoning as _build_reply: a slot noun (ring/armor/weapon/
         # ability) alone can flip buildish True. Enchant answers are never
-        # a substitute for the general build brief.
+        # a substitute for the general build brief. Number/DPS answers must
+        # not overwrite that brief either.
         return None
     text = reply.strip()[:MAX_BRIEF_CHARS]
     class_name, stat, buildish = parse_query(message)
