@@ -31,6 +31,56 @@ def test_summon_damage_for_every_wis_is_scaling():
     assert "5.2" in scales["Wisdom"]
 
 
+def test_effect_area_damage_per_wis_is_scaling():
+    """Volcanic Sheath stores explosion scaling under Effect(s), not Damage."""
+    item = ItemProfile(
+        name="Volcanic Sheath",
+        tier="UT",
+        stats={"Effect(s)": "Area Damage: 400 (+10 per WIS over 50)"},
+    )
+    scales = wiki_scaling.scaling_from_item(item)
+    assert "Wisdom" in scales
+    assert "Attack" not in scales
+
+
+def test_effect_scaling_with_vit_is_scaling():
+    """Elegant Parasol's trail Damage row is flat; VIT is in Effect(s)."""
+    item = ItemProfile(
+        name="Elegant Parasol",
+        tier="UT",
+        stats={
+            "Damage": "200-300",
+            "Effect(s)": (
+                "Blossoming Power: scaling with VIT. "
+                "Damage: 600 (+12 per VIT over 60)"
+            ),
+        },
+    )
+    scales = wiki_scaling.scaling_from_item(item)
+    assert "Vitality" in scales
+    assert "Attack" not in scales
+
+
+def test_stat_multiplier_percent_boost_is_scaling():
+    item = ItemProfile(
+        name="Volcanic Sheath",
+        tier="UT",
+        stats={"Stat Multiplier": "8/12/17/23/30% WIS Boost"},
+    )
+    scales = wiki_scaling.scaling_from_item(item)
+    assert "Wisdom" in scales
+
+
+def test_hub_row_scaling_with_vit_does_not_tag_on_equip_att():
+    """Hub rows mix +8 ATT with 'scaling with VIT'. Only VIT is the formula."""
+    scales = wiki_scaling.scaling_from_text(
+        "Elegant Parasol 150 MP 200-300 +8 ATT +8 VIT "
+        "Blossoming Power: scaling with VIT "
+        "10/15/20/25/30% VIT Boost"
+    )
+    assert set(scales) == {"Vitality"}
+
+
 async def test_summoner_store_keeps_wisdom_maces(redis_client, monkeypatch):
     hub = [
         {"name": "Grandmaster Mace", "tier": "T7"},
@@ -71,6 +121,123 @@ async def test_summoner_store_keeps_wisdom_maces(redis_client, monkeypatch):
     assert "Grandmaster Mace" in names
     text = wiki_scaling.format_wiki_scaling(payload, stat="Wisdom")
     assert "Grandmaster Mace" in text
+
+
+async def test_kensei_store_keeps_wis_and_vit_sheaths_from_hub_or_effects(
+    redis_client, monkeypatch
+):
+    """Wis/Vit Kensei missed Volcanic Sheath and Elegant Parasol live.
+
+    The hub already says WIS Boost / scaling with VIT. The item pages put
+    the formula under Effect(s), and Parasol's Damage row is a flat trail.
+    """
+    hub = [
+        {"name": "Slashing Sheath", "tier": "T7"},
+        {
+            "name": "Paper Machete",
+            "tier": "UT",
+            "rowText": "10/20/30/40/50% VIT Boost Each stack lasts for 10 second",
+        },
+        {
+            "name": "Volcanic Sheath",
+            "tier": "UT",
+            "rowText": "400ExplosionRadius: 4 squares 8/12/17/23/30% WIS Boost +5 WIS",
+        },
+        {
+            "name": "Elegant Parasol",
+            "tier": "UT",
+            "rowText": (
+                "200-300 +8 ATT +8 VIT Blossoming Power: scaling with VIT "
+                "10/15/20/25/30% VIT Boost"
+            ),
+        },
+    ]
+
+    async def fake_hub(redis, slug, ttl, *, force=False):
+        return hub
+
+    async def fake_profiles(redis, names, ttl, *, force=False):
+        by_name = {
+            "Slashing Sheath": ItemProfile(
+                name="Slashing Sheath",
+                tier="7",
+                stats={"Damage": "200"},
+            ),
+            "Paper Machete": ItemProfile(
+                name="Paper Machete",
+                tier="UT",
+                stats={"Stat Multiplier": "10/20/30/40/50% VIT Boost"},
+            ),
+            "Volcanic Sheath": ItemProfile(
+                name="Volcanic Sheath",
+                tier="UT",
+                stats={
+                    "Effect(s)": "Area Damage: 400 (+10 per WIS over 50)",
+                    "On Equip": "+5 WIS",
+                },
+            ),
+            "Elegant Parasol": ItemProfile(
+                name="Elegant Parasol",
+                tier="UT",
+                stats={"Damage": "200-300", "On Equip": "+8 ATT, +8 VIT"},
+            ),
+        }
+        return [by_name[name] for name in names if name in by_name]
+
+    monkeypatch.setattr(wiki_scaling, "_hub_index", fake_hub)
+    monkeypatch.setattr(wiki_scaling, "_profiles_for_names", fake_profiles)
+
+    payload = await wiki_scaling.load_class_wiki_scaling(
+        redis_client, "Kensei", ttl_seconds=60, force=True
+    )
+    by_name = {row["name"]: row for row in payload["abilities"]}
+    assert "Wisdom" in by_name["Volcanic Sheath"]["scales"]
+    assert "Vitality" in by_name["Elegant Parasol"]["scales"]
+    assert "Attack" not in by_name["Elegant Parasol"]["scales"]
+    assert "Vitality" in by_name["Paper Machete"]["scales"]
+
+    wis = wiki_scaling.format_wiki_scaling(payload, stat="Wisdom")
+    assert "[item:Volcanic Sheath]" in wis
+    assert "Elegant Parasol" not in wis
+    vit = wiki_scaling.format_wiki_scaling(payload, stat="Vitality")
+    assert "[item:Elegant Parasol]" in vit
+    assert vit.index("Elegant Parasol") < vit.index("Paper Machete")
+
+
+async def test_wis_kensei_ability_brief_names_volcanic_sheath(redis_client):
+    payload = {
+        "class_name": "Kensei",
+        "hub_url": "https://www.realmeye.com/wiki/sheaths",
+        "abilities": [
+            {
+                "name": "Paper Machete",
+                "wiki_url": "",
+                "tier": "UT",
+                "scales": {
+                    "Vitality": "Stat Multiplier: 10/20/30/40/50% VIT Boost"
+                },
+                "effects": "",
+            },
+            {
+                "name": "Volcanic Sheath",
+                "wiki_url": "",
+                "tier": "UT",
+                "scales": {
+                    "Wisdom": "Effect(s): Area Damage: 400 (+10 per WIS over 50)"
+                },
+                "effects": "",
+            },
+        ],
+    }
+    await redis_client.set(
+        f"{wiki_scaling.CACHE_PREFIX}:kensei", json.dumps(payload)
+    )
+    text = await wiki_scaling.retrieve_ability_brief(
+        redis_client, "Kensei", stat="Wisdom", ttl_seconds=60, cache_only=True
+    )
+    assert "[item:Volcanic Sheath]" in text
+    assert "Paper Machete" not in text
+    assert "No stored T7" not in text
 
 
 def _dex_trap(name: str) -> ItemProfile:

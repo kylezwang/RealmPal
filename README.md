@@ -143,10 +143,12 @@ API docs (when `DEBUG=true`): [http://localhost:8001/docs](http://localhost:8001
 
 1. The user asks a question (player, item, dungeon, set, or dyed skin).
 2. `stored_answers` classifies the turn. Drops, minted `{stat} {class}` builds, dungeon wiki dumps, shiny-divine quests, and skin templates stream from Redis with no Claude call.
-3. If the ask is new or constrained, the **slot graph** routes to specialists (weapon / ability / armor / ring / player / dungeon / set / skin). A first-time build uses Sonnet and mints `wiki:build:v1:{class}:{stat}` for the next identical ask. Dungeon how-tos do not mint a Claude essay over the wiki store.
+3. If the ask is new or constrained, the **slot graph** routes to specialists (weapon / ability / armor / ring / player / dungeon / set / skin). A first-time build uses Sonnet and mints `wiki:build:v2:{class}:{stat}` for the next identical ask. Dungeon how-tos do not mint a Claude essay over the wiki store.
 4. Specialists read cached RealmEye wiki pages in Redis (not live-scraped on chat). A new/empty Redis is filled in the background on API startup. After that, GitHub Action `Refresh wiki specialists` (Monday, or "Run workflow") and `python -m api.scripts.refresh_wiki` refill the store for ~7 days. Check with `python -m api.scripts.warm_specialists --status`. Player lookups scrape RealmEye on request.
 5. Claude (when used) streams a short answer plus UI tokens (`[item:]`, `[loadout]`, `[skin:...]`).
 6. The web app fetches warmed item profiles (`GET /items/{name}`) for sprites and cards. Click a character row, item card, or skin tile to zoom the whole card. The card grid drops items the asked class cannot equip; comparison text can still name sister-class gear.
+
+Until Sep 18, 2026 step 3 minted `wiki:build:v1:{class}:{stat}`.
 
 **Paid flow:** Redis counts Claude-using messages per IP (guest, 3/24h) or signed-in email (5/24h). Signed-in stored hits skip that daily meter. The next Claude request returns `402`; guests are asked to sign in, signed-in users see Stripe Checkout. Pro is $7/month for 68 Claude replies (about $2.50 of Claude). After the pool, `$0.08`/reply up to a user spend cap (`GET`/`POST /payments/on-demand`). Daily 50 is the fuse.
 

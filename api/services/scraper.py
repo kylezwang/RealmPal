@@ -851,11 +851,13 @@ _ITEM_PAGE_JS = """
   const h1 = root.querySelector('h1');
   const name = cleanName(h1 ? h1.textContent : '') || spriteName;
 
+  const infoboxKey = /^(tier|on equip|mp cost)$/i;
   const infobox = tables.find((t) => {
-    const th = t.querySelector('th');
-    if (!th) return false;
-    const key = th.innerText.trim();
-    return /^(tier|on equip|mp cost)$/i.test(key);
+    return Array.from(t.querySelectorAll('tr')).some((row) => {
+      const cell = row.querySelector('th, td');
+      const key = cell ? cell.innerText.replace(/\\s+/g, ' ').trim() : '';
+      return infoboxKey.test(key);
+    });
   });
   const stats = {};
   let original_name = '';
@@ -1037,7 +1039,16 @@ _ABILITY_HUB_JS = """
       if (!a) continue;
       const href = a.getAttribute('href') || '';
       const slug = (href.split('/wiki/')[1] || '').split('#')[0].split('?')[0];
-      const name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+      let name = (a.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!name || name.length < 3) {
+        const img = a.querySelector('img') || (
+          nameIdx >= 0 && cells[nameIdx] ? cells[nameIdx].querySelector('img') : null
+        );
+        name = ((img && (img.getAttribute('alt') || img.getAttribute('title'))) || '')
+          .replace(/\\s*\\(shiny\\)\\s*/i, '')
+          .replace(/\\s+/g, ' ')
+          .trim();
+      }
       if (!slug || !name || name.length < 3) continue;
       if (skipSlug.test(slug) || skipName.test(name)) continue;
       const key = name.toLowerCase();

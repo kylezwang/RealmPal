@@ -36,6 +36,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "A follow-up like Break it down on a DPS answer now keeps the same depth as the first answer.",
       "A named-player DPS reply now shows only that one character, not fame or the rest of the account.",
       "A DPS breakdown now walks every worn piece, and a stat-tradeoff enchant only changes the numbers those stats actually feed.",
+      "Wis and Vit class builds now name the abilities that actually scale with those stats, instead of saying the class has none.",
     ],
   },
   {

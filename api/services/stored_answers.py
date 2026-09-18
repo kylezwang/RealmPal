@@ -56,8 +56,8 @@ from .realmshark import parse_query, shark_name_counts
 from .skin_visualizer import compose_skin_stored_reply, is_skin_visualize_query
 from .wiki_scaling import HUB_PREFIX, UMI_BIS_PREFIX, cached_items_from_place, read_cached_item
 
-BUILD_PREFIX = "wiki:build:v1"
-ABILITY_PREFIX = "wiki:ability-brief:v1"
+BUILD_PREFIX = "wiki:build:v2"
+ABILITY_PREFIX = "wiki:ability-brief:v2"
 GUIDE_BRIEF_PREFIX = "wiki:guide-brief:v2"
 BRIEF_INDEX_KEY = "wiki:brief-index"
 MAX_BRIEF_CHARS = 8_000
