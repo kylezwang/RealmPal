@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { ItemProfile } from "@/lib/api";
 import { cleanItemName } from "@/lib/itemLookup";
 import { SET_SLOT_COUNT, type LoadoutShowcase } from "@/lib/loadoutShowcase";
-import { DIVINE_GLOW, DIVINE_SLOT_X, DIAMOND_FRAME_OFFSET_PX, SLOT_NATIVE, SLOTS_SHEET, ShinyStar, SpriteIcon } from "./SpriteIcon";
+import { RARITY_GLOW, RARITY_LABEL, RARITY_SLOT_X, DIAMOND_FRAME_OFFSET_PX, SLOT_NATIVE, SLOTS_SHEET, ShinyStar, SpriteIcon } from "./SpriteIcon";
 import { SpriteZoomTrigger } from "./SpriteZoom";
 
 const ICON_SIZE = 40;
@@ -57,7 +57,7 @@ export function LoadoutItemIcon({
     setSrc(preferred);
   }, [preferred]);
   const showShiny = hasShiny && src === shinySrc;
-  const glow = showcase.rarity === "divine" ? DIVINE_GLOW : undefined;
+  const glow = showcase.rarity ? RARITY_GLOW[showcase.rarity] : undefined;
   const iconSrc = src || regularSrc;
 
   return (
@@ -70,6 +70,7 @@ export function LoadoutItemIcon({
               title: showShiny ? `Shiny ${item.name}` : item.name,
               wikiUrl: item.wiki_url,
               divine: showcase.rarity === "divine",
+              rarity: showcase.rarity,
               shiny: showShiny,
               glow,
             }}
@@ -92,10 +93,10 @@ export function LoadoutItemIcon({
                   if (regularSrc && iconSrc !== regularSrc) setSrc(regularSrc);
                 }}
               />
-              {showcase.rarity === "divine" && (
+              {showcase.rarity && (
                 <SpriteIcon
                   sheetUrl={SLOTS_SHEET}
-                  x={DIVINE_SLOT_X}
+                  x={RARITY_SLOT_X[showcase.rarity]}
                   y={0}
                   nativeSize={SLOT_NATIVE}
                   displaySize={ICON_SIZE}
@@ -121,7 +122,7 @@ export function LoadoutItemIcon({
         role="tooltip"
       >
         {showShiny ? `Shiny ${item.name}` : item.name}
-        {showcase.rarity === "divine" ? " (Divine)" : ""}
+        {showcase.rarity ? ` (${RARITY_LABEL[showcase.rarity]})` : ""}
       </div>
     </div>
   );

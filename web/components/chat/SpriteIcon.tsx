@@ -30,9 +30,28 @@ const SHINY_STAR_X = 245;
 const SHINY_STAR_Y = 5;
 const SHINY_STAR_NATIVE = 8;
 export const SLOT_NATIVE = 48;
+/** slots.png y=0 tiles: uncommon 1, rare 2, legendary 3, divine 4. */
+export const RARITY_SLOT_X = {
+  uncommon: 0,
+  rare: 48,
+  legendary: 96,
+  divine: 144,
+} as const;
+export const RARITY_GLOW = {
+  uncommon: "rgb(80, 170, 80)",
+  rare: "rgb(64, 128, 210)",
+  legendary: "rgb(160, 90, 200)",
+  divine: "rgb(191, 170, 64)",
+} as const;
+export const RARITY_LABEL = {
+  uncommon: "Uncommon",
+  rare: "Rare",
+  legendary: "Legendary",
+  divine: "Divine",
+} as const;
 /** Plain Divine frame (4 gold diamonds) on slots.png. Shiny Divine is +192. */
-export const DIVINE_SLOT_X = 144;
-export const DIVINE_GLOW = "rgb(191, 170, 64)";
+export const DIVINE_SLOT_X = RARITY_SLOT_X.divine;
+export const DIVINE_GLOW = RARITY_GLOW.divine;
 /** Nudge rarity diamonds down-right so they sit on the item corners. */
 export const DIAMOND_FRAME_OFFSET_PX = 3;
 /** Center of the original slot sparkle, as a % of the icon box. */

@@ -3,7 +3,14 @@
  * render a character-style equipment row instead of the item-card grid.
  */
 
-export type LoadoutRarity = "divine";
+export type LoadoutRarity = "uncommon" | "rare" | "legendary" | "divine";
+
+export const LOADOUT_RARITIES: LoadoutRarity[] = [
+  "divine",
+  "legendary",
+  "rare",
+  "uncommon",
+];
 
 export interface LoadoutShowcase {
   shiny: boolean;
@@ -12,13 +19,18 @@ export interface LoadoutShowcase {
 
 const LOADOUT_TOKEN = /\[loadout([^\]]*)\]/i;
 
+export function parseRarity(text: string): LoadoutRarity | undefined {
+  const lower = (text || "").toLowerCase();
+  return LOADOUT_RARITIES.find((tier) => new RegExp(`\\b${tier}\\b`).test(lower));
+}
+
 export function parseLoadoutToken(content: string): LoadoutShowcase | null {
   const match = content.match(LOADOUT_TOKEN);
   if (!match) return null;
   const flags = match[1].toLowerCase();
   return {
     shiny: /\bshiny\b/.test(flags),
-    rarity: /\bdivine\b/.test(flags) ? "divine" : undefined,
+    rarity: parseRarity(flags),
   };
 }
 
@@ -58,10 +70,14 @@ export function inferLoadoutShowcase(
   if (!prompt) return null;
   if (itemCount > SET_SLOT_COUNT) return null;
   const shiny = /\b(?:all\s+)?shiny\b/i.test(prompt);
-  const divine = /\b(?:all\s+)?divine\b/i.test(prompt);
-  const wantsSet = /\b(?:set|loadout|build me|show me|visualize|equip(?:ped)?)\b/i.test(prompt);
-  if ((!wantsSet && !(shiny && divine)) || (!shiny && !divine)) return null;
-  return { shiny, rarity: divine ? "divine" : undefined };
+  const rarity = parseRarity(prompt);
+  const wantsVisual =
+    /\b(?:set|loadout|build me|show me|visualize|equip(?:ped)?|make\s+(?:it|them|this|that)|looks?\s+like)\b/i.test(
+      prompt,
+    );
+  if (!shiny && !rarity) return null;
+  if (!wantsVisual && !(shiny && rarity)) return null;
+  return { shiny, rarity };
 }
 
 /** "with Fractal Blades, Cloak of X, and Snake Eye ring" → those four names. */
@@ -72,7 +88,7 @@ export function extractNamedSetItems(prompt: string): string[] {
     .split(/,\s*(?:and\s+)?|\s+and\s+/i)
     .map((part) =>
       part
-        .replace(/\b(?:all\s+)?(?:shiny|divine)\b/gi, "")
+        .replace(/\b(?:all\s+)?(?:shiny|divine|legendary|rare|uncommon)\b/gi, "")
         .replace(/^(?:and|&)\s+/i, "")
         .trim()
         .replace(/\s+/g, " "),

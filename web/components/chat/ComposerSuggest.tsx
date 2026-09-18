@@ -3,50 +3,71 @@
 export interface SuggestHit {
   name: string;
   kind: string;
+  alias?: string;
+}
+
+export function lastSuggestToken(input: string): { lead: string; last: string } {
+  const match = input.match(/^(.*?)(\S+)$/);
+  if (!match) return { lead: input, last: "" };
+  return { lead: match[1], last: match[2] };
+}
+
+function completionsFor(hit: SuggestHit): string[] {
+  return [hit.alias, hit.name].filter((value): value is string => Boolean(value));
+}
+
+function completeLastWord(last: string, cand: string): string | null {
+  const lower = last.toLowerCase();
+  if (last.length < 2) return null;
+  if (cand.toLowerCase().startsWith(lower) && cand.length > last.length) {
+    return last + cand.slice(last.length);
+  }
+  for (const word of cand.split(/\s+/)) {
+    if (word.toLowerCase().startsWith(lower) && word.length > last.length) {
+      return last + word.slice(last.length);
+    }
+  }
+  return null;
+}
+
+/** Keep the sentence. Fill only the word the user is on. */
+export function applySuggest(input: string, hit: SuggestHit): string {
+  const { lead, last } = lastSuggestToken(input);
+  if (last.length < 2) return input;
+  for (const cand of completionsFor(hit)) {
+    const done = completeLastWord(last, cand);
+    if (done) return lead + done;
+  }
+  return input;
+}
+
+export function ghostRemainder(input: string, hit: SuggestHit): string {
+  const next = applySuggest(input, hit);
+  if (!next.toLowerCase().startsWith(input.toLowerCase())) return "";
+  if (next.length <= input.length) return "";
+  return next.slice(input.length);
+}
+
+export function pickGhostHit(input: string, hits: SuggestHit[]): SuggestHit | undefined {
+  return hits.find((hit) => ghostRemainder(input, hit).length > 0);
 }
 
 interface Props {
-  hits: SuggestHit[];
-  onPick: (name: string) => void;
+  input: string;
+  hit?: SuggestHit;
 }
 
-export function applySuggest(input: string, insert: string): string {
-  const flags = input.match(/^((?:(?:all\s+)?(?:shiny|divine)\s+)+)/i);
-  return flags ? `${flags[1]}${insert}` : insert;
-}
-
-export function ComposerSuggest({ hits, onPick }: Props) {
-  if (!hits.length) return null;
+/** Grey remainder of the current word, painted over the composer. */
+export function ComposerSuggest({ input, hit }: Props) {
+  const rest = hit ? ghostRemainder(input, hit) : "";
+  if (!rest) return null;
   return (
     <div
-      className="flex flex-wrap gap-1.5 px-4 pt-3"
-      role="listbox"
-      aria-label="Name suggestions"
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-10 overflow-hidden whitespace-pre-wrap break-words text-base leading-5 md:text-sm"
     >
-      {hits.map((hit, i) => (
-        <button
-          key={`${hit.kind}:${hit.name}`}
-          type="button"
-          role="option"
-          aria-selected={i === 0}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            onPick(hit.name);
-          }}
-          className={`rounded-full border px-2.5 py-1 text-xs ${
-            i === 0
-              ? "border-[#737373] bg-[#303030] text-[#ececec]"
-              : "border-[#404040] text-[#a3a3a3] hover:border-[#525252] hover:text-[#ececec]"
-          }`}
-        >
-          {hit.name}
-          {i === 0 ? (
-            <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[#737373]">
-              Tab
-            </span>
-          ) : null}
-        </button>
-      ))}
+      <span className="text-[#ececec]">{input}</span>
+      <span className="text-[#737373]">{rest}</span>
     </div>
   );
 }

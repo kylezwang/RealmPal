@@ -19,7 +19,7 @@ import { FeedbackModal } from "./FeedbackModal";
 import { hasUnseenChangelog } from "@/lib/changelog";
 import { LeftoverAskBar } from "./LeftoverAskBar";
 import { ComposerImages } from "./ComposerImages";
-import { applySuggest, ComposerSuggest, type SuggestHit } from "./ComposerSuggest";
+import { applySuggest, ComposerSuggest, pickGhostHit, type SuggestHit } from "./ComposerSuggest";
 import {
   CHAT_IMAGE_ACCEPT,
   CHAT_IMAGE_MAX,
@@ -917,9 +917,10 @@ export function ChatInterface() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Tab" && suggestHits[0] && !e.shiftKey) {
+    const ghostHit = pickGhostHit(input, suggestHits);
+    if (e.key === "Tab" && ghostHit && !e.shiftKey) {
       e.preventDefault();
-      setInput(applySuggest(input, suggestHits[0].name));
+      setInput(applySuggest(input, ghostHit));
       setSuggestHits([]);
       return;
     }
@@ -1243,6 +1244,7 @@ export function ChatInterface() {
   const leftoverActive =
     usage.tier !== "paid" && (leftoverArmed || usage.remaining <= 0);
   const encodingImages = pendingImages.some((image) => !image.data && !image.error);
+  const composerGhost = pickGhostHit(input, suggestHits);
   const canSend =
     !isStreaming &&
     !encodingImages &&
@@ -1469,15 +1471,9 @@ export function ChatInterface() {
               onDrop={handleComposerDrop}
             >
               <ComposerImages images={pendingImages} onRemove={removeImage} />
-              <ComposerSuggest
-                hits={suggestHits}
-                onPick={(name) => {
-                  setInput(applySuggest(input, name));
-                  setSuggestHits([]);
-                  inputRef.current?.focus();
-                }}
-              />
               <div className="flex items-end gap-2 px-4 py-3">
+              <div className="relative min-h-[24px] min-w-0 flex-1">
+              <ComposerSuggest input={input} hit={composerGhost} />
               <textarea
                 ref={inputRef}
                 value={input}
@@ -1493,11 +1489,14 @@ export function ChatInterface() {
                 }
                 rows={1}
                 style={{ resize: "none" }}
-                className="flex-1 bg-transparent text-base md:text-sm leading-5 text-[#ececec] placeholder-[#525252] focus:outline-none min-h-[24px] max-h-[200px] overflow-y-auto"
+                className={`relative z-0 w-full appearance-none bg-transparent p-0 text-base md:text-sm leading-5 placeholder-[#525252] caret-[#ececec] focus:outline-none min-h-[24px] max-h-[200px] overflow-y-auto ${
+                  composerGhost ? "text-transparent" : "text-[#ececec]"
+                }`}
                 aria-label="Message input"
                 enterKeyHint="send"
                 disabled={isStreaming}
               />
+              </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <input
                   ref={fileInputRef}

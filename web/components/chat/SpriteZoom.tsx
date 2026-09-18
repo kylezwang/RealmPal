@@ -2,14 +2,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  DIVINE_GLOW,
-  DIVINE_SLOT_X,
+  RARITY_GLOW,
+  RARITY_SLOT_X,
   DIAMOND_FRAME_OFFSET_PX,
   SLOT_NATIVE,
   SLOTS_SHEET,
   ShinyStar,
   SpriteIcon,
 } from "./SpriteIcon";
+import type { LoadoutRarity } from "@/lib/loadoutShowcase";
 
 const ZOOM_SIZE = 128;
 
@@ -33,6 +34,7 @@ export interface SpriteZoomDetails {
   caption?: string;
   glow?: string;
   divine?: boolean;
+  rarity?: LoadoutRarity;
   shiny?: boolean;
   slotFrame?: {
     sheetUrl: string;
@@ -89,9 +91,11 @@ function DecoratedItemSprite({
   details?: SpriteZoomDetails;
   size: number;
 }) {
-  const glow = details?.glow ?? (details?.divine ? DIVINE_GLOW : undefined);
-  const diamond = details?.slotFrame ?? (details?.divine
-    ? { sheetUrl: SLOTS_SHEET, x: DIVINE_SLOT_X, y: 0, nativeSize: SLOT_NATIVE }
+  const rarity = details?.rarity ?? (details?.divine ? "divine" : undefined);
+  const glow =
+    details?.glow ?? (rarity ? RARITY_GLOW[rarity] : undefined);
+  const diamond = details?.slotFrame ?? (rarity
+    ? { sheetUrl: SLOTS_SHEET, x: RARITY_SLOT_X[rarity], y: 0, nativeSize: SLOT_NATIVE }
     : undefined);
   const starSize = Math.max(12, Math.round(size * 0.12));
   const diamondOffset = Math.round(DIAMOND_FRAME_OFFSET_PX * (size / 40));
