@@ -142,3 +142,31 @@ async def test_router_sync_pushes_local_sessions_then_returns_merged_list(anon_s
     )
     ids = {s.id for s in result.sessions}
     assert ids == {"server-only", "local-only"}
+
+
+def test_postgres_ddl_widens_integer_to_bigint():
+    from api.services.db import postgres_ddl
+
+    widened = postgres_ddl(
+        "CREATE TABLE chat_sessions (updated_at INTEGER NOT NULL)"
+    )
+    assert "BIGINT" in widened
+    assert "INTEGER" not in widened
+    # Do not turn BIGINT into BBIGINT on a second pass.
+    assert postgres_ddl(widened) == widened
+    assert "BYTEA" in postgres_ddl("data BYTEA NOT NULL, created_at INTEGER")
+
+
+async def test_upsert_accepts_a_javascript_millisecond_timestamp(anon_settings):
+    """The browser sends Date.now(), which overflows Postgres INTEGER."""
+    stamp = 1_789_716_549_690
+    await chat_sessions.upsert_session(
+        anon_settings,
+        "a@b.com",
+        "s1",
+        title="Live chat",
+        messages=[],
+        updated_at=stamp,
+    )
+    sessions = await chat_sessions.list_sessions(anon_settings, "a@b.com")
+    assert sessions[0]["updatedAt"] == stamp

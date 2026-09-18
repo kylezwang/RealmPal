@@ -43,6 +43,10 @@ class UniqueViolation(Exception):
 
 
 _QMARK = re.compile(r"\?")
+# SQLite INTEGER is 64-bit. Postgres INTEGER is int32. A JS Date.now()
+# millisecond timestamp (e.g. 1_789_716_549_690) overflows int32 and 500s
+# chat-session sync. Found live Sep 18 on POST /chat/sessions/sync.
+_SQLITE_INTEGER = re.compile(r"\bINTEGER\b", re.I)
 
 
 def _pg_placeholders(query: str) -> str:
@@ -55,6 +59,15 @@ def _pg_placeholders(query: str) -> str:
         return f"${n}"
 
     return _QMARK.sub(_sub, query)
+
+
+def postgres_ddl(statement: str) -> str:
+    """Same CREATE/ALTER text, with INTEGER widened to BIGINT.
+
+    Callers write SQLite DDL. SQLite INTEGER holds a millisecond timestamp;
+    Postgres INTEGER does not. BIGINT is the Postgres type that matches.
+    """
+    return _SQLITE_INTEGER.sub("BIGINT", statement)
 
 
 def is_postgres(settings: Settings) -> bool:
@@ -123,7 +136,8 @@ async def run_ddl(
         pool = await pg_pool(settings.database_url)
         async with pool.acquire() as conn:
             for stmt in stmts:
-                await conn.execute(stmt)
+                await conn.execute(postgres_ddl(stmt))
+            await widen_existing_integers(conn)
         return
 
     def _run() -> None:
@@ -162,7 +176,11 @@ async def add_column_if_missing(
     if is_postgres(settings):
         pool = await pg_pool(settings.database_url)
         async with pool.acquire() as conn:
-            await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}")
+            await conn.execute(
+                postgres_ddl(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}"
+                )
+            )
         return
 
     def _run() -> None:
@@ -173,6 +191,27 @@ async def add_column_if_missing(
 
     async with _sqlite_write_lock:
         await asyncio.to_thread(_run)
+
+
+async def widen_existing_integers(conn: Any) -> None:
+    """ALTER leftover int32 columns on tables created before INTEGER was
+    rewritten to BIGINT. CREATE TABLE IF NOT EXISTS does not change types.
+    Column names come from information_schema, never from the request."""
+    rows = await conn.fetch(
+        """
+        SELECT table_schema, table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND data_type = 'integer'
+        """
+    )
+    for row in rows:
+        schema = row["table_schema"]
+        table = row["table_name"]
+        column = row["column_name"]
+        await conn.execute(
+            f'ALTER TABLE "{schema}"."{table}" ALTER COLUMN "{column}" TYPE BIGINT'
+        )
 
 
 async def execute(settings: Settings, db_path: str, query: str, params: tuple = ()) -> None:

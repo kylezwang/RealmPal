@@ -80,6 +80,21 @@ def test_player_dps_ask_stays_on_sonnet_even_if_flagged_player_only():
     )
 
 
+def test_dps_breakdown_follow_up_stays_on_sonnet():
+    """Found live Sep 18: Break it down after a Bard DPS ask used Haiku."""
+    settings = _settings()
+    assert (
+        pick_chat_model(
+            "Break it down",
+            settings,
+            history=["What's the DPS for Turbine's bard?"],
+            player_only=True,
+            context="x" * 500,
+        )
+        == settings.claude_model
+    )
+
+
 def test_rich_rag_context_uses_haiku():
     settings = _settings()
     context = "x" * 500
