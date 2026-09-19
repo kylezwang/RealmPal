@@ -177,7 +177,7 @@ interface Message {
 
 
 /** Most recent player IGN mentioned in this chat | used for follow-ups like
- * "How many exaltations does Turbine have?" where the name isn't in the
+ * "How many exaltations does IGN have?" where the name isn't in the
  * standard "/player X" / "look up player X" phrasing. */
 function findRecentPlayerName(messages: Message[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -664,9 +664,9 @@ export function ChatInterface() {
       return [...prev, { role: "assistant", content: "", id: crypto.randomUUID() }];
     });
 
-    // If this looks like a player lookup ("Look up player Turbine", "/player
-    // Turbine", "What characters does Turbine have?") or a named-character
-    // DPS ask ("What's the DPS for Turbine's bard?"), fetch that player's
+    // If this looks like a player lookup ("Look up player IGN", "/player
+    // IGN", "What characters does IGN have?") or a named-character
+    // DPS ask ("What's the DPS for IGN's bard?"), fetch that player's
     // profile in parallel so we can attach the same character/equipment card
     // (sprites + hover tooltips including on-character enchants) the lookup
     // path already uses. The model then does not have to reprint that loadout.
@@ -677,8 +677,8 @@ export function ChatInterface() {
       extractClassFromPrompt(trimmed) ??
       (!accountLookup ? findRecentHighlightClass(messages) : undefined);
     // Player name in this message, or fall back to the most recent player
-    // looked up in this chat (e.g. "How many exaltations does Turbine have?"
-    // or "what do the numbers look like?" after an earlier "Turbine's bard").
+    // looked up in this chat (e.g. "How many exaltations does IGN have?"
+    // or "what do the numbers look like?" after an earlier "IGN's bard").
     const lookupName =
       extractPlayerLookup(trimmed) ??
       (asksAboutExaltations || shouldReusePlayerCard(trimmed)

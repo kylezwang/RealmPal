@@ -8,7 +8,7 @@ import { CLASS_NAMES } from "./loadoutShowcase";
  * This is intentionally simple (regex, not NLP) | it only needs to catch
  * the common phrasings we actually expect ("Look up player X",
  * "/player X", "What characters does X have", "What's the DPS for
- * Turbine's bard"), not every possible way of asking about a player. A
+ * IGN's bard"), not every possible way of asking about a player. A
  * miss just means the response comes back as plain text with no card,
  * which is the same experience as before this feature existed.
  *
@@ -24,7 +24,7 @@ export const IGN_MAX_LENGTH = 20;
 const IGN_SAFE = /[^A-Za-z0-9_]/g;
 
 export const PLAYER_LOOKUP_PREFIX = "Look up player ";
-export const DEMO_PLAYER_IGN = "Turbine";
+export const DEMO_PLAYER_IGN = "IGN";
 export const PLAYER_LOOKUP_EXAMPLE = `${PLAYER_LOOKUP_PREFIX}${DEMO_PLAYER_IGN}`;
 
 /** Strip everything that is not a legal IGN character and cap the length. */
@@ -43,15 +43,15 @@ export function playerLookupMessage(raw: string): string | null {
   return `${PLAYER_LOOKUP_PREFIX}${ign}`;
 }
 
-/** Follow-up phrasings like "How many exaltations does Turbine have?" */
+/** Follow-up phrasings like "How many exaltations does IGN have?" */
 const EXALT_PLAYER_RE =
   /\bexalt(?:ation)?s?\s+(?:does|do|did)\s+([A-Za-z0-9_]{1,20})\b/i;
 
-/** "Turbine's exaltations" / "show Turbine exaltations" */
+/** "IGN's exaltations" / "show IGN exaltations" */
 const POSSESSIVE_EXALT_RE =
   /\b([A-Za-z0-9_]{1,20})(?:'?s)?\s+exalt(?:ation)?s?\b/i;
 
-/** "... for Turbine" / "... of Turbine" when the message is about exaltations */
+/** "... for IGN" / "... of IGN" when the message is about exaltations */
 const EXALT_FOR_PLAYER_RE =
   /\bexalt(?:ation)?s?\b[\s\S]{0,40}\b(?:for|of)\s+([A-Za-z0-9_]{1,20})\b/i;
 
@@ -174,7 +174,7 @@ export function isAccountPlayerLookup(message: string): boolean {
 
 /**
  * The large per-class table is opt-in. A count question such as "How many
- * exaltations does Turbine have?" should only get the summary number; show
+ * exaltations does IGN have?" should only get the summary number; show
  * the table when the user explicitly asks to see/list the account's
  * exaltations or requests a full/detailed breakdown.
  */

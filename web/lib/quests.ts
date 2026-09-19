@@ -1,4 +1,5 @@
 import { decodeAuthEmail } from "./api";
+import { PLAYER_LOOKUP_EXAMPLE } from "./playerLookup";
 
 export interface DailyQuest {
   id: "dungeon" | "lookup" | "shiny-divine";
@@ -235,7 +236,7 @@ export function todaysQuests(art: QuestArt = fallbackQuestArt()): DailyQuest[] {
       id: "lookup",
       title: "Look up a player",
       hint: "Look up any in-game name.",
-      prompt: "Look up player Turbine",
+      prompt: PLAYER_LOOKUP_EXAMPLE,
       match: (message) =>
         /(?:look\s*up|lookup)\s+player\b/i.test(message) || /^\/player\s+\S+/i.test(message),
       icon: "user",

@@ -2,6 +2,7 @@
 import Image from "next/image";
 import type { ChatUsage, PlayerProfile } from "@/lib/api";
 import { SIDEBAR_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
+import { DEMO_PLAYER_IGN } from "@/lib/playerLookup";
 import { SWORD_SPRITE, USER_SPRITE } from "@/lib/sprites";
 import type { ChatSession } from "@/lib/chatHistory";
 import { ExamplePrompt } from "./ExamplePrompt";
@@ -127,7 +128,7 @@ export function ChatSidebar({
             type="text"
             value={ign}
             onChange={(e) => onIgnChange(e.target.value)}
-            placeholder="Turbine"
+            placeholder={DEMO_PLAYER_IGN}
             maxLength={20}
             className="w-full rounded-lg bg-[#262626] border border-[#404040] pl-2.5 pr-8 py-1.5 text-base md:text-xs text-[#ececec] placeholder-[#525252] focus:outline-none focus:border-white"
             aria-label="In-game name"
