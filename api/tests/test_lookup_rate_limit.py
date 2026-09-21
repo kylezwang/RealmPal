@@ -135,16 +135,19 @@ async def test_warmed_item_cards_do_not_spend_the_lookup_window(
             assert response.status_code == 200
 
 
-async def test_redis_failure_fails_open(monkeypatch, redis_client, anon_settings):
-    """An infra blip should degrade the feature, not take it down."""
+async def test_redis_failure_is_503(monkeypatch, redis_client, anon_settings):
+    """Lookup metering must fail closed when Redis is down."""
 
     async def boom(*args, **kwargs):
         raise ConnectionError("redis is unreachable")
 
     monkeypatch.setattr(redis_client, "incr", boom)
-    await enforce_lookup_rate_limit(
-        build_request(), anon_settings, redis_client, None
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_lookup_rate_limit(
+            build_request(), anon_settings, redis_client, None
+        )
+    assert exc_info.value.status_code == 503
+    assert "Too many lookups" in exc_info.value.detail
 
 
 # --- name sanitization ---------------------------------------------------

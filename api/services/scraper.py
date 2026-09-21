@@ -33,6 +33,8 @@ from ..models.item import ItemProfile
 
 REALMEYE_BASE = "https://www.realmeye.com"
 UMI_BASE = "https://www.umienjoyers.com"
+ROTMG_HUB_BASE = "https://hub.realmofthemadgod.com"
+ROTMG_HUB_UPDATES = f"{ROTMG_HUB_BASE}/news0/updates0"
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -2007,3 +2009,145 @@ async def composite_character_portrait(
     if not data_uri or not str(data_uri).startswith("data:image/png"):
         raise ScraperError("Character portrait composite did not return a PNG")
     return str(data_uri)
+
+
+_HUB_INDEX_JS = """() => {
+  const cards = [...document.querySelectorAll(
+    'a[href^="/news0/updates0/"].border-sem-component-br-component-card,'
+    + 'a.border-sem-component-br-component-card[href^="/news0/updates0/"]'
+  )];
+  return cards.map((a) => {
+    const href = a.getAttribute('href') || '';
+    const slug = href.split('/').filter(Boolean).pop() || '';
+    const dateEl = a.querySelector('.text-sem-component-tx-component-news-date p');
+    const titleEl = a.querySelector('.text-sem-component-tx-component-news-title');
+    const img = a.querySelector('img');
+    return {
+      slug,
+      title: (titleEl && titleEl.textContent.trim()) || slug,
+      date: (dateEl && dateEl.textContent.trim()) || '',
+      url: href.startsWith('http') ? href : ('https://hub.realmofthemadgod.com' + href),
+      thumbnail_url: (img && img.src) || '',
+    };
+  });
+}"""
+
+
+async def scrape_rotmg_hub_index(*, max_posts: int = 24) -> list[dict]:
+    """Playwright scrape of the official Updates index (client-rendered cards)."""
+    import httpx
+
+    from .rotmg_hub import HUB_UPDATES_URL, parse_index_cards
+
+    logger.bind(url=HUB_UPDATES_URL, max_posts=max_posts).info(
+        "Scraping RotMG Hub updates index"
+    )
+    cards: list[dict] = []
+    async with _playwright_browser() as browser:
+        page = await _new_page(browser)
+        try:
+            await _goto_with_retry(
+                page,
+                HUB_UPDATES_URL,
+                ready_selector='a[href^="/news0/updates0/"]',
+                timeout=25_000,
+            )
+            for _ in range(8):
+                consent = page.locator(
+                    'button:has-text("Accept"), button:has-text("Agree"), '
+                    'button:has-text("I agree")'
+                )
+                if await consent.count():
+                    try:
+                        await consent.first.click(timeout=2000)
+                    except Exception:
+                        pass
+                raw = await page.evaluate(_HUB_INDEX_JS)
+                if isinstance(raw, list):
+                    cards = [row for row in raw if isinstance(row, dict) and row.get("slug")]
+                if len(cards) >= max_posts:
+                    break
+                load_more = page.locator('button:has-text("Load More")')
+                if not await load_more.count():
+                    break
+                before = len(cards)
+                try:
+                    await load_more.first.click(timeout=5000)
+                    await page.wait_for_timeout(1200)
+                except Exception:
+                    break
+                raw = await page.evaluate(_HUB_INDEX_JS)
+                if isinstance(raw, list):
+                    cards = [row for row in raw if isinstance(row, dict) and row.get("slug")]
+                if len(cards) <= before:
+                    break
+        finally:
+            await page.context.close()
+
+    if cards:
+        return cards[:max_posts]
+
+    # Fallback: static HTML sometimes works after hydration in headless runs.
+    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": _USER_AGENT}) as client:
+        res = await client.get(HUB_UPDATES_URL)
+        res.raise_for_status()
+        parsed = parse_index_cards(res.text)
+    return parsed[:max_posts]
+
+
+async def fetch_rotmg_hub_article(
+    slug: str,
+    *,
+    date: str = "",
+    title: str = "",
+) -> dict:
+    """Fetch one official patch post. Body is SSR; index date fills in."""
+    import httpx
+
+    from .rotmg_hub import parse_article_html, post_url
+
+    url = post_url(slug)
+    logger.bind(slug=slug, url=url).info("Fetching RotMG Hub article")
+    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": _USER_AGENT}) as client:
+        res = await client.get(url)
+        res.raise_for_status()
+        html = res.text
+
+    parsed = parse_article_html(html, slug, date=date, title=title)
+    if parsed.get("text"):
+        return parsed
+
+    async with _playwright_browser() as browser:
+        page = await _new_page(browser)
+        try:
+            await _goto_with_retry(
+                page,
+                url,
+                ready_selector=".prose.prose-hub, .prose-hub",
+                timeout=25_000,
+            )
+            payload = await page.evaluate(
+                """() => {
+                  const prose = document.querySelector('.prose.prose-hub, .prose-hub');
+                  if (!prose) return null;
+                  const h1 = document.querySelector('h1.text-heading-h1, h1');
+                  return {
+                    title: (h1 && h1.textContent.trim()) || '',
+                    html: prose.innerHTML,
+                    text: prose.innerText,
+                  };
+                }"""
+            )
+        finally:
+            await page.context.close()
+
+    if not payload or not payload.get("text"):
+        raise ScraperError(f"RotMG Hub article body empty for {slug}")
+
+    wrapped = f'<div class="prose prose-hub">{payload.get("html") or ""}</div>'
+    return parse_article_html(
+        f'<h1 class="text-heading-h1">{payload.get("title") or title}</h1>{wrapped}',
+        slug,
+        date=date,
+        title=payload.get("title") or title,
+    )

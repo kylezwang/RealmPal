@@ -207,7 +207,25 @@ _SOURCE_DROP_RE = re.compile(
 )
 _SOURCE_SPLIT = re.compile(r"\s+(?:and|&)\s+|,\s+(?:and\s+)?", re.I)
 _SKIP_DROP_SOURCE = frozenset(
-    {"you", "i", "we", "it", "they", "he", "she", "this", "that"}
+    {
+        "you",
+        "i",
+        "we",
+        "it",
+        "they",
+        "he",
+        "she",
+        "this",
+        "that",
+        "enemy",
+        "enemies",
+        "boss",
+        "bosses",
+        "mob",
+        "mobs",
+        "monster",
+        "monsters",
+    }
 )
 _SKIP_SOURCE_PREFIX = frozenset(
     {"what", "which", "where", "how", "who", "why", "best"}
@@ -240,6 +258,15 @@ def _split_drop_sources(raw: str) -> list[str]:
     return names
 
 
+_ENEMY_DROP_RE = re.compile(
+    r"^(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+"
+    r"(?:in\s+|from\s+|inside\s+)(?:the\s+)?(.+?)\s+drops?\b"
+    r"|^(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+drops?\s+"
+    r"(?:the\s+)?(.+?)\s*\??\s*$",
+    re.I,
+)
+
+
 def extract_drop_source_query(message: str) -> Optional[tuple[list[str], bool]]:
     """Dungeon/boss/NPC loot ask: (['Keyper'], shiny) or None.
 
@@ -247,8 +274,19 @@ def extract_drop_source_query(message: str) -> Optional[tuple[list[str], bool]]:
     because this never matched a guide verb and Claude filled in an item.
     Same day: Nox / Twilight Archmage missed because only index titles
     (not drops_from bosses) were treated as sources.
+
+    Live Sep 21: 'what enemy drops ocean trench' captured the word 'enemy'
+    as the source. Generic nouns are skipped, and 'what enemy drops X'
+    treats X as the dungeon or item.
     """
     text = (message or "").strip()
+    enemy_match = _ENEMY_DROP_RE.search(text)
+    if enemy_match:
+        raw = next((group for group in enemy_match.groups() if group), "")
+        names = _split_drop_sources(raw)
+        if names:
+            shiny = bool(re.search(r"\bshin(?:y|ies)\b", text, re.I))
+            return names, shiny
     match = _SOURCE_DROP_RE.search(text)
     if not match:
         return None
@@ -311,6 +349,30 @@ async def cached_drops_from_source(
             if len(names) >= limit:
                 return names, wiki_url
     return names, wiki_url
+
+
+def group_drops_by_enemy(drops: list) -> list[tuple[str, list[str]]]:
+    """Preserve first-seen enemy order. Ungrouped rows stay under Other."""
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    seen: dict[str, set[str]] = {}
+    for row in drops or []:
+        if not isinstance(row, dict):
+            continue
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        source = (row.get("drops_from") or "").strip() or "Other"
+        if source not in groups:
+            groups[source] = []
+            seen[source] = set()
+            order.append(source)
+        key = name.lower()
+        if key in seen[source]:
+            continue
+        seen[source].add(key)
+        groups[source].append(name)
+    return [(source, groups[source]) for source in order]
 
 
 def event_index_entries() -> list[dict]:

@@ -173,6 +173,36 @@ def test_extract_drop_source_query_bosses_and_missing_does():
     assert single[0] == ["Nox the wild shadow"]
 
 
+def test_extract_drop_source_query_does_not_treat_enemy_as_the_source():
+    from api.services.dungeon_guide import extract_drop_source_query
+
+    parsed = extract_drop_source_query("what enemy drops ocean trench")
+    assert parsed is not None
+    names, shiny = parsed
+    assert shiny is False
+    assert [name.lower() for name in names] == ["ocean trench"]
+    assert extract_drop_source_query("what enemies in hardmode shatters drop")[0][
+        0
+    ].lower() == "hardmode shatters"
+
+
+def test_group_drops_by_enemy_keeps_boss_order():
+    from api.services.dungeon_guide import group_drops_by_enemy
+
+    grouped = group_drops_by_enemy(
+        [
+            {"name": "Valen Helm", "drops_from": "Valen the Unbreakable"},
+            {"name": "Nox Cloak", "drops_from": "Nox the Wild Shadow"},
+            {"name": "Valen Ring", "drops_from": "Valen the Unbreakable"},
+        ]
+    )
+    assert [source for source, _items in grouped] == [
+        "Valen the Unbreakable",
+        "Nox the Wild Shadow",
+    ]
+    assert grouped[0][1] == ["Valen Helm", "Valen Ring"]
+
+
 def test_mentions_drop_source_matches_boss_cells():
     from api.services.dungeon_guide import mentions_drop_source
 

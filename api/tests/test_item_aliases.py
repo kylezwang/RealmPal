@@ -165,6 +165,31 @@ def test_shiny_only_item_list_with_no_set_intent_verb_routes_to_set_visualizer()
     assert is_set_visualize_query(message)
 
 
+def test_comma_list_without_with_is_a_named_set():
+    names = extract_set_item_names(
+        "Rare shiny doom bow, rare shiny vile, rare shiny straitjacket, "
+        "legendary shiny ring of skeletal specters"
+    )
+    lowered = [name.lower() for name in names]
+    assert lowered[0] == "doom bow"
+    assert "vile" in lowered[1]
+    assert "straitjacket" in lowered[2]
+    assert "skeletal specters" in lowered[3]
+
+
+def test_same_set_followup_is_a_visualize_query_with_history():
+    from api.services.item_aliases import is_set_followup, last_set_names_from_history
+
+    prior = (
+        "Rare shiny doom bow, rare shiny vile, rare shiny straitjacket, "
+        "legendary shiny ring of skeletal specters"
+    )
+    assert is_set_followup("Same set but all divine")
+    assert is_set_followup("Show me all shiny divine and awakened")
+    assert last_set_names_from_history([prior])[0].lower() == "doom bow"
+    assert is_set_visualize_query("Same set but all divine", history=[prior])
+
+
 def test_parse_rarity_picks_the_highest_tier():
     assert parse_rarity("make it uncommon") == "uncommon"
     assert parse_rarity("make it rare") == "rare"

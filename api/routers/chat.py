@@ -45,11 +45,20 @@ from ..services.rag import build_system_prompt, rag_exclude_slugs, retrieve_cont
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.biomes import extract_biome_query
+from ..services.rotmg_hub import extract_hub_query
 from ..services.enchanting import is_enchant_query
 from ..services.dps_specialist import is_dps_query, is_stat_number_query
-from ..services.item_aliases import is_set_visualize_query, is_stat_class_shiny_divine_query
+from ..services.item_aliases import (
+    is_set_followup,
+    is_set_visualize_query,
+    is_stat_class_shiny_divine_query,
+)
 from ..services.player_lookup import extract_player_ign
-from ..services.skin_visualizer import is_skin_visualize_query, outfit_history_from_messages
+from ..services.skin_visualizer import (
+    is_skin_visualize_query,
+    outfit_history_from_messages,
+    visual_history_from_messages,
+)
 from ..services.dev_access import is_debug_unlimited
 from ..services.admin_access import is_admin
 from ..services.rate_limit import (
@@ -73,6 +82,7 @@ from ..services import product_feedback
 from ..services.claude_billing import consume_claude_reply, peek_claude_usage
 from ..services import daily_quests
 from ..services.stored_answers import maybe_mint_brief, try_stored_reply
+from ..services.validation import sanitize_ign
 from ..auth import decode_jwt, email_from_session_header
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -84,7 +94,6 @@ MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
 # each message in a long conversation progressively more expensive.
 HISTORY_CONTENT_CAP = 4_000
 ALLOWED_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
-ALLOWED_DOCUMENT_TYPES = frozenset({"application/pdf"})
 
 
 def _validate_attachment(att: ChatAttachment) -> None:
@@ -96,7 +105,7 @@ def _validate_attachment(att: ChatAttachment) -> None:
     if len(raw) > MAX_ATTACHMENT_BYTES:
         raise HTTPException(status_code=400, detail="Attachment too large (max 4MB)")
     media = (att.media_type or "").lower()
-    if media not in ALLOWED_IMAGE_TYPES and media not in ALLOWED_DOCUMENT_TYPES:
+    if media not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported attachment type")
 
 
@@ -115,7 +124,7 @@ def _request_attachments(body: ChatRequest) -> list[ChatAttachment]:
 
 
 def _user_content(body: ChatRequest, attachments: list[ChatAttachment]) -> str | list[dict]:
-    """Plain text, or Claude vision/document blocks when files are attached."""
+    """Plain text, or Claude vision blocks when images are attached."""
     text = body.message.strip()
     if not attachments:
         return text
@@ -123,16 +132,10 @@ def _user_content(body: ChatRequest, attachments: list[ChatAttachment]) -> str |
     blocks: list[dict] = []
     for att in attachments:
         media = att.media_type.lower()
-        if media in ALLOWED_IMAGE_TYPES:
-            blocks.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": media, "data": att.data},
-            })
-        else:
-            blocks.append({
-                "type": "document",
-                "source": {"type": "base64", "media_type": media, "data": att.data},
-            })
+        blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media, "data": att.data},
+        })
     caption = text or (
         "The user attached RotMG screenshot(s). Read the character, gear, vault, "
         "or inventory in the image(s) and help with their question."
@@ -194,7 +197,10 @@ async def _enforce_chat_burst(
         count = await consume_windowed(redis, burst)
     except Exception:
         logger.exception("Could not enforce chat burst limit")
-        return
+        raise HTTPException(
+            status_code=503,
+            detail="Too many questions. Try again in a minute.",
+        ) from None
     if count <= burst.limit:
         return
     logger.bind(bucket=burst.label, used=count, limit=burst.limit).info(
@@ -223,10 +229,14 @@ async def _enforce_quota(
         await _enforce_paid_ceiling(auth_header, redis, settings)
         return
 
-    count = await consume(redis, quota)
-    bonus = await daily_quests.peek_free_bonus(
-        redis, _quest_subject(user, quota), settings
-    )
+    try:
+        count = await consume(redis, quota)
+        bonus = await daily_quests.peek_free_bonus(
+            redis, _quest_subject(user, quota), settings
+        )
+    except Exception:
+        logger.exception("Could not enforce chat quota")
+        raise HTTPException(status_code=503, detail="Usage unavailable") from None
     if count <= quota.limit + bonus:
         return
 
@@ -292,7 +302,11 @@ async def _enforce_paid_ceiling(
         limit=settings.paid_message_limit,
         label="paid",
     )
-    count = await consume(redis, quota)
+    try:
+        count = await consume(redis, quota)
+    except Exception:
+        logger.exception("Could not enforce paid chat ceiling")
+        raise HTTPException(status_code=503, detail="Usage unavailable") from None
     if count <= quota.limit:
         return
 
@@ -656,6 +670,8 @@ async def chat_stream(
     for att in attachments:
         _validate_attachment(att)
 
+    ign = sanitize_ign(body.ign)
+
     # Checked before the quota so a shut-off deployment doesn't silently
     # consume someone's allowance on a request it won't answer.
     unavailable = await disabled_reason(redis, settings)
@@ -670,6 +686,7 @@ async def chat_stream(
         msg.content for msg in body.history[-10:] if msg.role == "user"
     ]
     outfit_history = outfit_history_from_messages(body.history[-10:])
+    visual_history = visual_history_from_messages(body.history[-10:])
     paid = bool(
         user
         and user.email
@@ -681,7 +698,7 @@ async def chat_stream(
         stored = await try_stored_reply(
             redis,
             body.message,
-            history=outfit_history,
+            history=visual_history,
             ttl_seconds=settings.wiki_ttl_seconds,
             player_ttl_seconds=settings.player_ttl_seconds,
             has_attachment=bool(attachments),
@@ -715,12 +732,16 @@ async def chat_stream(
     history_texts = user_history
     dungeon_only = False
     player_only = False
+    hub_only = False
     try:
         query_text = body.message.strip()
         if not query_text and attachments:
             query_text = attachments[0].filename
         class_name, stat, buildish = parse_query(query_text, history=user_history)
         this_class, _this_stat, _this_build = parse_query(query_text)
+        hub_only = bool(extract_hub_query(query_text, history=user_history)) and not (
+            extract_player_ign(query_text) or extract_player_ign(query_text, history=user_history)
+        )
         dungeon_only = (
             bool(extract_dungeon_query(query_text, history=user_history))
             or bool(extract_biome_query(query_text))
@@ -748,10 +769,12 @@ async def chat_stream(
         if (
             dungeon_only
             or player_only
+            or hub_only
             or enchant_only
             or numbers_only
             or is_skin_visualize_query(query_text, history=outfit_history)
-            or is_set_visualize_query(query_text)
+            or is_set_visualize_query(query_text, history=visual_history)
+            or is_set_followup(query_text)
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
             or (class_name and stat)
             or (buildish and class_name)
@@ -796,14 +819,16 @@ async def chat_stream(
         )
         set_or_skin = (
             is_skin_visualize_query(query_text, history=outfit_history)
-            or is_set_visualize_query(query_text)
+            or is_set_visualize_query(query_text, history=visual_history)
+            or is_set_followup(query_text)
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
         )
         if build_ctx:
-            if player_only or enchant_only or dungeon_only or set_or_skin:
-                # Named sets, skins, dungeon guides, player lookups, and
-                # enchant briefs scrape RealmEye. Stamping the RealmShark
-                # leaderboard citation on top would misattribute the source.
+            if player_only or enchant_only or dungeon_only or hub_only or set_or_skin:
+                # Named sets, skins, dungeon guides, patch notes, player
+                # lookups, and enchant briefs scrape RealmEye or the official
+                # Hub. Stamping the RealmShark leaderboard citation on top
+                # would misattribute the source.
                 context = (
                     f"{context}\n\n---\n\n{build_ctx}" if context else build_ctx
                 )
@@ -814,7 +839,7 @@ async def chat_stream(
     except Exception as e:
         logger.bind(error=str(e)).warning("RealmShark build knowledge unavailable")
 
-    system_prompt = build_system_prompt(context, ign=body.ign)
+    system_prompt = build_system_prompt(context, ign=ign)
 
     # Build message history for Claude. Both the turn count and the size of
     # each turn are capped: input tokens are billed, and a long conversation
@@ -835,7 +860,7 @@ async def chat_stream(
     )
     logger.bind(
         session_id=body.session_id[:8],
-        ign=body.ign,
+        ign=ign,
         provider=settings.llm_provider,
         model=model,
         context_chunks=context.count("---") + 1 if context else 0,

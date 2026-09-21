@@ -25,6 +25,7 @@ from .dungeon_guide import (
     extract_dungeon_query,
     get_or_scrape_index,
     get_or_scrape_wiki,
+    group_drops_by_enemy,
     match_index_pages,
 )
 from .biomes import compose_biome_brief, extract_biome_query
@@ -34,17 +35,25 @@ from .dps_specialist import is_dps_query, is_stat_number_query
 from .item_aliases import (
     community_canonical,
     extract_set_item_names,
+    is_set_followup,
     item_can_be_shiny,
+    last_set_names_from_history,
     parse_rarity,
     prefer_original_name,
     resolve_item_query,
     resolve_item_query_with_trim,
+    retrieve_set_visualizer,
+    set_visualize_flags,
 )
 from .player_lookup import (
+    PLAYER_CACHE_PREFIX,
+    character_equipment_names,
+    extract_class_name,
     extract_player_ign,
     format_player_stored_reply,
     get_or_scrape_player,
 )
+from ..models.player import PlayerProfile
 from .community_knowledge import (
     SlotListSpec,
     names_mentioned_in_umi,
@@ -155,7 +164,8 @@ _SHINY_DIVINE_ITEM = re.compile(
 )
 _SHINY_WORD = re.compile(r"\bshiny\b", re.I)
 _MAKE_IT_VISUAL = re.compile(
-    r"\b(?:make\s+(?:it|them|this|that)|show\s+(?:it|them)(?:\s+as)?)\b",
+    r"\b(?:make\s+(?:it|them|this|that)|show\s+(?:it|them|me\s+all)(?:\s+as)?|"
+    r"same\s+set|this\s+set|that\s+set|all\s+divine|all\s+shiny)\b",
     re.I,
 )
 _ITEM_TOKEN = re.compile(r"\[item:([^\]]+)\]")
@@ -533,6 +543,137 @@ def _last_visualized_item(
     return None, False, None
 
 
+def _is_character_set_visualize(
+    message: str, history: Optional[list[str]] = None
+) -> bool:
+    """True when the ask is to show a player's worn set as a loadout."""
+    shiny, rarity = _visual_flags(message)
+    looks = bool(
+        re.search(r"\blooks?\s+like\b|\bturned\b|\bsame\s+set\b", message or "", re.I)
+    )
+    if not (shiny or rarity or looks or is_set_followup(message or "")):
+        return False
+    texts = [*(history or []), message or ""]
+    ign = None
+    class_name = None
+    for prev in reversed(texts):
+        ign = ign or extract_player_ign(prev or "")
+        class_name = class_name or extract_class_name(prev or "")
+        if ign and class_name:
+            break
+    return bool(ign and (class_name or looks or is_set_followup(message or "")))
+
+
+async def _character_set_names(
+    redis: aioredis.Redis,
+    message: str,
+    history: Optional[list[str]],
+    ttl: int,
+) -> list[str]:
+    texts = [*(history or []), message or ""]
+    ign = None
+    class_name = None
+    for prev in reversed(texts):
+        ign = ign or extract_player_ign(prev or "")
+        class_name = class_name or extract_class_name(prev or "")
+        if ign and class_name:
+            break
+    if not ign:
+        return []
+    raw = await redis.get(f"{PLAYER_CACHE_PREFIX}{ign.lower()}")
+    if not raw:
+        return []
+    try:
+        profile = PlayerProfile.model_validate_json(raw)
+    except Exception:
+        return []
+    return character_equipment_names(profile, class_name)
+
+
+def _loadout_from_specialist(spec: str, shiny: bool, rarity: Optional[str]) -> Optional[str]:
+    tokens = [token.strip() for token in _ITEM_TOKEN.findall(spec or "") if token.strip()]
+    if len(tokens) < 2:
+        return None
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in tokens:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(name)
+        if len(ordered) >= 4:
+            break
+    flags = " ".join(part for part in (("shiny" if shiny else None), rarity) if part)
+    token = f"[loadout {flags}]" if flags else "[loadout]"
+    items = " ".join(f"[item:{name}]" for name in ordered)
+    label = " ".join(
+        part for part in (("Shiny" if shiny else None), (rarity or "").title() or None) if part
+    )
+    if label:
+        body = f"Same items, shown as {label}."
+    else:
+        body = "Same items from the last set."
+    return f"{body}\n{token}\n{items}"
+
+
+async def _set_visualize_reply(
+    redis: aioredis.Redis,
+    message: str,
+    ttl: int,
+    history: Optional[list[str]] = None,
+) -> Optional[StoredReply]:
+    shiny, rarity = set_visualize_flags(message)
+    names = extract_set_item_names(message)
+    if not names:
+        prior_shiny, prior_rarity = False, None
+        for prev in reversed(history or []):
+            named = extract_set_item_names(prev or "")
+            if named:
+                names = named
+                prior_shiny, prior_rarity = set_visualize_flags(prev)
+                break
+            tokens = [
+                token.strip()
+                for token in _ITEM_TOKEN.findall(prev or "")
+                if token.strip()
+            ]
+            if len(tokens) >= 2:
+                names = tokens[:4]
+                prior_shiny, prior_rarity = _visual_flags(prev)
+                break
+        if not shiny:
+            shiny = prior_shiny
+        if not rarity:
+            rarity = prior_rarity
+    if not names and (
+        is_set_followup(message) or _is_character_set_visualize(message, history)
+    ):
+        names = await _character_set_names(redis, message, history, ttl)
+    if not names:
+        names = last_set_names_from_history(history)
+    if not names:
+        return None
+    if not (shiny or rarity or is_set_followup(message)):
+        return None
+    spec = await retrieve_set_visualizer(
+        redis,
+        message,
+        ttl_seconds=ttl,
+        allow_scrape=False,
+        forced_names=names,
+        history=history,
+    )
+    text = _loadout_from_specialist(spec, shiny, rarity)
+    if not text:
+        return None
+    return StoredReply(
+        text=text,
+        kind="set",
+        key="wiki:set-visualize:v1:" + "|".join(name.lower() for name in names[:4]),
+    )
+
+
 async def _shiny_divine_reply(
     redis: aioredis.Redis,
     message: str,
@@ -631,6 +772,7 @@ def _place_loot_reply(
     wiki_drops: list[str],
     cached_items: list,
     want_shiny: bool,
+    page_drops: Optional[list] = None,
 ) -> StoredReply:
     by_name: dict[str, dict] = {}
     for name in wiki_drops:
@@ -678,6 +820,26 @@ def _place_loot_reply(
             key=f"wiki:source-drop:v1:{title.lower()}",
         )
 
+    grouped = group_drops_by_enemy(page_drops or [])
+    named_groups = [
+        (source, items)
+        for source, items in grouped
+        if source.lower() != "other" and items
+    ]
+    if len(named_groups) >= 2:
+        chunks = [f"**{title}** loot by enemy in the wiki store:"]
+        shown: list[str] = []
+        for source, items in named_groups:
+            chunks.append(f"**{source}**")
+            chunks.extend(f"- {name}" for name in items[:12])
+            shown.extend(items[:8])
+        body = "\n".join(chunks)
+        return StoredReply(
+            text=body + _item_tags(shown[:12]),
+            kind="source-drop",
+            key=f"wiki:source-drop:v1:{title.lower()}",
+        )
+
     lines = "\n".join(
         f"- {row['name']}"
         + (" (shiny sprite on RealmEye)" if row["shiny"] else "")
@@ -700,6 +862,7 @@ async def _loot_for_source(
     """Wiki loot for one dungeon, boss, or NPC. Never invent item names."""
     wiki_drops, wiki_url = await cached_drops_from_source(redis, source)
     title = source
+    page_drops: list = []
     try:
         entries = await get_or_scrape_index(
             redis, ttl_seconds=ttl, cache_only=True
@@ -717,7 +880,8 @@ async def _loot_for_source(
         )
         if page:
             wiki_url = wiki_url or page.get("url") or ""
-            for row in page.get("drops") or []:
+            page_drops = list(page.get("drops") or [])
+            for row in page_drops:
                 name = (row.get("name") or "").strip()
                 if name:
                     wiki_drops.append(name)
@@ -735,6 +899,7 @@ async def _loot_for_source(
             wiki_drops=wiki_drops,
             cached_items=cached_items,
             want_shiny=want_shiny,
+            page_drops=page_drops,
         )
 
     resolved = None
@@ -1222,19 +1387,30 @@ async def try_stored_reply(
             await _drop_matching_briefs(redis, message)
         return None
     if not is_stat_number_query(message) and not is_dps_query(message):
-        player = await _player_reply(
-            redis,
-            message,
-            history=history,
-            ttl_seconds=player_ttl_seconds,
-        )
-        if player:
-            return player
+        if not (
+            _is_character_set_visualize(message, history)
+            or is_set_followup(message)
+            or extract_set_item_names(message)
+        ):
+            player = await _player_reply(
+                redis,
+                message,
+                history=history,
+                ttl_seconds=player_ttl_seconds,
+            )
+            if player:
+                return player
     skin = await _skin_reply(
         redis, message, history=history, ttl_seconds=ttl_seconds
     )
     if skin:
         return skin
+
+    visualized = await _set_visualize_reply(
+        redis, message, ttl_seconds, history=history
+    )
+    if visualized:
+        return visualized
 
     shiny = await _shiny_divine_reply(
         redis, message, ttl_seconds, history=history

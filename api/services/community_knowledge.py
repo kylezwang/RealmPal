@@ -389,7 +389,9 @@ def store_ranking_brief(
             "on-character enchants). 2. Overall picks in this chunk. "
             "3. UmiEnjoyers BIS in synergy. 4. RealmEye class-page Maximum "
             "Achievable Stats and hub On Equip ranks last (a max-stat stack, "
-            "not the best playstyle). Skip Limited Edition reskins. If Doom Bow "
+            "not the best playstyle). Official RotMG Hub patch notes are "
+            "patch truth for new season items and events, not BIS ranking. "
+            "Skip Limited Edition reskins. If Doom Bow "
             "appears in a top 5, also name Clockwork Repeater."
         ]
     overlay = CLASS_STAT_SLOT_OVERRIDES.get((class_name or "", stat or ""))

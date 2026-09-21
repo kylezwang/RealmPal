@@ -10,15 +10,14 @@ MAX_HISTORY_MESSAGES = 50
 
 
 class ChatMessage(BaseModel):
-    role: str  # "user" | "assistant"
+    role: Literal["user", "assistant"]
     content: str = Field(max_length=MAX_MESSAGE_CHARS)
 
 
 class ChatAttachment(BaseModel):
     """A file the user attached in the chat composer.
 
-    `data` is raw base64 (no data: URL prefix). Images go to Claude as vision
-    blocks; PDFs go as document blocks.
+    `data` is raw base64 (no data: URL prefix). Images go to Claude as vision blocks.
     """
 
     filename: str
@@ -35,7 +34,7 @@ class ChatRequest(BaseModel):
     # Retained for backward compatibility. No longer used for rate limiting:
     # it was client-generated, so callers could mint themselves a new quota.
     session_id: str = ""
-    ign: Optional[str] = None  # in-game name for context
+    ign: Optional[str] = Field(default=None, max_length=32)  # in-game name for context
     attachment: Optional[ChatAttachment] = None
     attachments: list[ChatAttachment] = Field(default=[], max_length=MAX_ATTACHMENTS)
 

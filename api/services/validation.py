@@ -12,11 +12,14 @@ after.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from fastapi import HTTPException
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 MAX_LOOKUP_NAME_LENGTH = 80
+IGN_MAX_LENGTH = 20
+_IGN_RE = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 
 # Deliberately simple: this only rejects obvious garbage before it reaches
 # a magic-link email. It is not trying to fully validate RFC 5321 addresses.
@@ -49,6 +52,22 @@ def validate_email(value: str, *, field: str = "email") -> str:
         raise HTTPException(status_code=400, detail=f"{field} is not a valid email address")
     if _CONTROL_CHARS.search(cleaned) or not _EMAIL_RE.match(cleaned):
         raise HTTPException(status_code=400, detail=f"{field} is not a valid email address")
+    return cleaned
+
+
+def sanitize_ign(value: Optional[str]) -> Optional[str]:
+    """Return a RotMG IGN for chat context, or None if the value is junk.
+
+    Matches the frontend charset (``web/lib/playerLookup.ts``). Invalid input
+    is dropped rather than rejected so a bad sidebar IGN does not block chat.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned or len(cleaned) > IGN_MAX_LENGTH:
+        return None
+    if _CONTROL_CHARS.search(cleaned):
+        return None
+    if not _IGN_RE.fullmatch(cleaned):
+        return None
     return cleaned
 
 

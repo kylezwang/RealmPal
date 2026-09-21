@@ -112,6 +112,16 @@ def test_non_image_attachment_is_rejected():
         _validate_attachment(att)
 
 
+def test_pdf_attachment_is_rejected():
+    att = ChatAttachment(
+        filename="guide.pdf",
+        media_type="application/pdf",
+        data=_PNG_B64,
+    )
+    with pytest.raises(HTTPException, match="Unsupported"):
+        _validate_attachment(att)
+
+
 def test_screenshot_turns_stay_on_sonnet():
     settings = _settings()
     assert (

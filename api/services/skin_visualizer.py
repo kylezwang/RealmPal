@@ -972,6 +972,21 @@ def outfit_history_from_messages(messages: list) -> list[str]:
     return lines
 
 
+def visual_history_from_messages(messages: list) -> list[str]:
+    """User turns plus assistant set/skin tokens for visualize follow-ups."""
+    lines: list[str] = []
+    for msg in messages:
+        role = getattr(msg, "role", None)
+        content = getattr(msg, "content", None) or ""
+        if role == "user":
+            lines.append(content)
+        elif role == "assistant" and (
+            "[skin:" in content or "[item:" in content or "[loadout" in content
+        ):
+            lines.append(content)
+    return lines
+
+
 async def retrieve_skin_visualizer(
     redis: aioredis.Redis,
     message: str,
