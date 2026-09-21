@@ -28,6 +28,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.21",
+    date: "Sep 21, 2026",
+    items: [
+      "You can upload a sprite and ask to see it as Uncommon, Rare, Legendary, or Divine, including shiny, with the same glow and diamonds as a set preview.",
+    ],
+  },
+  {
     version: "2026.09.18",
     date: "Sep 18, 2026",
     items: [

@@ -12,6 +12,21 @@ export const LOADOUT_RARITIES: LoadoutRarity[] = [
   "uncommon",
 ];
 
+/** Short chat names for the same slots.png diamond frames. Highest first. */
+export const RARITY_ALIASES: Record<LoadoutRarity, readonly string[]> = {
+  divine: ["divine", "div"],
+  legendary: ["legendary", "legend", "legen", "leg"],
+  rare: ["rare"],
+  uncommon: ["uncommon", "uncomm", "unco", "unc"],
+};
+
+export const RARITY_LABEL: Record<LoadoutRarity, string> = {
+  uncommon: "Uncommon",
+  rare: "Rare",
+  legendary: "Legendary",
+  divine: "Divine",
+};
+
 export interface LoadoutShowcase {
   shiny: boolean;
   rarity?: LoadoutRarity;
@@ -21,7 +36,51 @@ const LOADOUT_TOKEN = /\[loadout([^\]]*)\]/i;
 
 export function parseRarity(text: string): LoadoutRarity | undefined {
   const lower = (text || "").toLowerCase();
-  return LOADOUT_RARITIES.find((tier) => new RegExp(`\\b${tier}\\b`).test(lower));
+  return LOADOUT_RARITIES.find((tier) =>
+    RARITY_ALIASES[tier].some((name) => new RegExp(`\\b${name}\\b`).test(lower)),
+  );
+}
+
+export function parseShiny(text: string): boolean {
+  return /\b(?:all\s+)?shiny\b/i.test(text || "");
+}
+
+export function isMakeThisVisual(prompt: string): boolean {
+  return /\bmake\s+(?:it|them|this|that)\b/i.test(prompt);
+}
+
+/** Keep shiny from the last framed sprite when a follow-up only names a tier. */
+export function mergeLoadoutShowcase(
+  prompt: string,
+  previous?: LoadoutShowcase | null,
+): LoadoutShowcase | null {
+  const shiny = parseShiny(prompt) || Boolean(previous?.shiny);
+  const rarity = parseRarity(prompt) ?? previous?.rarity;
+  if (!shiny && !rarity) return null;
+  return { shiny, rarity };
+}
+
+export function formatLoadoutToken(showcase: LoadoutShowcase): string {
+  const flags = [showcase.shiny ? "shiny" : "", showcase.rarity ?? ""].filter(Boolean).join(" ");
+  return flags ? `[loadout ${flags}]` : "[loadout]";
+}
+
+export function loadoutCaption(showcase: LoadoutShowcase): string {
+  const bits = [
+    showcase.shiny ? "Shiny" : "",
+    showcase.rarity ? RARITY_LABEL[showcase.rarity] : "",
+  ].filter(Boolean);
+  if (!bits.length) return "Here is your sprite.";
+  return `Here it is as ${bits.join(" ")}.`;
+}
+
+export function inferUploadedSpriteShowcase(
+  prompt: string,
+  options: { freshUpload: boolean; previous?: LoadoutShowcase | null },
+): LoadoutShowcase | null {
+  if (options.freshUpload) return inferLoadoutShowcase(prompt);
+  if (!isMakeThisVisual(prompt) || !options.previous) return null;
+  return mergeLoadoutShowcase(prompt, options.previous);
 }
 
 export function parseLoadoutToken(content: string): LoadoutShowcase | null {
@@ -69,7 +128,7 @@ export function inferLoadoutShowcase(
 ): LoadoutShowcase | null {
   if (!prompt) return null;
   if (itemCount > SET_SLOT_COUNT) return null;
-  const shiny = /\b(?:all\s+)?shiny\b/i.test(prompt);
+  const shiny = parseShiny(prompt);
   const rarity = parseRarity(prompt);
   const wantsVisual =
     /\b(?:set|loadout|build me|show me|visualize|equip(?:ped)?|make\s+(?:it|them|this|that)|looks?\s+like)\b/i.test(

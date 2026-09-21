@@ -11,6 +11,16 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.21] - Sep 21, 2026
+
+### Added
+- **Uploaded sprite rarity frames** (`web/lib/uploadedSprites.ts`, `inferUploadedSpriteShowcase`): an attached PNG (fan-made shiny, custom item art) plus "make this shiny divine" / "make this legendary" / Unc, Rare, Leg, Div overlays the same `slots.png` diamond frame, glow, and shiny star the set visualizer uses. Follow-ups reuse the last framed upload and keep shiny when only the tier changes. Local reply, no Claude turn.
+
+### Tests
+- `test_parse_rarity_picks_the_highest_tier`: `unc` / `leg` / `div` aliases
+
+---
+
 ## [2026.09.18] - Sep 18, 2026
 
 ### Added
