@@ -8,7 +8,8 @@ import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { ExamplePrompt } from "./ExamplePrompt";
 import { extractItemNames, skipDungeonItemCard, ITEM_CARD_ROW_SIZE } from "@/lib/itemLookup";
-import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, SET_SLOT_COUNT } from "@/lib/loadoutShowcase";
+import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, inferUploadedSpriteShowcase, formatLoadoutToken, loadoutCaption, SET_SLOT_COUNT } from "@/lib/loadoutShowcase";
+import { uploadedSpriteItems, findRecentUploadedSpriteState } from "@/lib/uploadedSprites";
 import { inferSkinVisualize } from "@/lib/skinShowcase";
 import { farmItemNamesFromContent } from "@/lib/farmTldr";
 import { MessageBubble } from "./MessageBubble";
@@ -646,6 +647,31 @@ export function ChatInterface() {
         src: chatImagePreviewUrl(image),
       })),
     };
+    const previousUpload = findRecentUploadedSpriteState(messages);
+    const spriteShowcase = inferUploadedSpriteShowcase(trimmed, {
+      freshUpload: readyImages.length > 0,
+      previous: previousUpload?.showcase ?? null,
+    });
+    const spriteItems = readyImages.length
+      ? uploadedSpriteItems(userMsg.images || [])
+      : previousUpload?.items;
+    if (spriteShowcase && spriteItems && spriteItems.length > 0) {
+      pinToSentMessageRef.current = true;
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        {
+          role: "assistant",
+          content: `${loadoutCaption(spriteShowcase)}\n\n${formatLoadoutToken(spriteShowcase)}`,
+          id: crypto.randomUUID(),
+          items: spriteItems,
+        },
+      ]);
+      setInput("");
+      clearImages();
+      inputRef.current?.focus();
+      return;
+    }
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
 
     pinToSentMessageRef.current = true;

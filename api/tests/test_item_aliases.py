@@ -170,6 +170,9 @@ def test_parse_rarity_picks_the_highest_tier():
     assert parse_rarity("make it rare") == "rare"
     assert parse_rarity("make it legendary") == "legendary"
     assert parse_rarity("make it divine") == "divine"
+    assert parse_rarity("make it unc") == "uncommon"
+    assert parse_rarity("make it leg") == "legendary"
+    assert parse_rarity("make it div") == "divine"
     assert parse_rarity("shiny legendary divine straitjacket") == "divine"
     assert parse_rarity("what does shiny snake eye ring look like") is None
     assert set_visualize_flags("make it legendary") == (False, "legendary")

@@ -364,6 +364,12 @@ _DIVINE = re.compile(r"\b(?:all\s+)?divine\b", re.I)
 # Enchantment slot rarities on RealmEye slots.png (1/2/3/4 diamonds).
 # Highest listed first so "shiny legendary divine" keeps Divine.
 RARITY_TIERS = ("divine", "legendary", "rare", "uncommon")
+RARITY_ALIASES = {
+    "divine": ("divine", "div"),
+    "legendary": ("legendary", "legend", "legen", "leg"),
+    "rare": ("rare",),
+    "uncommon": ("uncommon", "uncomm", "unco", "unc"),
+}
 _RARITY_ALT = "|".join(RARITY_TIERS)
 _VISUAL_FLAG = (
     r"(?:all\s+)?"
@@ -387,8 +393,9 @@ def parse_rarity(message: str) -> Optional[str]:
     """Highest named slot rarity, or None. Shiny is a separate flag."""
     text = (message or "").lower()
     for tier in RARITY_TIERS:
-        if re.search(rf"\b{tier}\b", text):
-            return tier
+        for name in RARITY_ALIASES[tier]:
+            if re.search(rf"\b{re.escape(name)}\b", text):
+                return tier
     return None
 _LEADING_AND = re.compile(r"^(?:and|&)\s+", re.I)
 # "Crown all shiny divine" is the last comma-segment when the user puts
