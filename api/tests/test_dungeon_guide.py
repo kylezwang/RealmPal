@@ -174,16 +174,52 @@ def test_extract_drop_source_query_bosses_and_missing_does():
 
 
 def test_extract_drop_source_query_does_not_treat_enemy_as_the_source():
-    from api.services.dungeon_guide import extract_drop_source_query
+    from api.services.dungeon_guide import (
+        extract_drop_source_query,
+        extract_portal_source_query,
+    )
 
-    parsed = extract_drop_source_query("what enemy drops ocean trench")
-    assert parsed is not None
-    names, shiny = parsed
-    assert shiny is False
-    assert [name.lower() for name in names] == ["ocean trench"]
+    assert extract_drop_source_query("what enemy drops ocean trench") is None
+    assert extract_portal_source_query("what enemy drops ocean trench")
+    assert (
+        extract_portal_source_query("what enemy drops ocean trench").lower()
+        == "ocean trench"
+    )
     assert extract_drop_source_query("what enemies in hardmode shatters drop")[0][
         0
     ].lower() == "hardmode shatters"
+
+
+def test_extract_portal_source_query_live_phrasings():
+    from api.services.dungeon_guide import extract_portal_source_query
+
+    assert (
+        extract_portal_source_query("What enemy does ocean trench drop from")
+        .lower()
+        == "ocean trench"
+    )
+    assert (
+        extract_portal_source_query(
+            "No I meant which enemies found in realm can drop ocean trench"
+        )
+        .lower()
+        == "ocean trench"
+    )
+    assert extract_portal_source_query("what does ocean trench drop") is None
+    assert extract_portal_source_query("where does the new prism drop from") is None
+
+
+def test_parse_portal_droppers_ocean_trench_lead():
+    from api.services.dungeon_guide import parse_portal_droppers
+
+    text = (
+        "The portal to Ocean Trench has a chance to drop from Abyssal Squid, "
+        "Sea Dragon and Ice Giant. It is also guaranteed to drop from "
+        "Hermit God and Eye of the Storm."
+    )
+    parsed = parse_portal_droppers(text)
+    assert parsed["chance"] == ["Abyssal Squid", "Sea Dragon", "Ice Giant"]
+    assert parsed["guaranteed"] == ["Hermit God", "Eye of the Storm"]
 
 
 def test_group_drops_by_enemy_keeps_boss_order():

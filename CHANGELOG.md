@@ -11,6 +11,18 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.21-4] - Sep 21, 2026
+
+### Fixed
+- **Dungeon portal droppers come from the RealmEye lead** (`extract_portal_source_query`, `parse_portal_droppers`, `_portal_drop_reply`). Found live: "What enemy does ocean trench drop from" listed Thessal loot, and the follow-up "which enemies found in realm can drop ocean trench" said the store had no portal sources. "What enemy drops X" / "what enemy does X drop from" / "enemies in the realm can drop X" now read the dungeon page lead (`The portal to Ocean Trench has a chance to drop from Abyssal Squid, Sea Dragon and Ice Giant. It is also guaranteed to drop from Hermit God and Eye of the Storm`). Loot-inside stays on "what enemies in X drop" / "what does X drop". `where does ocean trench drop from` uses the dungeon index before treating the name as an item. Retrieve injects that lead so a Claude follow-up does not only see dungeon loot.
+
+### Tests
+- `test_extract_portal_source_query_live_phrasings`
+- `test_parse_portal_droppers_ocean_trench_lead`
+- `test_ocean_trench_portal_drops_from_realm_enemies`
+
+---
+
 ## [2026.09.21-3] - Sep 21, 2026
 
 ### Fixed
