@@ -138,6 +138,8 @@ export interface ItemProfile {
   requestedAs?: string;
   /** False when class_name was sent and this class cannot equip the item. */
   wearable?: boolean | null;
+  /** Awakened unique enchant from the RealmEye enchanting store. */
+  awakened_enchant?: string | null;
 }
 
 export interface DyeChip {

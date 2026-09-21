@@ -36,6 +36,8 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "realmeye.com" },
       { protocol: "https", hostname: "www.umienjoyers.com" },
       { protocol: "https", hostname: "umienjoyers.com" },
+      { protocol: "https", hostname: "static-platform.aghanim.com" },
+      { protocol: "https", hostname: "hub.realmofthemadgod.com" },
     ],
     // Next/Image's optimization API needs a live server, which a static
     // export doesn't have; `unoptimized` serves the original remote URL

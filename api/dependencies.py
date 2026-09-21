@@ -96,7 +96,10 @@ async def consume_lookup_quota(
         count = await consume_windowed(redis, quota)
     except Exception:
         logger.exception("Could not enforce lookup rate limit")
-        return
+        raise HTTPException(
+            status_code=503,
+            detail="Too many lookups. Try again in a minute.",
+        ) from None
     if count > quota.limit:
         logger.bind(bucket=quota.label, used=count, limit=quota.limit).info(
             "Lookup rate limit exceeded"

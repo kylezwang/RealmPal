@@ -1230,3 +1230,109 @@ async def test_player_dps_ask_does_not_use_stored_player_lookup(
         player_ttl_seconds=120,
     )
     assert reply is None
+
+
+async def test_named_comma_set_is_a_stored_loadout(redis_client, anon_settings):
+    reply = await try_stored_reply(
+        redis_client,
+        "Rare shiny doom bow, rare shiny vile, rare shiny straitjacket, "
+        "legendary shiny ring of skeletal specters",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert reply.kind == "set"
+    assert "[loadout" in reply.text
+    assert "[item:" in reply.text
+    assert "vile" in reply.text.lower() or "straitjacket" in reply.text.lower()
+
+
+async def test_same_set_followup_reuses_character_equipment(
+    redis_client, anon_settings
+):
+    from api.models.player import CharacterSummary, EquipmentItem, PlayerProfile
+    from api.services.player_lookup import PLAYER_CACHE_PREFIX
+
+    profile = PlayerProfile(
+        username="Turbine",
+        characters=[
+            CharacterSummary(
+                class_name="Huntress",
+                equipment=[
+                    EquipmentItem(name="Doom Bow", tooltip="bow"),
+                    EquipmentItem(name="Quiver of Thunder", tooltip="ability"),
+                    EquipmentItem(name="Cackling Straitjacket", tooltip="armor"),
+                    EquipmentItem(name="The Forgotten Crown", tooltip="ring"),
+                    EquipmentItem(name="Loot Bag", tooltip="bag"),
+                ],
+            )
+        ],
+    )
+    await redis_client.set(
+        f"{PLAYER_CACHE_PREFIX}turbine", profile.model_dump_json()
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "Same set but all divine",
+        history=[
+            "What would Turbine's huntress look like if the bow and armor turned divine?"
+        ],
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+        player_ttl_seconds=anon_settings.player_ttl_seconds,
+    )
+    assert reply is not None
+    assert "[item:Doom Bow]" in reply.text
+    assert "[item:Quiver of Thunder]" in reply.text
+    assert "[item:The Forgotten Crown]" in reply.text
+    assert "Loot Bag" not in reply.text
+    assert "divine" in reply.text.lower()
+
+
+async def test_dungeon_loot_is_grouped_by_enemy(redis_client, anon_settings):
+    from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
+
+    await redis_client.set(
+        INDEX_CACHE_KEY,
+        json.dumps(
+            [
+                {
+                    "title": "Ocean Trench",
+                    "slug": "ocean-trench",
+                    "kind": "dungeon",
+                }
+            ]
+        ),
+    )
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}ocean-trench",
+        json.dumps(
+            {
+                "title": "Ocean Trench",
+                "url": "https://www.realmeye.com/wiki/ocean-trench",
+                "drops": [
+                    {
+                        "name": "Coral Bow",
+                        "drops_from": "Thessal the Mermaid Goddess",
+                    },
+                    {
+                        "name": "Coral Silk Armour",
+                        "drops_from": "Thessal the Mermaid Goddess",
+                    },
+                    {
+                        "name": "Coral Ring",
+                        "drops_from": "Coral Gift",
+                    },
+                ],
+            }
+        ),
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "what enemy drops ocean trench",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert reply.kind == "source-drop"
+    assert "Thessal the Mermaid Goddess" in reply.text
+    assert "Coral Gift" in reply.text
+    assert "[item:Coral Bow]" in reply.text
+    assert "**enemy**" not in reply.text.lower()

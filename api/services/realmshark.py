@@ -34,6 +34,11 @@ from ..models.build import (
 )
 from .dungeon_guide import extract_dungeon_query
 from .biomes import extract_biome_query, retrieve_biome_context
+from .rotmg_hub import (
+    extract_hub_query,
+    matching_hub_excerpt,
+    retrieve_rotmg_hub,
+)
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
 from .dps_specialist import (
     dps_subject_from_history,
@@ -786,6 +791,7 @@ async def retrieve_build_knowledge(
     player_ign = extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
     biome_ask = extract_biome_query(message)
+    hub_ask = extract_hub_query(message, history=history)
     # A breakdown or what-if turn continues the previous DPS answer. It has to
     # be resolved before the set/skin/player branches below, because those
     # match on loose wording a follow-up shares ("what if he swapped to a Doom
@@ -829,8 +835,26 @@ async def retrieve_build_knowledge(
         and not enchant_only
         and not numbers_only
         and not biome_ask
+        and not hub_ask
     ):
         return ""
+
+    this_class, _this_stat, _this_build = parse_query(message)
+    player_lookup_turn = bool(extract_player_ign(message)) or (
+        bool(player_ign) and not this_class
+    )
+    if hub_ask and not player_lookup_turn:
+        try:
+            return await retrieve_rotmg_hub(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+                history=history,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("RotMG Hub specialist unavailable")
+            return ""
 
     if biome_ask and biome_ask.survey:
         try:
@@ -878,10 +902,6 @@ async def retrieve_build_knowledge(
             logger.bind(error=str(e)).warning("Skin visualizer specialist unavailable")
             return ""
 
-    this_class, _this_stat, _this_build = parse_query(message)
-    player_lookup_turn = bool(extract_player_ign(message)) or (
-        bool(player_ign) and not this_class
-    )
     if (
         player_lookup_turn
         and not numbers_only
@@ -907,7 +927,7 @@ async def retrieve_build_knowledge(
 
     if dungeon_name and not buildish:
         try:
-            return await run_slot_agents(
+            text = await run_slot_agents(
                 redis,
                 message,
                 ttl_seconds=ttl_seconds,
@@ -918,6 +938,10 @@ async def retrieve_build_knowledge(
                 player_ign=None,
                 dungeon_name=dungeon_name,
             )
+            extra = await matching_hub_excerpt(redis, [dungeon_name])
+            if extra and extra not in text:
+                text = f"{text}\n\n{extra}" if text else extra
+            return text
         except Exception as e:
             logger.bind(
                 error=str(e), player=player_ign, dungeon=dungeon_name
@@ -1012,7 +1036,27 @@ async def retrieve_build_knowledge(
     )
     if ranking and slots_text and ranking in slots_text:
         ranking = ""
-    parts = [p for p in (inferred_note, ranking, slots_text, *extras) if p]
+    hub_names: list[str] = []
+    if class_name:
+        hub_names.append(class_name)
+    if stat:
+        hub_names.append(stat)
+    try:
+        from .wiki_scaling import top_build_items
+
+        if class_name and stat:
+            picks = await top_build_items(
+                redis,
+                class_name,
+                stat,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+            )
+            hub_names.extend(v for v in picks.values() if v)
+    except Exception:
+        pass
+    hub_extra = await matching_hub_excerpt(redis, hub_names)
+    parts = [p for p in (inferred_note, ranking, slots_text, *extras, hub_extra) if p]
     return "\n\n".join(parts)
 
 

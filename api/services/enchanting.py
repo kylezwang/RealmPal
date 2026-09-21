@@ -66,6 +66,38 @@ _ARMOR_HINT = re.compile(r"\b(robe|leather|heavy|armor|armour)\b", re.I)
 _RING_HINT = re.compile(r"\b(rings?|amulet|bracer|scarf|mask)\b", re.I)
 
 
+def awakened_enchant_for_item(rolls: list[dict], item_name: str) -> Optional[str]:
+    """One awakened unique line for this wiki title, or None."""
+    key = (item_name or "").strip().lower()
+    if not key:
+        return None
+    for roll in rolls:
+        category = (roll.get("category") or "").lower()
+        name = (roll.get("name") or "").strip()
+        effects = (roll.get("effects") or "").strip()
+        labels = (roll.get("labels") or "").strip()
+        blob = f"{name} {effects} {labels}".lower()
+        if "awakened" not in category and "awakened" not in blob:
+            continue
+        if key not in blob:
+            continue
+        if effects:
+            return f"Awakened: {name}. {effects}"
+        if name:
+            return f"Awakened: {name}"
+    return None
+
+
+async def awakened_enchant_text(
+    redis: aioredis.Redis, item_name: str, *, ttl_seconds: int
+) -> Optional[str]:
+    store = await load_enchanting_store(
+        redis, ttl_seconds=ttl_seconds, cache_only=True
+    )
+    rolls = list((store or {}).get("rolls") or [])
+    return awakened_enchant_for_item(rolls, item_name)
+
+
 def is_enchant_query(message: str) -> bool:
     text = message or ""
     if _ENCHANT_WORD.search(text):

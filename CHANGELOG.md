@@ -14,10 +14,23 @@ Format: each version has technical notes, linked commits, migration guides (if n
 ## [2026.09.21] - Sep 21, 2026
 
 ### Added
+- **Official RotMG Hub patch notes (fourth knowledge pillar)** (`api/services/rotmg_hub.py`, `api/services/scraper.py`): Playwright scrapes the Updates index at `hub.realmofthemadgod.com/news0/updates0` (Load More pagination); httpx fetches SSR article bodies. Redis keys `rotmg-hub:index:v1`, `rotmg-hub:post:v1:{slug}`, `rotmg-hub:sprites:v1`, `rotmg-hub:names:v1` with 24h TTL. `retrieve_rotmg_hub` injects official patch context; `matching_hub_excerpt` appends on builds/dungeons that name new-season items. Hub patch notes are patch truth for what shipped; RealmShark / Umi / RealmEye still rank BIS. `GET /sprite` and `GET /items` fall back to Aghanim CDN art when RealmEye has no page yet. Wired into `specialist_warm`, `retrieve_build_knowledge`, `build_system_prompt`, `store_ranking_brief`, chat RAG skip, and suggest index.
 - **Uploaded sprite rarity frames** (`web/lib/uploadedSprites.ts`, `inferUploadedSpriteShowcase`): an attached PNG (fan-made shiny, custom item art) plus "make this shiny divine" / "make this legendary" / Unc, Rare, Leg, Div overlays the same `slots.png` diamond frame, glow, and shiny star the set visualizer uses. Follow-ups reuse the last framed upload and keep shiny when only the tier changes. Local reply, no Claude turn.
+
+### Fixed
+- **Chat prompt hardening** (`api/models/chat.py`, `api/routers/chat.py`, `api/services/validation.py`, `api/services/rag.py`): `ChatMessage.role` is `Literal["user", "assistant"]` only (422 on `system`/`tool`). Sidebar IGN is sanitized to `[A-Za-z0-9_]{1,20}` before it reaches the system prompt; junk is omitted, not a 400. IGN is wrapped as untrusted data in `<ign>` tags. System prompt refuses instructions from user text, history, IGN, images, or `<context>`. PDF attachments are rejected; images only.
+- **Rate limits fail closed** (`api/routers/chat.py`, `api/dependencies.py`): chat burst, daily quota, paid ceiling, and lookup window counters return 503 when Redis errors instead of allowing unbounded Claude or Playwright use.
+- **Same-set visualizer** (`_set_visualize_reply`, `character_equipment_names`): "same set but all divine" after a player's class card copies that character's weapon/ability/armor/ring. Named comma lists (no `with`) emit `[loadout]` plus `[item:]` tokens from the store so the four slots are not empty. Awakened unique lines attach on `GET /items` for loadout hover.
+- **Enemy loot store** (`extract_drop_source_query`, `group_drops_by_enemy`): "what enemy drops ocean trench" no longer treats the word enemy as the source. Dungeon loot is grouped by `drops_from` (Hardmode Shatters boss sections).
 
 ### Tests
 - `test_parse_rarity_picks_the_highest_tier`: `unc` / `leg` / `div` aliases
+- `test_chat_message_rejects_system_role`, `test_claude_history_only_allows_user_and_assistant`: history role Literal
+- `test_sanitize_ign_strips_injection`, `test_system_prompt_omits_raw_injection_ign`, `test_system_prompt_treats_user_content_as_untrusted`: IGN and untrusted-data prompt block
+- `test_pdf_attachment_is_rejected`: images only
+- `test_chat_burst_redis_failure_is_503`, `test_lookup_rate_limit_redis_failure_is_503`: Redis down is 503
+- `test_same_set_followup_reuses_character_equipment`, `test_named_comma_set_is_a_stored_loadout`, `test_dungeon_loot_is_grouped_by_enemy`, `test_awakened_enchant_for_item_is_named_in_the_hover_line`
+- `test_parse_index_cards`, `test_parse_article_html_extracts_sections_and_sprites`, `test_extract_hub_query`, `test_retrieve_rotmg_hub_cache_only`, `test_matching_hub_excerpt_exact_new_item_only`, `test_hub_sprite_map_lookup`, `test_system_prompt_mentions_hub_patch_truth`, `test_missing_work_includes_empty_rotmg_hub`
 
 ---
 

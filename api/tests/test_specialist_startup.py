@@ -38,6 +38,7 @@ def _full_snapshot() -> dict:
         ],
         "skins": {"stored": 1, "classes": 19, "ttl_seconds": 60},
         "enchanting": {"stored": 1, "rolls": 30, "ttl_seconds": 60},
+        "rotmg_hub": {"stored": 1, "posts": 3, "sprites": 10, "ttl_seconds": 60},
     }
 
 

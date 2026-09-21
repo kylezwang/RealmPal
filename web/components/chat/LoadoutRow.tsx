@@ -69,6 +69,7 @@ export function LoadoutItemIcon({
             details={{
               title: showShiny ? `Shiny ${item.name}` : item.name,
               wikiUrl: item.wiki_url,
+              caption: item.awakened_enchant || item.description,
               divine: showcase.rarity === "divine",
               rarity: showcase.rarity,
               shiny: showShiny,
@@ -123,6 +124,11 @@ export function LoadoutItemIcon({
       >
         {showShiny ? `Shiny ${item.name}` : item.name}
         {showcase.rarity ? ` (${RARITY_LABEL[showcase.rarity]})` : ""}
+        {item.awakened_enchant ? (
+          <span className="block mt-1 text-[#c4c4c4]">{item.awakened_enchant}</span>
+        ) : item.description ? (
+          <span className="block mt-1 text-[#c4c4c4]">{item.description}</span>
+        ) : null}
       </div>
     </div>
   );

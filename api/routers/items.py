@@ -26,6 +26,8 @@ from ..services.scraper import scrape_item, ScraperError
 from ..services.ingestion import ingest_item
 from ..services.validation import sanitize_lookup_name
 from ..services.class_gear import class_can_wear_item
+from ..services.enchanting import awakened_enchant_text
+from ..services.rotmg_hub import HUB_UPDATES_URL, hub_sprite_url
 from ..services.wiki_scaling import (
     is_item_marked_missing,
     mark_item_missing,
@@ -49,11 +51,24 @@ async def _with_wearable(
     redis: aioredis.Redis,
     item: ItemProfile,
     class_name: Optional[str],
+    *,
+    ttl_seconds: int = 0,
 ) -> ItemProfile:
-    if not class_name:
+    updates: dict = {}
+    if class_name:
+        updates["wearable"] = await class_can_wear_item(redis, class_name, item.name)
+    if ttl_seconds:
+        try:
+            awakened = await awakened_enchant_text(
+                redis, item.name, ttl_seconds=ttl_seconds
+            )
+        except Exception:
+            awakened = None
+        if awakened:
+            updates["awakened_enchant"] = awakened
+    if not updates:
         return item
-    ok = await class_can_wear_item(redis, class_name, item.name)
-    return item.model_copy(update={"wearable": ok})
+    return item.model_copy(update=updates)
 
 
 @router.get("/{name}", response_model=ItemProfile)
@@ -75,7 +90,7 @@ async def get_item(
     ttl = settings.wiki_ttl_seconds
     cached = await read_cached_item(redis, name)
     if cached:
-        return await _with_wearable(redis, cached, class_name)
+        return await _with_wearable(redis, cached, class_name, ttl_seconds=ttl)
 
     lookup = name
     resolved: Optional[str] = None
@@ -112,7 +127,9 @@ async def get_item(
             cached_resolved = await read_cached_item(redis, resolved)
             if cached_resolved:
                 await write_cached_item(redis, cached_resolved, ttl, name)
-                return await _with_wearable(redis, cached_resolved, class_name)
+                return await _with_wearable(
+                    redis, cached_resolved, class_name, ttl_seconds=ttl
+                )
     except Exception as e:
         logger.bind(item_name=name, error=str(e)).warning(
             "Item nickname resolve failed; trying the typed name"
@@ -134,6 +151,10 @@ async def get_item(
     # exist. Checked (and charged no lookup quota) before the scrape below;
     # short TTL means it starts resolving again once RealmEye publishes it.
     if await is_item_marked_missing(redis, lookup):
+        hub_url = await hub_sprite_url(redis, lookup)
+        if hub_url:
+            stub = ItemProfile(name=lookup, sprite_url=hub_url, wiki_url=HUB_UPDATES_URL)
+            return await _with_wearable(redis, stub, class_name, ttl_seconds=ttl)
         raise HTTPException(
             status_code=404, detail=f"{lookup} has no RealmEye wiki page yet"
         )
@@ -147,10 +168,22 @@ async def get_item(
             try:
                 item = await scrape_item(name)
             except ScraperError:
+                hub_url = await hub_sprite_url(redis, lookup)
+                if hub_url:
+                    stub = ItemProfile(
+                        name=lookup, sprite_url=hub_url, wiki_url=HUB_UPDATES_URL
+                    )
+                    return await _with_wearable(
+                        redis, stub, class_name, ttl_seconds=ttl
+                    )
                 await mark_item_missing(redis, lookup, settings.missing_item_ttl_seconds)
                 await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
                 raise HTTPException(status_code=404, detail=str(e)) from e
         else:
+            hub_url = await hub_sprite_url(redis, name)
+            if hub_url:
+                stub = ItemProfile(name=name, sprite_url=hub_url, wiki_url=HUB_UPDATES_URL)
+                return await _with_wearable(redis, stub, class_name, ttl_seconds=ttl)
             await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -163,4 +196,4 @@ async def get_item(
 
     await write_cached_item(redis, item, ttl, name, lookup)
     logger.bind(item_name=item.name, query=name).info("Item profile fetched and cached")
-    return await _with_wearable(redis, item, class_name)
+    return await _with_wearable(redis, item, class_name, ttl_seconds=ttl)

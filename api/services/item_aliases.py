@@ -1234,6 +1234,11 @@ async def warm_suggest_index(
             for source in _source_terms(row.get("drops_from") or ""):
                 add_named(source, kind="dungeon")
 
+    from .rotmg_hub import hub_item_names
+
+    for hub_name in await hub_item_names(redis):
+        add_named(hub_name, kind="item")
+
     titles = [row["n"] for row in rows if row.get("k") == "dungeon"]
     for nick, target in _NICKNAMES.items():
         needle = target.lower()
@@ -1299,23 +1304,54 @@ def extract_set_item_names(prompt: str) -> list[str]:
     return names[:SET_SLOT_COUNT]
 
 
-def is_set_visualize_query(message: str) -> bool:
+_SET_FOLLOWUP = re.compile(
+    r"\b(?:same\s+set|that\s+set|this\s+set|show\s+me\s+all|"
+    r"all\s+(?:four\s+)?(?:slots?|items?)|"
+    r"all\s+(?:shiny|divine|legendary|rare|uncommon|awakened))\b",
+    re.I,
+)
+_ITEM_TOKEN_RE = re.compile(r"\[item:([^\]]+)\]")
+
+
+def is_set_followup(message: str) -> bool:
+    """True for 'same set but all divine' / 'show me all shiny divine'."""
     text = message or ""
-    if not extract_set_item_names(text):
+    if extract_set_item_names(text):
         return False
-    # extract_set_item_names already required a shiny/divine trigger word
-    # immediately followed by 2+ clean, short (3-60 char) names split on
-    # commas/"and" - that parse succeeding is itself strong enough signal,
-    # even when the user never says an explicit "set"/"loadout"/"visualize"
-    # verb. Found live Sep 15: "Rare Shiny bogwood croak, rare shiny genesis
-    # spell, rare diplomatic robe, shiny rare, the twilight gemstone" (a
-    # literal loadout list, shiny only, no "divine" and no "set" word) fell
-    # through to generic chat, which had no item data and asked the user to
-    # clarify instead of rendering the set. Previously this required either
-    # an explicit intent verb or both shiny AND divine together.
-    shiny = bool(_SHINY.search(text))
-    rarity = parse_rarity(text)
-    return bool(shiny or rarity)
+    if _SET_FOLLOWUP.search(text):
+        return True
+    shiny, rarity = set_visualize_flags(text)
+    looks = bool(re.search(r"\blooks?\s+like\b|\bturned\b", text, re.I))
+    return bool(looks and (shiny or rarity))
+
+
+def last_set_names_from_history(history: Optional[list[str]]) -> list[str]:
+    """Most recent 2-4 item names from a prior visualize turn."""
+    if not history:
+        return []
+    for prev in reversed(history):
+        named = extract_set_item_names(prev or "")
+        if named:
+            return named
+        tokens = [
+            token.strip()
+            for token in _ITEM_TOKEN_RE.findall(prev or "")
+            if token.strip()
+        ]
+        if len(tokens) >= 2:
+            return tokens[:SET_SLOT_COUNT]
+    return []
+
+
+def is_set_visualize_query(message: str, history: Optional[list[str]] = None) -> bool:
+    text = message or ""
+    if extract_set_item_names(text):
+        shiny = bool(_SHINY.search(text))
+        rarity = parse_rarity(text)
+        return bool(shiny or rarity)
+    if history and is_set_followup(text) and last_set_names_from_history(history):
+        return True
+    return False
 
 
 def set_visualize_flags(message: str) -> tuple[bool, Optional[str]]:
@@ -1631,6 +1667,8 @@ async def retrieve_set_visualizer(
     class_name: Optional[str] = None,
     stat: Optional[str] = None,
     allow_scrape: bool = True,
+    forced_names: Optional[list[str]] = None,
+    history: Optional[list[str]] = None,
 ) -> str:
     """Slot-agent report: nickname → [item:Wiki Title] for a named set, or
     (found live Sep 14, see is_stat_class_shiny_divine_query) the best
@@ -1639,8 +1677,12 @@ async def retrieve_set_visualizer(
     same item-circle loadout as naming all four items would, instead of a
     wall of build-brief text.
     """
-    names = extract_set_item_names(message)
+    names = list(forced_names or [])
     derived_from_build = False
+    if not names:
+        names = extract_set_item_names(message)
+    if not names:
+        names = last_set_names_from_history(history)
     if not names and class_name and stat:
         shiny, rarity = set_visualize_flags(message)
         if shiny or rarity:
@@ -1704,7 +1746,7 @@ async def retrieve_set_visualizer(
                     url = profile.wiki_url
                 if profile.name:
                     canonical = canonical or profile.name
-            rows.append((raw, slot, canonical, kind, url))
+            rows.append((raw, slot, canonical or raw, kind, url))
 
     by_slot: dict[str, str] = {}
     extras: list[str] = []

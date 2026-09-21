@@ -8,7 +8,7 @@ import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { ExamplePrompt } from "./ExamplePrompt";
 import { extractItemNames, skipDungeonItemCard, ITEM_CARD_ROW_SIZE } from "@/lib/itemLookup";
-import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, inferUploadedSpriteShowcase, formatLoadoutToken, loadoutCaption, SET_SLOT_COUNT } from "@/lib/loadoutShowcase";
+import { extractNamedSetItems, extractClassFromPrompt, inferLoadoutShowcase, inferUploadedSpriteShowcase, formatLoadoutToken, loadoutCaption, SET_SLOT_COUNT, isSameSetFollowup } from "@/lib/loadoutShowcase";
 import { uploadedSpriteItems, findRecentUploadedSpriteState } from "@/lib/uploadedSprites";
 import { inferSkinVisualize } from "@/lib/skinShowcase";
 import { farmItemNamesFromContent } from "@/lib/farmTldr";
@@ -188,6 +188,32 @@ function findRecentPlayerName(messages: Message[]): string | null {
     if (fromText) return fromText;
   }
   return null;
+}
+
+function findRecentCharacterSet(messages: Message[]): string[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    const cls = msg.highlightClass;
+    const profile = msg.playerProfile;
+    if (profile && cls) {
+      const character = (profile.characters ?? []).find(
+        (row) => row.class_name.toLowerCase() === cls.toLowerCase(),
+      );
+      const names = (character?.equipment ?? [])
+        .slice(0, SET_SLOT_COUNT)
+        .map((item) => item.name)
+        .filter(Boolean);
+      if (names.length >= 2) return names;
+    }
+    const fromItems = (msg.items ?? [])
+      .map((item) => item.name)
+      .filter(Boolean)
+      .slice(0, SET_SLOT_COUNT);
+    if (msg.role === "assistant" && fromItems.length >= 2) return fromItems;
+    const fromPending = (msg.pendingItemNames ?? []).slice(0, SET_SLOT_COUNT);
+    if (msg.role === "assistant" && fromPending.length >= 2) return fromPending;
+  }
+  return [];
 }
 
 function findRecentHighlightClass(messages: Message[]): string | undefined {
@@ -816,7 +842,7 @@ export function ChatInterface() {
           });
       }
     };
-    const loadoutMode = Boolean(inferLoadoutShowcase(trimmed));
+    const loadoutMode = Boolean(inferLoadoutShowcase(trimmed) || isSameSetFollowup(trimmed));
     const skinMode = inferSkinVisualize(trimmed);
     const DUNGEON_ITEM_CARD_CAP = 8;
     const queueItemFetch = (name: string) => {
@@ -846,7 +872,9 @@ export function ChatInterface() {
     };
 
     if (loadoutMode) {
-      for (const name of extractNamedSetItems(trimmed)) {
+      const named = extractNamedSetItems(trimmed);
+      const names = named.length >= 2 ? named : findRecentCharacterSet(messages);
+      for (const name of names) {
         queueItemFetch(name);
       }
     }

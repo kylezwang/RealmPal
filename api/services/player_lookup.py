@@ -91,6 +91,45 @@ _CLASS_TOKENS = {
 }
 
 
+def extract_class_name(message: str) -> Optional[str]:
+    """The one RotMG class named in this text, or None if zero or several."""
+    text = message or ""
+    hits: list[str] = []
+    for canonical, aliases in CLASS_ALIASES.items():
+        tokens = (canonical.lower(), *aliases)
+        if any(re.search(rf"\b{re.escape(token)}\b", text, re.I) for token in tokens):
+            hits.append(canonical)
+    return hits[0] if len(hits) == 1 else None
+
+
+def character_equipment_names(
+    profile: PlayerProfile, class_name: Optional[str]
+) -> list[str]:
+    """Weapon, ability, armor, ring from that class row. Bag is skipped."""
+    characters = list(profile.characters or [])
+    chosen = None
+    if class_name:
+        needle = class_name.strip().lower()
+        chosen = next(
+            (
+                row
+                for row in characters
+                if (row.class_name or "").strip().lower() == needle
+            ),
+            None,
+        )
+    if chosen is None and len(characters) == 1:
+        chosen = characters[0]
+    if chosen is None:
+        return []
+    names: list[str] = []
+    for item in (chosen.equipment or [])[:4]:
+        name = (item.name or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def _is_plausible_ign(name: str) -> bool:
     token = (name or "").strip()
     if not token or token.lower() in _IGN_STOP or token.lower() in _CLASS_TOKENS:

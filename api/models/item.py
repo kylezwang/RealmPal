@@ -22,3 +22,6 @@ class ItemProfile(BaseModel):
     original_name: Optional[str] = None
     # Set on GET /items when class_name is passed. Not stored in Redis.
     wearable: Optional[bool] = None
+    # Awakened unique enchant for this item, filled at GET time from the
+    # RealmEye enchanting store. Not stored on the item wiki profile.
+    awakened_enchant: Optional[str] = None

@@ -101,6 +101,39 @@ def test_awakened_row_without_eligible_cell_is_never_slot_generic():
     assert enchanting._eligible_ok(parsed["eligible"], "weapon") is False
 
 
+def test_awakened_enchant_for_item_is_named_in_the_hover_line():
+    line = enchanting.awakened_enchant_for_item(
+        [
+            {
+                "name": "Infernal Anger",
+                "category": "Awakened Enchantments",
+                "effects": "Gain 6 Attack and take 5% less damage.",
+                "labels": "Berserker's Breastplate",
+            },
+            {
+                "name": "Attack Bonus",
+                "category": "Basic Enchantments",
+                "effects": "+1 ATT",
+            },
+        ],
+        "Berserker's Breastplate",
+    )
+    assert line is not None
+    assert "Infernal Anger" in line
+    assert "Gain 6 Attack" in line
+    assert enchanting.awakened_enchant_for_item(
+        [
+            {
+                "name": "Infernal Anger",
+                "category": "Awakened Enchantments",
+                "effects": "Gain 6 Attack",
+                "labels": "Berserker's Breastplate",
+            }
+        ],
+        "Doom Bow",
+    ) is None
+
+
 def test_basic_enchant_row_missing_eligible_cell_still_defaults_to_all():
     """Only Awakened rows get the item-locked treatment - a stray row from
     a normal table missing its eligible cell keeps the old ALL default."""

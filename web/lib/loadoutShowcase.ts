@@ -49,6 +49,14 @@ export function isMakeThisVisual(prompt: string): boolean {
   return /\bmake\s+(?:it|them|this|that)\b/i.test(prompt);
 }
 
+export function isSameSetFollowup(prompt: string): boolean {
+  return (
+    /\b(?:same\s+set|that\s+set|this\s+set|show\s+me\s+all)\b/i.test(prompt) ||
+    /\ball\s+(?:four\s+)?(?:slots?|items?)\b/i.test(prompt) ||
+    /\ball\s+(?:shiny|divine|legendary|rare|uncommon|awakened)\b/i.test(prompt)
+  );
+}
+
 /** Keep shiny from the last framed sprite when a follow-up only names a tier. */
 export function mergeLoadoutShowcase(
   prompt: string,
@@ -141,26 +149,22 @@ export function inferLoadoutShowcase(
 
 /** "with Fractal Blades, Cloak of X, and Snake Eye ring" → those four names. */
 export function extractNamedSetItems(prompt: string): string[] {
-  const match = prompt.match(/\bwith\s+([\s\S]+?)(?:[.!?]|$)/i);
-  if (!match) return [];
-  const names = match[1]
+  const withMatch = prompt.match(/\bwith\s+([\s\S]+?)(?:[.!?]|$)/i);
+  const afterVisual = prompt.match(
+    /\b(?:all\s+)?(?:shiny|divine|legendary|rare|uncommon|div|leg|unc)\b\s+([\s\S]+?)(?:[.!?]|$)/i,
+  );
+  const candidate = withMatch?.[1] ?? afterVisual?.[1];
+  if (!candidate) return [];
+  const names = candidate
     .split(/,\s*(?:and\s+)?|\s+and\s+/i)
     .map((part) =>
       part
-        .replace(/\b(?:all\s+)?(?:shiny|divine|legendary|rare|uncommon)\b/gi, "")
+        .replace(/\b(?:all\s+)?(?:shiny|divine|legendary|rare|uncommon|div|leg|unc)\b/gi, "")
         .replace(/^(?:and|&)\s+/i, "")
         .trim()
         .replace(/\s+/g, " "),
     )
     .filter((name) => name.length >= 3 && name.length <= 60);
-  // A real set names 2+ items. `\bwith\s+...` matches any trailing "with
-  // <phrase>" in the message, not just an item list - so an ordinary
-  // question that happens to use "with" (e.g. "Is it insane with the
-  // awakened enchantment?") returned a one-item "set" here. That bogus
-  // single name then got speculatively fetched as a real item lookup by
-  // the caller, guaranteeing a 404. Mirrors the same fix applied to the
-  // backend's extract_set_item_names (api/services/item_aliases.py) -
-  // found live Sep 14 for the identical message on both sides.
   if (names.length < 2) return [];
   return names.slice(0, SET_SLOT_COUNT);
 }

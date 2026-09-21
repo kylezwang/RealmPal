@@ -19,6 +19,7 @@ from .enchanting import enchanting_store_status, warm_enchanting_store
 from .ingestion import WIKI_HUB_SLUGS
 from .item_aliases import load_item_catalog, warm_suggest_index
 from .realmshark import GRAPH_CACHE_KEY, LOADOUT_CACHE_PREFIX, load_graph, load_top_loadouts
+from .rotmg_hub import HUB_TTL_SECONDS, rotmg_hub_store_status, warm_rotmg_hub
 from .skin_visualizer import CATALOG_KEY, load_outfit_catalog
 from .wiki_scaling import (
     CACHE_PREFIX,
@@ -390,6 +391,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
     umi = await umi_store_status(redis)
     skins = await skin_catalog_status(redis)
     enchanting = await enchanting_store_status(redis)
+    rotmg_hub = await rotmg_hub_store_status(redis)
     return {
         "abilities": abilities,
         "hubs": hubs,
@@ -399,6 +401,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
         "umi": umi,
         "skins": skins,
         "enchanting": enchanting,
+        "rotmg_hub": rotmg_hub,
     }
 
 
@@ -438,6 +441,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
     ]
     skins = snapshot.get("skins") or {}
     enchanting = snapshot.get("enchanting") or {}
+    rotmg_hub = snapshot.get("rotmg_hub") or {}
     item_cached = int(items.get("cached") or 0)
     item_total = int(items.get("total") or 0)
     dungeon_cached = int(dungeons.get("cached") or 0)
@@ -455,6 +459,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
         "umi": umi,
         "skins": not skins.get("stored"),
         "enchanting": not enchanting.get("stored"),
+        "rotmg_hub": not rotmg_hub.get("stored") or int(rotmg_hub.get("posts") or 0) <= 0,
     }
 
 
@@ -468,6 +473,7 @@ def has_missing_work(work: dict[str, Any]) -> bool:
         or work.get("umi")
         or work.get("skins")
         or work.get("enchanting")
+        or work.get("rotmg_hub")
     )
 
 
@@ -535,6 +541,16 @@ async def warm_all_specialists(
         )
     else:
         result["umi"] = {row["class_name"]: row["stored"] for row in snapshot["umi"]}
+
+    if force or work["rotmg_hub"]:
+        await _phase(
+            "rotmg_hub",
+            lambda: warm_rotmg_hub(
+                redis, ttl_seconds=HUB_TTL_SECONDS, force=force
+            ),
+        )
+    else:
+        result["rotmg_hub"] = snapshot.get("rotmg_hub") or {}
 
     if force or work["dps"]:
         await _phase(

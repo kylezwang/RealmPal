@@ -24,6 +24,7 @@ from ..dependencies import enforce_lookup_rate_limit, get_redis
 from ..services.scraper import scrape_item, ScraperError
 from ..services.sprite_crop import SpriteCropError, fetch_and_crop_sprite
 from ..services.validation import sanitize_lookup_name
+from ..services.rotmg_hub import hub_sprite_url
 from ..services.wiki_scaling import (
     is_item_marked_missing,
     mark_item_missing,
@@ -53,17 +54,32 @@ async def get_item_sprite(
         # no RealmEye wiki page yet, and without this every sprite request
         # for it re-pays the full scrape timeout instead of failing fast.
         if await is_item_marked_missing(redis, name):
+            hub_url = await hub_sprite_url(redis, name)
+            if hub_url:
+                ttl = settings.pet_sprite_ttl_days * 86400
+                await redis.setex(cache_key, ttl, hub_url)
+                return RedirectResponse(hub_url, status_code=302)
             raise HTTPException(
                 status_code=404, detail=f"{name} has no RealmEye wiki page yet"
             )
         try:
             item = await scrape_item(name)
         except ScraperError as e:
+            hub_url = await hub_sprite_url(redis, name)
+            if hub_url:
+                ttl = settings.pet_sprite_ttl_days * 86400
+                await redis.setex(cache_key, ttl, hub_url)
+                return RedirectResponse(hub_url, status_code=302)
             await mark_item_missing(redis, name, settings.missing_item_ttl_seconds)
             raise HTTPException(status_code=404, detail=str(e)) from e
         await write_cached_item(redis, item, settings.wiki_ttl_seconds, name)
 
     if not item.sprite_url:
+        hub_url = await hub_sprite_url(redis, name)
+        if hub_url:
+            ttl = settings.pet_sprite_ttl_days * 86400
+            await redis.setex(cache_key, ttl, hub_url)
+            return RedirectResponse(hub_url, status_code=302)
         raise HTTPException(status_code=404, detail=f"No sprite found for '{name}'")
 
     ttl = settings.pet_sprite_ttl_days * 86400
