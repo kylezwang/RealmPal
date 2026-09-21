@@ -11,6 +11,20 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.21-3] - Sep 21, 2026
+
+### Fixed
+- **Hub new-item retrieve no longer cites last season's dated cards** (`ensure_motmg_post`, `_scan_cards`, `_score_post`, `retrieve_rotmg_hub`). Found live after 2026.09.21-2: the Hub index already had Season 29 Part 2: Alien Overdrive and Season 28 Part 2: The Return of Stromwell, so `seed_motmg_if_empty` skipped the living MOTMG URL (Season 30 Part 2). Scoring then returned those two titles, which never mention Rectangular Prism / Cube Deity. Retrieve now always upserts MOTMG, scans MOTMG plus the latest 5 cards, scores +200 only when the asked token is in items/event whites, and on a new-item miss uses MOTMG alone rather than dumping unrelated season notes.
+- **Wiki awakened enchant lives in its own table** (`parse_awakened_from_wiki_html`, `_ITEM_PAGE_JS`, `GET /items` `_with_wearable`). Found live: Snake Eye Ring infobox is Tier / On Equip; Awakened Enchantment is a later table (`th` + sprite `td` + effects `td`). Playwright copies the last cell; cached profiles with On Equip but no awakened row HTTP-backfill once (miss key `wiki:awakened-miss:v1:{name}`) and persist. Loadout hover reads any stats key matching `/awakened/i`.
+
+### Tests
+- `test_new_prism_uses_motmg_not_old_season_cards`
+- `test_ensure_motmg_fetches_when_index_is_older_seasons`
+- `test_parse_awakened_from_wiki_html_snake_eye`
+- `test_get_item_backfills_awakened_from_wiki_table`
+
+---
+
 ## [2026.09.21-2] - Sep 21, 2026
 
 ### Fixed

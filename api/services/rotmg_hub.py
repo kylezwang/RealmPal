@@ -27,6 +27,33 @@ HUB_TTL_SECONDS = 86400  # 24h; MOTMG posts change weekly
 MAX_BODY_CHARS = 24_000
 MAX_POSTS_BOOT = 24
 MAX_POSTS_FORCE = 48
+LATEST_SCAN = 5
+_SCORE_STOP = frozenset(
+    {
+        "where",
+        "does",
+        "drop",
+        "drops",
+        "from",
+        "this",
+        "that",
+        "have",
+        "what",
+        "with",
+        "they",
+        "them",
+        "then",
+        "when",
+        "your",
+        "about",
+        "item",
+        "items",
+        "only",
+        "just",
+        "into",
+        "which",
+    }
+)
 
 _AGHANIM_NEWS = re.compile(r"static-platform\.aghanim\.com/news/", re.I)
 _SKIP_IMG = re.compile(r"/hub/|peg|steam|social|logo|icon", re.I)
@@ -341,6 +368,8 @@ def parse_article_html(
             )
             if not structured["event_whites"]:
                 structured["event_whites"] = _parse_event_white_rows(section["body"])
+    if not structured.get("event_whites"):
+        structured["event_whites"] = _parse_event_white_rows(body_text)
 
     return {
         "slug": slug,
@@ -448,6 +477,7 @@ def _score_post(post: dict[str, Any], query: HubQuery, message: str) -> int:
     text = (message or "").lower()
     title = (post.get("title") or "").lower()
     body = (post.get("text") or "").lower()
+    slug = (post.get("slug") or "").lower()
     score = 0
     if query.topic == "motmg" and "mad god" in title:
         score += 200
@@ -459,19 +489,31 @@ def _score_post(post: dict[str, Any], query: HubQuery, message: str) -> int:
         score += 120
     if query.topic == "encounters" and "new uts" in body:
         score += 120
+    if slug == "motmg" or "mad god" in title:
+        score += 50
+    whites = (post.get("structured") or {}).get("event_whites") or []
+    item_blob = " ".join(
+        [normalize_hub_name(n) for n in (post.get("items") or [])]
+        + [normalize_hub_name(row.get("name") or "") for row in whites]
+    )
     if query.topic in {"new_drop", "new_item"}:
-        score += 80
         for token in re.findall(r"[a-z0-9']{4,}", text):
-            for name in post.get("items") or []:
-                if token in normalize_hub_name(name):
-                    score += 40
-    for token in re.findall(r"[a-z0-9']{4,}", text):
-        if token in title or token in body:
-            score += 5
+            if token in _SCORE_STOP:
+                continue
+            if token in item_blob:
+                score += 200
+            elif token in title or token in body:
+                score += 8
+    else:
+        for token in re.findall(r"[a-z0-9']{4,}", text):
+            if token in _SCORE_STOP:
+                continue
+            if token in title or token in body:
+                score += 5
     return score
 
 
-def _format_post_brief(post: dict[str, Any]) -> str:
+def _format_post_brief(post: dict[str, Any], *, compact: bool = False) -> str:
     lines = [
         f"OFFICIAL PATCH NOTES: {post.get('title') or post.get('slug')}",
     ]
@@ -504,8 +546,9 @@ def _format_post_brief(post: dict[str, Any]) -> str:
             rot = rot[:1197] + "..."
         lines.append(f"Weekly rotation:\n{rot}")
     body = post.get("text") or ""
-    if len(body) > 4000:
-        body = body[:3997] + "..."
+    limit = 900 if compact else 4000
+    if len(body) > limit:
+        body = body[: limit - 3] + "..."
     lines.append(body)
     lines.append(
         "Official Hub patch notes are source of truth for what shipped this "
@@ -516,20 +559,43 @@ def _format_post_brief(post: dict[str, Any]) -> str:
     return "\n\n".join(lines)
 
 
-async def seed_motmg_if_empty(
+async def ensure_motmg_post(
     redis: aioredis.Redis, *, ttl_seconds: int = HUB_TTL_SECONDS
-) -> None:
-    """HTTP-only fallback so a new-item ask works before Playwright warm."""
-    if await load_index(redis):
-        return
+) -> Optional[dict[str, Any]]:
+    """Keep the living MOTMG page in the store even when the index is older seasons."""
+    post = await load_post(redis, "motmg")
+    whites = ((post or {}).get("structured") or {}).get("event_whites") or []
+    if post and whites:
+        await _index_has_motmg(redis, post, ttl_seconds=ttl_seconds)
+        return post
     try:
         from .scraper import fetch_rotmg_hub_article
 
         post = await fetch_rotmg_hub_article("motmg")
     except Exception as e:
         logger.bind(error=str(e)).warning("RotMG Hub MOTMG fallback fetch failed")
-        return
+        return await load_post(redis, "motmg")
     if not post.get("text"):
+        return await load_post(redis, "motmg")
+    await redis.setex(f"{POST_PREFIX}motmg", ttl_seconds, json.dumps(post))
+    await _index_has_motmg(redis, post, ttl_seconds=ttl_seconds)
+    names = list(post.get("items") or [])
+    if names:
+        existing = await hub_item_names(redis)
+        merged = list(dict.fromkeys([*names, *existing]))
+        await redis.setex(NAMES_KEY, ttl_seconds, json.dumps(merged))
+    return post
+
+
+async def _index_has_motmg(
+    redis: aioredis.Redis, post: dict[str, Any], *, ttl_seconds: int
+) -> None:
+    index = await load_index(redis)
+    if any((card.get("slug") or "") == "motmg" for card in index):
+        if index and (index[0].get("slug") or "") != "motmg":
+            motmg = next(c for c in index if (c.get("slug") or "") == "motmg")
+            rest = [c for c in index if (c.get("slug") or "") != "motmg"]
+            await redis.setex(INDEX_KEY, ttl_seconds, json.dumps([motmg, *rest]))
         return
     card = {
         "slug": "motmg",
@@ -538,22 +604,26 @@ async def seed_motmg_if_empty(
         "url": post.get("url") or post_url("motmg"),
         "thumbnail_url": "",
     }
-    await redis.setex(INDEX_KEY, ttl_seconds, json.dumps([card]))
-    await redis.setex(f"{POST_PREFIX}motmg", ttl_seconds, json.dumps(post))
-    names = list(post.get("items") or [])
-    if names:
-        await redis.setex(NAMES_KEY, ttl_seconds, json.dumps(names))
-    sprites = {}
-    for sp in post.get("sprites") or []:
-        cap = sp.get("caption") or ""
-        if cap:
-            sprites[normalize_hub_name(cap)] = {
-                "url": sp.get("url") or "",
-                "caption": cap,
-                "post_slug": "motmg",
-            }
-    if sprites:
-        await redis.setex(SPRITES_KEY, ttl_seconds, json.dumps(sprites))
+    await redis.setex(INDEX_KEY, ttl_seconds, json.dumps([card, *index]))
+
+
+async def seed_motmg_if_empty(
+    redis: aioredis.Redis, *, ttl_seconds: int = HUB_TTL_SECONDS
+) -> None:
+    """Compat wrapper. Always upsert MOTMG, even when older season cards exist."""
+    await ensure_motmg_post(redis, ttl_seconds=ttl_seconds)
+
+
+def _scan_cards(index: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Latest 5 index cards, with MOTMG first so Season 30 is never skipped."""
+    latest = [card for card in (index or []) if (card.get("slug") or "") != "motmg"][
+        :LATEST_SCAN
+    ]
+    motmg = next(
+        (card for card in (index or []) if (card.get("slug") or "") == "motmg"),
+        {"slug": "motmg", "title": "Month of the Mad God Patch Notes", "date": "", "url": post_url("motmg"), "thumbnail_url": ""},
+    )
+    return [motmg, *latest]
 
 
 async def retrieve_rotmg_hub(
@@ -567,8 +637,7 @@ async def retrieve_rotmg_hub(
     query = extract_hub_query(message, history=history)
     if not query:
         return ""
-    if not await load_index(redis):
-        await seed_motmg_if_empty(redis, ttl_seconds=ttl_seconds)
+    await ensure_motmg_post(redis, ttl_seconds=ttl_seconds)
     index = await load_index(redis)
     soft_miss = query.topic in {"new_item", "new_drop"}
     if not index:
@@ -582,15 +651,36 @@ async def retrieve_rotmg_hub(
             )
         await warm_rotmg_hub(redis, ttl_seconds=ttl_seconds, force=True)
         index = await load_index(redis)
+    scan = _scan_cards(index or [])
     posts: list[tuple[int, dict[str, Any]]] = []
-    for card in index or []:
+    seen: set[str] = set()
+    for i, card in enumerate(scan):
         slug = card.get("slug") or ""
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
         post = await load_post(redis, slug)
         if not post:
             continue
-        posts.append((_score_post(post, query, message), post))
+        recency = max(0, LATEST_SCAN - i) * 10
+        posts.append((_score_post(post, query, message) + recency, post))
     posts.sort(key=lambda row: row[0], reverse=True)
-    chosen = [post for score, post in posts if score > 0][:2]
+    matched = [post for score, post in posts if score >= 200]
+    if matched:
+        chosen = matched[:LATEST_SCAN]
+    elif query.topic in {"new_item", "new_drop"}:
+        # Found live Sep 21: Season 29 Part 2 / Season 28 Part 2 were the
+        # newest dated cards, not Season 30 Part 2. Those notes never name
+        # the prism. Prefer the living MOTMG page; otherwise miss to wiki.
+        motmg_post = next(
+            (p for _s, p in posts if (p.get("slug") or "") == "motmg"),
+            None,
+        )
+        chosen = [motmg_post] if motmg_post else []
+    elif query.topic in {"motmg", "encounters", "patch"} or query.survey:
+        chosen = [post for _score, post in posts][:LATEST_SCAN]
+    else:
+        chosen = [post for score, post in posts if score > 0][:2]
     if not chosen and query.survey:
         chosen = [post for _score, post in posts[:2]]
     if not chosen:
@@ -601,8 +691,8 @@ async def retrieve_rotmg_hub(
             "for this question. Say so rather than inventing patch details."
         )
     blocks = []
-    for post in chosen:
-        body = _format_post_brief(post)
+    for i, post in enumerate(chosen):
+        body = _format_post_brief(post, compact=i > 0)
         blocks.append(
             wrap_slot_chunk("patchnotes", body, source=post.get("url") or post_url(post["slug"]))
         )
@@ -619,11 +709,15 @@ async def hub_drop_for_query(
     token = normalize_hub_name(needle)
     if not token or token in {"item", "items", "drop", "drops"}:
         return None
-    if not await load_index(redis):
-        await seed_motmg_if_empty(redis)
+    await ensure_motmg_post(redis)
     index = await load_index(redis)
-    for card in index:
-        post = await load_post(redis, card.get("slug") or "")
+    seen: set[str] = set()
+    for card in [*_scan_cards(index), *(index or [])]:
+        slug = card.get("slug") or ""
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        post = await load_post(redis, slug)
         if not post:
             continue
         whites = (post.get("structured") or {}).get("event_whites") or []
@@ -726,6 +820,21 @@ async def warm_rotmg_hub(
         if existing_index:
             return {"stored": 1, "posts": len(existing_index), "error": 1}
         return {"stored": 0, "posts": 0}
+
+    if not any((card.get("slug") or "") == "motmg" for card in cards):
+        cards = [
+            {
+                "slug": "motmg",
+                "title": "Month of the Mad God Patch Notes",
+                "date": "",
+                "url": post_url("motmg"),
+                "thumbnail_url": "",
+            },
+            *cards,
+        ]
+    else:
+        motmg = next(c for c in cards if (c.get("slug") or "") == "motmg")
+        cards = [motmg, *[c for c in cards if (c.get("slug") or "") != "motmg"]]
 
     await redis.setex(INDEX_KEY, ttl_seconds, json.dumps(cards))
     sprite_map: dict[str, dict[str, str]] = {}
