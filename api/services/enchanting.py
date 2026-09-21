@@ -21,8 +21,12 @@ CACHE_KEY = "wiki:enchanting:v1"
 SOURCE_URL = f"{REALMEYE_BASE}/wiki/enchanting"
 MAX_ROLLS = 36
 
-_ENCHANT_WORD = re.compile(
-    r"\b(enchant(?:s|ed|ing|ments?)?|enchanter|rerolls?|awakened|awakenings?)\b",
+_ENCHANT_ASK = re.compile(
+    r"\b(enchant(?:s|ed|ing|ments?)?|enchanter|rerolls?|awakenings?)\b",
+    re.I,
+)
+_VISUAL_FLAG = re.compile(
+    r"\b(?:shiny|divine|legendary|rare|uncommon)\b",
     re.I,
 )
 _STAT_ROLL = re.compile(
@@ -100,9 +104,18 @@ async def awakened_enchant_text(
 
 def is_enchant_query(message: str) -> bool:
     text = message or ""
-    if _ENCHANT_WORD.search(text):
-        return True
     if _STAT_ROLL.search(text) or _ROLLS_ON.search(text):
+        return True
+    if _ENCHANT_ASK.search(text):
+        return True
+    # "awakened" alone on a shiny/divine show-me is a visualizer flag
+    # (the unique line still attaches on GET /items). Found live Sep 21:
+    # "Shiny divine awakened snake eye ring" was stolen by this gate, so
+    # Claude had no [loadout] chunk. A real enchant ask still names
+    # enchant/rolls, or "awakened" without a rarity/shiny show-me.
+    if re.search(r"\bawakened\b", text, re.I):
+        if _VISUAL_FLAG.search(text):
+            return False
         return True
     return False
 

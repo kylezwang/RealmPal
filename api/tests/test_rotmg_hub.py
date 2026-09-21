@@ -45,6 +45,11 @@ ARTICLE_HTML = """
 <tr><td>Ancient Stone Sword</td><td>Venerable Ancient Stone Sword</td></tr>
 <tr><td>Doom Bow</td><td>Venerable Doom Bow</td></tr>
 </table>
+<h2>New UTs and Encounters for the Realm</h2>
+<ul>
+<li>Rectangular Prism (Prism) from the Cube Deity</li>
+<li>Shifting Shroud (Robe) from the Artificial Slop</li>
+</ul>
 <h2>The Twelve Dungeons</h2>
 <ul><li>Pirate Cave</li><li>The Shatters</li></ul>
 <h2>Weekly Dungeon Rotation</h2>
@@ -89,6 +94,7 @@ def test_extract_hub_query():
     assert extract_hub_query("week 3 rotation patch notes")
     assert extract_hub_query("new shinies this update")
     assert extract_hub_query("https://hub.realmofthemadgod.com/news0/updates0/motmg")
+    assert extract_hub_query("Where does the new prism drop?")
     assert extract_hub_query("Attack Bard build") is None
     assert extract_hub_query("Turbine's huntress look") is None
 
@@ -114,6 +120,39 @@ async def test_retrieve_rotmg_hub_cache_only(redis_client):
     )
     assert "hub.realmofthemadgod.com/news0/updates0/motmg" in text
     assert "Venerable Doom Bow" in text or "New shinies" in text
+
+
+@pytest.mark.asyncio
+async def test_new_prism_drop_uses_hub_event_white(redis_client):
+    """Found live Sep 21: 'Where does the new prism drop?' hit a generic
+    RealmEye prism wiki page with no loot, because Hub routing only matched
+    MOTMG/patch keywords, not 'new <item> drop'."""
+    from api.services.rotmg_hub import hub_drop_for_query
+
+    post = parse_article_html(ARTICLE_HTML, "motmg", date="Aug 31, 2026")
+    await redis_client.set(
+        INDEX_KEY,
+        json.dumps(
+            [
+                {
+                    "slug": "motmg",
+                    "title": "Month of the Mad God Patch Notes",
+                    "date": "Aug 31, 2026",
+                    "url": "https://hub.realmofthemadgod.com/news0/updates0/motmg",
+                }
+            ]
+        ),
+    )
+    await redis_client.set(f"{POST_PREFIX}motmg", json.dumps(post))
+    text = await retrieve_rotmg_hub(
+        redis_client, "Where does the new prism drop?", cache_only=True
+    )
+    assert "Rectangular Prism" in text
+    assert "Cube Deity" in text
+    hit = await hub_drop_for_query(redis_client, "prism")
+    assert hit is not None
+    assert hit[0] == "Rectangular Prism"
+    assert "Cube Deity" in hit[1]
 
 
 @pytest.mark.asyncio
