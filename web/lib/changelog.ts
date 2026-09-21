@@ -28,6 +28,13 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.21-4",
+    date: "Sep 21, 2026",
+    items: [
+      "Asking which enemies drop a dungeon now names the realm enemies that drop that portal, not the loot inside.",
+    ],
+  },
+  {
     version: "2026.09.21-3",
     date: "Sep 21, 2026",
     items: [

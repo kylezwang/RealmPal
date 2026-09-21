@@ -13,6 +13,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 from loguru import logger
 
+from .chunks import wrap_slot_chunk
 from .fuzzy_match import fuzzy_closed_vocab, fuzzy_word_match, levenshtein
 from .scraper import (
     REALMEYE_BASE,
@@ -258,13 +259,119 @@ def _split_drop_sources(raw: str) -> list[str]:
     return names
 
 
-_ENEMY_DROP_RE = re.compile(
+_ENEMY_IN_PLACE_RE = re.compile(
     r"^(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+"
-    r"(?:in\s+|from\s+|inside\s+)(?:the\s+)?(.+?)\s+drops?\b"
-    r"|^(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+drops?\s+"
-    r"(?:the\s+)?(.+?)\s*\??\s*$",
+    r"(?:in\s+|from\s+|inside\s+)(?:the\s+)?(.+?)\s+drops?\b",
     re.I,
 )
+_PORTAL_SOURCE_RE = re.compile(
+    r"(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+"
+    r"drops?\s+(?:the\s+)?(?P<drops_obj>.+?)(?:\s+portal)?\s*\??\s*$"
+    r"|(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+"
+    r"(?:does|do|can|could)\s+(?:the\s+)?(?P<from_obj>.+?)\s+"
+    r"(?:portal\s+)?drops?\s+from"
+    r"|(?:what|which)\s+(?:enemy|enemies|bosses?|mobs?|monsters?)\s+"
+    r"(?:found\s+)?in\s+(?:the\s+)?realm\b.*?\b(?:can|could|does|do)?\s*"
+    r"drops?\s+(?:the\s+)?(?P<realm_obj>.+?)\s*\??\s*$"
+    r"|(?:who|what)\s+(?:can\s+)?drops?\s+(?:the\s+)?"
+    r"(?P<who_obj>.+?)\s+portals?\s*\??\s*$"
+    r"|(?:where)\s+(?:does|do)\s+(?:the\s+)?"
+    r"(?P<where_obj>.+?)\s+(?:portal|dungeon)\s+drops?\s+from",
+    re.I,
+)
+_PORTAL_CHANCE_RE = re.compile(
+    r"portal(?:\s+to\s+[^.]+?)?\s+"
+    r"(?:has\s+a\s+chance\s+to\s+drop|can\s+drop|drops?)\s+from\s+"
+    r"([^.]+)",
+    re.I,
+)
+_PORTAL_SURE_RE = re.compile(
+    r"(?:guaranteed|always)\s+(?:to\s+drop|drops?)\s+from\s+([^.]+)",
+    re.I,
+)
+_PORTAL_DROPPED_BY_RE = re.compile(
+    r"portal(?:\s+to\s+[^.]+?)?\s+(?:is\s+)?(?:also\s+)?dropped\s+by\s+"
+    r"([^.]+)",
+    re.I,
+)
+
+
+def extract_portal_source_query(message: str) -> Optional[str]:
+    """Which realm enemies drop this dungeon portal, not loot inside it.
+
+    Live Sep 21: 'What enemy does ocean trench drop from' and 'what enemy
+    drops ocean trench' listed Thessal loot. The Ocean Trench lead says the
+    portal drops from Abyssal Squid, Sea Dragon, Ice Giant, Hermit God, and
+    Eye of the Storm.
+    """
+    text = (message or "").strip()
+    if not text or _ENEMY_IN_PLACE_RE.search(text):
+        return None
+    match = _PORTAL_SOURCE_RE.search(text)
+    if not match:
+        return None
+    raw = next((group for group in match.groups() if group), "")
+    names = _split_drop_sources(raw)
+    return names[0] if names else None
+
+
+def parse_portal_droppers(text: str) -> dict[str, list[str]]:
+    """Read RealmEye lead sentences that name who drops the dungeon portal."""
+    chance: list[str] = []
+    guaranteed: list[str] = []
+    seen_chance: set[str] = set()
+    seen_sure: set[str] = set()
+
+    def take(blob: str, dest: list[str], seen: set[str]) -> None:
+        for name in _split_drop_sources(blob):
+            key = name.lower()
+            if key in seen or key in {"it", "this", "that"}:
+                continue
+            seen.add(key)
+            dest.append(name)
+
+    body = text or ""
+    for match in _PORTAL_SURE_RE.finditer(body):
+        take(match.group(1), guaranteed, seen_sure)
+    for match in _PORTAL_CHANCE_RE.finditer(body):
+        take(match.group(1), chance, seen_chance)
+    if not chance and not guaranteed:
+        for match in _PORTAL_DROPPED_BY_RE.finditer(body):
+            take(match.group(1), chance, seen_chance)
+    return {"chance": chance, "guaranteed": guaranteed}
+
+
+def format_portal_drop_brief(
+    title: str,
+    droppers: dict[str, list[str]],
+    url: str,
+    *,
+    lead: str = "",
+) -> str:
+    chance = droppers.get("chance") or []
+    guaranteed = droppers.get("guaranteed") or []
+    lines = [
+        f"The **{title}** portal drops from these realm enemies "
+        "(RealmEye dungeon page, not loot from inside the dungeon):"
+    ]
+    if chance:
+        lines.append("Chance to drop:")
+        lines.extend(f"- {name}" for name in chance)
+    if guaranteed:
+        lines.append("Guaranteed:")
+        lines.extend(f"- {name}" for name in guaranteed)
+    if not chance and not guaranteed:
+        snippet = (lead or "").strip()
+        if snippet:
+            lines.append(snippet[:900])
+        else:
+            lines.append(
+                "The cached wiki page does not name which realm enemies "
+                "drop this portal."
+            )
+    if url:
+        lines.append(f"Source: {url}")
+    return "\n".join(lines)
 
 
 def extract_drop_source_query(message: str) -> Optional[tuple[list[str], bool]]:
@@ -275,12 +382,13 @@ def extract_drop_source_query(message: str) -> Optional[tuple[list[str], bool]]:
     Same day: Nox / Twilight Archmage missed because only index titles
     (not drops_from bosses) were treated as sources.
 
-    Live Sep 21: 'what enemy drops ocean trench' captured the word 'enemy'
-    as the source. Generic nouns are skipped, and 'what enemy drops X'
-    treats X as the dungeon or item.
+    Live Sep 21: 'what enemy drops ocean trench' is a portal-source ask.
+    Loot-inside stays on 'what enemies in X drop' / 'what does X drop'.
     """
     text = (message or "").strip()
-    enemy_match = _ENEMY_DROP_RE.search(text)
+    if extract_portal_source_query(text):
+        return None
+    enemy_match = _ENEMY_IN_PLACE_RE.search(text)
     if enemy_match:
         raw = next((group for group in enemy_match.groups() if group), "")
         names = _split_drop_sources(raw)
@@ -430,6 +538,9 @@ def extract_dungeon_query(
     history: Optional[list[str]] = None,
 ) -> Optional[str]:
     """Pull the dungeon name from this turn, or from a prior guide follow-up."""
+    portal = extract_portal_source_query(message)
+    if portal:
+        return portal
     direct = _name_from_guide_match(message)
     if direct:
         return direct
@@ -715,6 +826,60 @@ async def get_or_scrape_wiki(
         "Cached RealmEye dungeon page"
     )
     return payload
+
+
+async def retrieve_portal_drop_context(
+    redis: aioredis.Redis,
+    dungeon_name: str,
+    *,
+    ttl_seconds: int,
+    cache_only: bool = True,
+) -> str:
+    """RealmEye lead: who drops this dungeon portal in the realm."""
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl_seconds, cache_only=cache_only
+        )
+    except Exception:
+        return ""
+    matches = match_index_pages(dungeon_name, entries) if entries else []
+    if not matches:
+        return ""
+    page = None
+    for entry in matches:
+        slug = entry.get("slug") or ""
+        page = await get_or_scrape_wiki(
+            redis, slug, ttl_seconds=ttl_seconds, cache_only=cache_only
+        )
+        if not page and cache_only and slug:
+            page = await get_or_scrape_wiki(
+                redis, slug, ttl_seconds=ttl_seconds, cache_only=False
+            )
+        if page:
+            break
+    if not page:
+        return ""
+    title = page.get("title") or matches[0].get("title") or dungeon_name
+    url = page.get("url") or ""
+    text = page.get("text") or ""
+    droppers = parse_portal_droppers(text)
+    brief = format_portal_drop_brief(title, droppers, url, lead=text[:900])
+    return wrap_slot_chunk("dungeon", brief, source=url or INDEX_URLS[1])
+
+
+def indexed_dungeon_title(query: str, entries: list[dict]) -> Optional[str]:
+    """Exact-ish index title when the ask names a dungeon, not an item."""
+    matches = match_index_pages(query, entries) if entries else []
+    if not matches:
+        return None
+    title = matches[0].get("title") or ""
+    if not title:
+        return None
+    if _core(query) == _core(title) or _core(title) in _core(query):
+        return title
+    if _tokens(query) and _tokens(query) <= _tokens(title):
+        return title
+    return None
 
 
 async def retrieve_dungeon_guide(

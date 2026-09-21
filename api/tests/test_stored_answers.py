@@ -1360,7 +1360,7 @@ async def test_dungeon_loot_is_grouped_by_enemy(redis_client, anon_settings):
     )
     reply = await try_stored_reply(
         redis_client,
-        "what enemy drops ocean trench",
+        "what enemies in ocean trench drop",
         ttl_seconds=anon_settings.wiki_ttl_seconds,
     )
     assert reply is not None
@@ -1369,3 +1369,66 @@ async def test_dungeon_loot_is_grouped_by_enemy(redis_client, anon_settings):
     assert "Coral Gift" in reply.text
     assert "[item:Coral Bow]" in reply.text
     assert "**enemy**" not in reply.text.lower()
+
+
+async def test_ocean_trench_portal_drops_from_realm_enemies(
+    redis_client, anon_settings
+):
+    """Found live Sep 21: 'What enemy does ocean trench drop from' listed
+    Thessal loot. RealmEye's Ocean Trench lead names the realm portal drops."""
+    from api.services.dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX
+
+    await redis_client.set(
+        INDEX_CACHE_KEY,
+        json.dumps(
+            [
+                {
+                    "title": "Ocean Trench",
+                    "slug": "ocean-trench",
+                    "kind": "dungeon",
+                }
+            ]
+        ),
+    )
+    await redis_client.set(
+        f"{PAGE_CACHE_PREFIX}ocean-trench",
+        json.dumps(
+            {
+                "title": "Ocean Trench",
+                "url": "https://www.realmeye.com/wiki/ocean-trench",
+                "text": (
+                    "The portal to Ocean Trench has a chance to drop from "
+                    "Abyssal Squid, Sea Dragon and Ice Giant. It is also "
+                    "guaranteed to drop from Hermit God and Eye of the Storm."
+                ),
+                "drops": [
+                    {
+                        "name": "Coral Bow",
+                        "drops_from": "Thessal the Mermaid Goddess",
+                    }
+                ],
+            }
+        ),
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "What enemy does ocean trench drop from",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert reply.kind == "portal-drop"
+    assert "Abyssal Squid" in reply.text
+    assert "Sea Dragon" in reply.text
+    assert "Ice Giant" in reply.text
+    assert "Hermit God" in reply.text
+    assert "Eye of the Storm" in reply.text
+    assert "Coral Bow" not in reply.text
+    assert "Thessal" not in reply.text
+    follow = await try_stored_reply(
+        redis_client,
+        "No I meant which enemies found in realm can drop ocean trench",
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert follow is not None
+    assert "Abyssal Squid" in follow.text
+    assert "Thessal" not in follow.text

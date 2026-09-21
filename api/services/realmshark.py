@@ -32,7 +32,11 @@ from ..models.build import (
     Loadout,
     StatScalingGraph,
 )
-from .dungeon_guide import extract_dungeon_query
+from .dungeon_guide import (
+    extract_dungeon_query,
+    extract_portal_source_query,
+    retrieve_portal_drop_context,
+)
 from .biomes import extract_biome_query, retrieve_biome_context
 from .rotmg_hub import (
     extract_hub_query,
@@ -803,6 +807,9 @@ async def retrieve_build_knowledge(
     class_name, stat, buildish = parse_query(message, history=history)
     player_ign = extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
+    portal_ask = extract_portal_source_query(message)
+    if portal_ask:
+        dungeon_name = dungeon_name or portal_ask
     biome_ask = extract_biome_query(message)
     hub_ask = extract_hub_query(message, history=history)
     # A breakdown or what-if turn continues the previous DPS answer. It has to
@@ -941,6 +948,21 @@ async def retrieve_build_knowledge(
                 "Player lookup specialist unavailable"
             )
             return ""
+
+    if portal_ask and not buildish:
+        try:
+            portal_ctx = await retrieve_portal_drop_context(
+                redis,
+                portal_ask,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+            )
+            if portal_ctx:
+                return portal_ctx
+        except Exception as e:
+            logger.bind(error=str(e), dungeon=portal_ask).warning(
+                "Portal-drop context unavailable"
+            )
 
     if dungeon_name and not buildish:
         try:

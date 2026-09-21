@@ -23,10 +23,15 @@ from .dungeon_guide import (
     cached_drops_from_source,
     extract_drop_source_query,
     extract_dungeon_query,
+    extract_portal_source_query,
+    format_portal_drop_brief,
     get_or_scrape_index,
     get_or_scrape_wiki,
     group_drops_by_enemy,
+    indexed_dungeon_title,
     match_index_pages,
+    parse_portal_droppers,
+    retrieve_portal_drop_context,
 )
 from .biomes import compose_biome_brief, extract_biome_query
 from .farm_guides import extract_farm_guide, farm_reply_text
@@ -744,6 +749,23 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
         return None
     from .rotmg_hub import extract_hub_query, hub_drop_for_query
 
+    portal_name = extract_portal_source_query(message)
+    if portal_name:
+        portal = await _portal_drop_reply(redis, portal_name, ttl)
+        if portal:
+            return portal
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl, cache_only=True
+        )
+    except Exception:
+        entries = []
+    dungeon_title = indexed_dungeon_title(name, entries)
+    if dungeon_title and not re.search(r"\bnew\b", message or "", re.I):
+        portal = await _portal_drop_reply(redis, dungeon_title, ttl)
+        if portal:
+            return portal
+
     prefer_hub = bool(
         extract_hub_query(message) or re.search(r"\bnew\b", message or "", re.I)
     )
@@ -1001,6 +1023,52 @@ async def _loot_for_source(
     )
 
 
+async def _portal_drop_reply(
+    redis: aioredis.Redis, dungeon_name: str, ttl: int
+) -> Optional[StoredReply]:
+    """Realm enemies that drop this dungeon portal, from the wiki lead."""
+    try:
+        entries = await get_or_scrape_index(
+            redis, ttl_seconds=ttl, cache_only=True
+        )
+    except Exception:
+        entries = []
+    matches = match_index_pages(dungeon_name, entries) if entries else []
+    title = dungeon_name
+    url = ""
+    text = ""
+    if matches:
+        title = matches[0].get("title") or title
+        page = await get_or_scrape_wiki(
+            redis,
+            matches[0].get("slug") or "",
+            ttl_seconds=ttl,
+            cache_only=True,
+        )
+        if page:
+            title = page.get("title") or title
+            url = page.get("url") or ""
+            text = page.get("text") or ""
+    droppers = parse_portal_droppers(text)
+    if not droppers.get("chance") and not droppers.get("guaranteed") and not text:
+        ctx = await retrieve_portal_drop_context(
+            redis, dungeon_name, ttl_seconds=ttl, cache_only=True
+        )
+        if not ctx:
+            return None
+        return StoredReply(
+            text=ctx,
+            kind="portal-drop",
+            key=f"wiki:portal-drop:v1:{title.lower()}",
+        )
+    body = format_portal_drop_brief(title, droppers, url, lead=text[:900])
+    return StoredReply(
+        text=body,
+        kind="portal-drop",
+        key=f"wiki:portal-drop:v1:{title.lower()}",
+    )
+
+
 async def _source_drop_reply(
     redis: aioredis.Redis, message: str, ttl: int
 ) -> Optional[StoredReply]:
@@ -1012,6 +1080,9 @@ async def _source_drop_reply(
     when those bosses were on the Shatters loot table. This path lists names
     from drops_from rows and item drop_locations for every source in the ask.
     """
+    portal_name = extract_portal_source_query(message)
+    if portal_name:
+        return await _portal_drop_reply(redis, portal_name, ttl)
     parsed = extract_drop_source_query(message)
     if not parsed:
         return None
