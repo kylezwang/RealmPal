@@ -159,6 +159,40 @@ async def test_glued_free_text_resolves_via_catalog_trim_instead_of_scraping_gar
     assert found.name == "Snake Eye Ring"
 
 
+async def test_get_item_attaches_awakened_from_wiki_infobox(
+    redis_client, anon_settings, monkeypatch
+):
+    """Loadout hover needs Draconic Gaze even when the enchanting table
+    does not name Snake Eye Ring."""
+    item = ItemProfile(
+        name="Snake Eye Ring",
+        stats={
+            "On Equip": "+50 HP, +5 ATT, +5 DEF, +5 SPD",
+            "Awakened Enchantment": (
+                "Draconic Gaze. +50 MP. On ability use, gain Damaging "
+                "for 2 seconds, 5 second cooldown."
+            ),
+        },
+    )
+    await write_cached_item(redis_client, item, 60)
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("must read the warmed profile")
+
+    monkeypatch.setattr(items_router, "scrape_item", boom)
+    monkeypatch.setattr(items_router, "resolve_item_query", boom)
+
+    found = await items_router.get_item(
+        "Snake Eye Ring",
+        anon_settings,
+        redis_client,
+        object(),
+        build_request(),
+    )
+    assert found.awakened_enchant
+    assert "Draconic Gaze" in found.awakened_enchant
+
+
 async def test_implausibly_long_name_is_rejected_without_a_scrape_attempt(
     redis_client, anon_settings, monkeypatch
 ):

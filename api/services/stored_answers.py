@@ -742,6 +742,32 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     name = _clean_drop_name(raw)
     if not name or len(name) > 80:
         return None
+    from .rotmg_hub import extract_hub_query, hub_drop_for_query
+
+    prefer_hub = bool(
+        extract_hub_query(message) or re.search(r"\bnew\b", message or "", re.I)
+    )
+    hub_hit = None
+    try:
+        hub_hit = await hub_drop_for_query(redis, name)
+    except Exception:
+        hub_hit = None
+    if prefer_hub and hub_hit:
+        item_name, source, url = hub_hit
+        body = (
+            f"**{item_name}** drops from {source}.\n\n"
+            f"Source: {url}"
+        )
+        return StoredReply(
+            text=body + _item_tags([item_name]),
+            kind="drop",
+            key=f"rotmg-hub:drop:{item_name.lower()}",
+        )
+    from .realmshark import _SLOT_NOUNS
+
+    slot_like = name.lower() in _SLOT_NOUNS or name.lower().rstrip("s") in _SLOT_NOUNS
+    if prefer_hub and slot_like:
+        return None
     lookup = name
     try:
         resolved = await resolve_item_query(
@@ -752,13 +778,6 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     except Exception:
         lookup = name
     item = await read_cached_item(redis, lookup)
-    hub_hit = None
-    try:
-        from .rotmg_hub import hub_drop_for_query
-
-        hub_hit = await hub_drop_for_query(redis, name)
-    except Exception:
-        hub_hit = None
     if item is None and hub_hit:
         item_name, source, url = hub_hit
         body = (

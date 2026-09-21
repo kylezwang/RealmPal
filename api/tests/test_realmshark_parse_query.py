@@ -60,6 +60,16 @@ def test_player_lookup_does_not_inherit_stale_class_and_stat():
     assert stat is None
 
 
+def test_new_prism_drop_is_not_a_trickster_build():
+    """Found live Sep 21: CLASS_ALIASES maps 'prism' to Trickster, so a
+    new-item drop ask inherited the Prisms ability hub instead of Hub notes."""
+    class_name, stat, _buildish = parse_query("Where does the new prism drop?")
+    assert class_name is None
+    assert stat is None
+    class_name, _stat, _buildish = parse_query("best prism")
+    assert class_name == "Trickster"
+
+
 def test_player_class_dps_keeps_the_named_class():
     class_name, stat, buildish = parse_query("What's the DPS for Turbine's bard?")
     assert class_name == "Bard"

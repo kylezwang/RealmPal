@@ -804,15 +804,28 @@ export function ChatInterface() {
               const updated = [...prev];
               const current = updated[assistantMsgIndex];
               const existing = current.items ?? [];
-              if (
-                existing.some(
-                  (row) =>
-                    row.name.toLowerCase() === key ||
-                    row.name.toLowerCase() === item.name.toLowerCase() ||
-                    (row.requestedAs ?? "").toLowerCase() === key,
-                )
-              ) {
-                return prev;
+              const matchIdx = existing.findIndex(
+                (row) =>
+                  row.name.toLowerCase() === key ||
+                  row.name.toLowerCase() === item.name.toLowerCase() ||
+                  (row.requestedAs ?? "").toLowerCase() === key,
+              );
+              if (matchIdx >= 0) {
+                const row = existing[matchIdx];
+                const merged = {
+                  ...row,
+                  ...item,
+                  requestedAs: row.requestedAs ?? name,
+                  awakened_enchant: item.awakened_enchant || row.awakened_enchant,
+                  stats:
+                    item.stats && Object.keys(item.stats).length > 0
+                      ? item.stats
+                      : row.stats,
+                };
+                const nextItems = [...existing];
+                nextItems[matchIdx] = merged;
+                updated[assistantMsgIndex] = { ...current, items: nextItems };
+                return updated;
               }
               updated[assistantMsgIndex] = {
                 ...current,

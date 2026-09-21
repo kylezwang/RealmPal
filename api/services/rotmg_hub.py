@@ -74,8 +74,13 @@ _TIME_CHAMBER = re.compile(r"\btime chamber\b|\blegacy portals?\b", re.I)
 _ROTATION = re.compile(r"\bweek(?:ly)?\s*(?:\d|one|two|three|four|five)\b", re.I)
 _SHINIES = re.compile(r"\bnew shinies?\b", re.I)
 _EVENT_WHITE = re.compile(r"\bevent whites?\b|\bnew encounters?\b", re.I)
-_NEW_DROP = re.compile(
-    r"\b(?:where\s+(?:does|do)\s+(?:the\s+)?new\b|(?:the\s+)?new\s+\w+\s+drop)\b",
+_NEW_PLAYER = re.compile(r"\bnew\s+(?:player|to\b|here)\b|\bbeginner\b", re.I)
+_NEW_ITEM_ASK = re.compile(
+    r"\b(?:the\s+)?new\s+"
+    r"(?:ut|st|item|white|shiny|encounter|prism|staff|bow|sword|ring|robe|"
+    r"armor|set|[a-z][\w'’-]{2,})\b"
+    r"|\bwhere\s+(?:does|do)\s+(?:the\s+)?new\b"
+    r"|\bwhat(?:'s| is)\s+(?:the\s+)?new\b",
     re.I,
 )
 _DROP_ASK = re.compile(r"\b(?:where\s+(?:does|do).+\bdrop|drop\s+locations?)\b", re.I)
@@ -368,8 +373,12 @@ def extract_hub_query(message: str, history: Optional[list[str]] = None) -> Opti
         return HubQuery(topic="shinies")
     if _EVENT_WHITE.search(text):
         return HubQuery(topic="encounters")
-    if _NEW_DROP.search(text) or (_DROP_ASK.search(text) and re.search(r"\bnew\b", text, re.I)):
-        return HubQuery(topic="new_drop")
+    if _NEW_PLAYER.search(text):
+        pass
+    elif _NEW_ITEM_ASK.search(text) or (
+        _DROP_ASK.search(text) and re.search(r"\bnew\b", text, re.I)
+    ):
+        return HubQuery(topic="new_item")
     if _PATCH.search(text):
         return HubQuery(survey=True, topic="patch")
     if history:
@@ -450,7 +459,7 @@ def _score_post(post: dict[str, Any], query: HubQuery, message: str) -> int:
         score += 120
     if query.topic == "encounters" and "new uts" in body:
         score += 120
-    if query.topic == "new_drop":
+    if query.topic in {"new_drop", "new_item"}:
         score += 80
         for token in re.findall(r"[a-z0-9']{4,}", text):
             for name in post.get("items") or []:
@@ -485,6 +494,7 @@ def _format_post_brief(post: dict[str, Any]) -> str:
                 for row in whites
             )
         )
+    if structured.get("table_pairs"):
         pairs = structured["table_pairs"][:12]
         pair_text = "; ".join(f"{p['base']} -> {p['new']}" for p in pairs)
         lines.append(f"Venerable / reskin tables: {pair_text}")
@@ -506,6 +516,46 @@ def _format_post_brief(post: dict[str, Any]) -> str:
     return "\n\n".join(lines)
 
 
+async def seed_motmg_if_empty(
+    redis: aioredis.Redis, *, ttl_seconds: int = HUB_TTL_SECONDS
+) -> None:
+    """HTTP-only fallback so a new-item ask works before Playwright warm."""
+    if await load_index(redis):
+        return
+    try:
+        from .scraper import fetch_rotmg_hub_article
+
+        post = await fetch_rotmg_hub_article("motmg")
+    except Exception as e:
+        logger.bind(error=str(e)).warning("RotMG Hub MOTMG fallback fetch failed")
+        return
+    if not post.get("text"):
+        return
+    card = {
+        "slug": "motmg",
+        "title": post.get("title") or "Month of the Mad God Patch Notes",
+        "date": post.get("date") or "",
+        "url": post.get("url") or post_url("motmg"),
+        "thumbnail_url": "",
+    }
+    await redis.setex(INDEX_KEY, ttl_seconds, json.dumps([card]))
+    await redis.setex(f"{POST_PREFIX}motmg", ttl_seconds, json.dumps(post))
+    names = list(post.get("items") or [])
+    if names:
+        await redis.setex(NAMES_KEY, ttl_seconds, json.dumps(names))
+    sprites = {}
+    for sp in post.get("sprites") or []:
+        cap = sp.get("caption") or ""
+        if cap:
+            sprites[normalize_hub_name(cap)] = {
+                "url": sp.get("url") or "",
+                "caption": cap,
+                "post_slug": "motmg",
+            }
+    if sprites:
+        await redis.setex(SPRITES_KEY, ttl_seconds, json.dumps(sprites))
+
+
 async def retrieve_rotmg_hub(
     redis: aioredis.Redis,
     message: str,
@@ -517,20 +567,23 @@ async def retrieve_rotmg_hub(
     query = extract_hub_query(message, history=history)
     if not query:
         return ""
+    if not await load_index(redis):
+        await seed_motmg_if_empty(redis, ttl_seconds=ttl_seconds)
     index = await load_index(redis)
+    soft_miss = query.topic in {"new_item", "new_drop"}
     if not index:
         if cache_only:
+            if soft_miss:
+                return ""
             return (
                 "OFFICIAL PATCH NOTES. The RotMG Hub store is empty. "
                 "Say the official patch notes are not cached yet rather "
                 "than inventing event details."
             )
-        from .scraper import scrape_rotmg_hub_index, fetch_rotmg_hub_article
-
         await warm_rotmg_hub(redis, ttl_seconds=ttl_seconds, force=True)
         index = await load_index(redis)
     posts: list[tuple[int, dict[str, Any]]] = []
-    for card in index:
+    for card in index or []:
         slug = card.get("slug") or ""
         post = await load_post(redis, slug)
         if not post:
@@ -541,6 +594,8 @@ async def retrieve_rotmg_hub(
     if not chosen and query.survey:
         chosen = [post for _score, post in posts[:2]]
     if not chosen:
+        if soft_miss:
+            return ""
         return (
             "OFFICIAL PATCH NOTES. No matching RotMG Hub post was in the store "
             "for this question. Say so rather than inventing patch details."
@@ -564,6 +619,8 @@ async def hub_drop_for_query(
     token = normalize_hub_name(needle)
     if not token or token in {"item", "items", "drop", "drops"}:
         return None
+    if not await load_index(redis):
+        await seed_motmg_if_empty(redis)
     index = await load_index(redis)
     for card in index:
         post = await load_post(redis, card.get("slug") or "")

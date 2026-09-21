@@ -28,6 +28,14 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.21-2",
+    date: "Sep 21, 2026",
+    items: [
+      "Questions about new items now check official RotMG Hub patch notes first, then RealmEye if those notes do not have the drop.",
+      "Hovering a shiny or divine item in chat now shows On Equip stats and the awakened enchant, same idea as a set preview.",
+    ],
+  },
+  {
     version: "2026.09.21",
     date: "Sep 21, 2026",
     items: [
