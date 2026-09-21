@@ -20,7 +20,9 @@ function statValue(item: ItemProfile, key: string): string | undefined {
 
 function awakenedLine(item: ItemProfile): string | undefined {
   if (item.awakened_enchant) return item.awakened_enchant;
-  const fromStats = statValue(item, "Awakened Enchantment");
+  const stats = item.stats || {};
+  const found = Object.entries(stats).find(([name]) => /awakened/i.test(name));
+  const fromStats = found?.[1] != null ? String(found[1]).trim() : "";
   if (!fromStats) return undefined;
   return /^awakened\b/i.test(fromStats) ? fromStats : `Awakened: ${fromStats}`;
 }

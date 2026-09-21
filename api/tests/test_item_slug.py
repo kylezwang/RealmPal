@@ -193,6 +193,81 @@ async def test_get_item_attaches_awakened_from_wiki_infobox(
     assert "Draconic Gaze" in found.awakened_enchant
 
 
+SNAKE_EYE_AWAKENED_HTML = """
+<table class="infobox">
+<tr><th>On Equip</th><td>+50 HP, +5 ATT, +5 DEF, +5 SPD</td></tr>
+</table>
+<table>
+<tr>
+<th>Awakened Enchantment</th>
+<td><img src="/s/a/img/wiki/gaze.png" alt="" /></td>
+<td>Draconic Gaze. +50 MP. On ability use, gain Damaging for 2 seconds, 5 second cooldown.</td>
+</tr>
+</table>
+"""
+
+
+def test_parse_awakened_from_wiki_html_snake_eye():
+    """Found live Sep 21: RealmEye keeps Awakened Enchantment in a table
+    after the infobox (sprite td + effects td), so On Equip hover never
+    attached Draconic Gaze."""
+    from api.services.scraper import parse_awakened_from_wiki_html
+
+    line = parse_awakened_from_wiki_html(SNAKE_EYE_AWAKENED_HTML)
+    assert line
+    assert "Draconic Gaze" in line
+    assert "+50 MP" in line
+
+
+def test_item_page_js_copies_awakened_table():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "services" / "scraper.py").read_text(
+        encoding="utf-8"
+    )
+    assert "isAwakened" in source
+    assert "Awakened Enchantment" in source
+
+
+async def test_get_item_backfills_awakened_from_wiki_table(
+    redis_client, anon_settings, monkeypatch
+):
+    """Cached Snake Eye had On Equip but no awakened row. GET /items should
+    HTTP the wiki table and persist Draconic Gaze without a Playwright scrape."""
+    item = ItemProfile(
+        name="Snake Eye Ring",
+        stats={"On Equip": "+50 HP, +5 ATT, +5 DEF, +5 SPD"},
+    )
+    await write_cached_item(redis_client, item, 60)
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("must read the warmed profile")
+
+    async def fake_awakened(name: str):
+        assert "Snake Eye" in name
+        return (
+            "Draconic Gaze. +50 MP. On ability use, gain Damaging "
+            "for 2 seconds, 5 second cooldown."
+        )
+
+    monkeypatch.setattr(items_router, "scrape_item", boom)
+    monkeypatch.setattr(items_router, "resolve_item_query", boom)
+    monkeypatch.setattr(items_router, "fetch_wiki_awakened_line", fake_awakened)
+
+    found = await items_router.get_item(
+        "Snake Eye Ring",
+        anon_settings,
+        redis_client,
+        object(),
+        build_request(),
+    )
+    assert found.awakened_enchant
+    assert "Draconic Gaze" in found.awakened_enchant
+    cached = await read_cached_item(redis_client, "Snake Eye Ring")
+    assert cached is not None
+    assert "Draconic Gaze" in (cached.stats or {}).get("Awakened Enchantment", "")
+
+
 async def test_implausibly_long_name_is_rejected_without_a_scrape_attempt(
     redis_client, anon_settings, monkeypatch
 ):

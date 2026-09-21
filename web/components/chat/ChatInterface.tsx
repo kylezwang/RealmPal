@@ -817,10 +817,7 @@ export function ChatInterface() {
                   ...item,
                   requestedAs: row.requestedAs ?? name,
                   awakened_enchant: item.awakened_enchant || row.awakened_enchant,
-                  stats:
-                    item.stats && Object.keys(item.stats).length > 0
-                      ? item.stats
-                      : row.stats,
+                  stats: { ...(row.stats || {}), ...(item.stats || {}) },
                 };
                 const nextItems = [...existing];
                 nextItems[matchIdx] = merged;

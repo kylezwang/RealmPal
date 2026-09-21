@@ -19,6 +19,38 @@ from api.services.rotmg_hub import (
 )
 from api.services.specialist_warm import missing_specialist_work
 
+SEASON_29_SLUG = "season-29-part-2-alien-overdrive"
+SEASON_28_SLUG = "season-28-part-2-the-return-of-stromwell"
+
+
+def _old_season_cards() -> list[dict[str, str]]:
+    return [
+        {
+            "slug": SEASON_29_SLUG,
+            "title": "Season 29 Part 2: Alien Overdrive",
+            "date": "Jul 15, 2026",
+            "url": f"https://hub.realmofthemadgod.com/news0/updates0/{SEASON_29_SLUG}",
+        },
+        {
+            "slug": SEASON_28_SLUG,
+            "title": "Season 28 Part 2: The Return of Stromwell",
+            "date": "May 20, 2026",
+            "url": f"https://hub.realmofthemadgod.com/news0/updates0/{SEASON_28_SLUG}",
+        },
+    ]
+
+
+def _old_season_post(slug: str, title: str) -> dict:
+    return {
+        "slug": slug,
+        "title": title,
+        "date": "",
+        "url": f"https://hub.realmofthemadgod.com/news0/updates0/{slug}",
+        "text": f"{title} patch notes. Weekly rotation and encounter tweaks. No prism.",
+        "items": ["Alien Blaster"] if "alien" in title.lower() else ["Stromwell Staff"],
+        "structured": {},
+    }
+
 
 INDEX_HTML = """
 <section>
@@ -203,11 +235,73 @@ async def test_new_item_hub_miss_returns_empty_so_wiki_can_run(redis_client, mon
     async def no_seed(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr("api.services.rotmg_hub.seed_motmg_if_empty", no_seed)
+    monkeypatch.setattr("api.services.rotmg_hub.ensure_motmg_post", no_seed)
     text = await retrieve_rotmg_hub(
         redis_client, "Where does the new prism drop?", cache_only=True
     )
     assert text == ""
+
+
+@pytest.mark.asyncio
+async def test_new_prism_uses_motmg_not_old_season_cards(redis_client):
+    """Found live Sep 21: Claude cited Season 29 Part 2 Alien Overdrive and
+    Season 28 Part 2 The Return of Stromwell. Those cards were the newest
+    dated Hub posts; Season 30 Part 2 lives on the MOTMG URL."""
+    motmg = parse_article_html(ARTICLE_HTML, "motmg", date="Sep 21, 2026")
+    await redis_client.set(INDEX_KEY, json.dumps(_old_season_cards()))
+    await redis_client.set(f"{POST_PREFIX}{SEASON_29_SLUG}", json.dumps(
+        _old_season_post(SEASON_29_SLUG, "Season 29 Part 2: Alien Overdrive")
+    ))
+    await redis_client.set(f"{POST_PREFIX}{SEASON_28_SLUG}", json.dumps(
+        _old_season_post(SEASON_28_SLUG, "Season 28 Part 2: The Return of Stromwell")
+    ))
+    await redis_client.set(f"{POST_PREFIX}motmg", json.dumps(motmg))
+
+    text = await retrieve_rotmg_hub(
+        redis_client, "Where does the new prism drop?", cache_only=True
+    )
+    assert "Rectangular Prism" in text
+    assert "Cube Deity" in text
+    assert "Alien Overdrive" not in text
+    assert "Stromwell" not in text
+
+
+@pytest.mark.asyncio
+async def test_ensure_motmg_fetches_when_index_is_older_seasons(
+    redis_client, monkeypatch
+):
+    """Index can be full of Season 29/28 cards while MOTMG was never stored,
+    because seed_motmg_if_empty only ran when the index was empty."""
+    from api.services.rotmg_hub import hub_drop_for_query
+
+    motmg = parse_article_html(ARTICLE_HTML, "motmg", date="Sep 21, 2026")
+
+    async def fake_fetch(slug: str, **_kwargs):
+        assert slug == "motmg"
+        return motmg
+
+    monkeypatch.setattr(
+        "api.services.scraper.fetch_rotmg_hub_article", fake_fetch
+    )
+    await redis_client.set(INDEX_KEY, json.dumps(_old_season_cards()))
+    await redis_client.set(f"{POST_PREFIX}{SEASON_29_SLUG}", json.dumps(
+        _old_season_post(SEASON_29_SLUG, "Season 29 Part 2: Alien Overdrive")
+    ))
+    await redis_client.set(f"{POST_PREFIX}{SEASON_28_SLUG}", json.dumps(
+        _old_season_post(SEASON_28_SLUG, "Season 28 Part 2: The Return of Stromwell")
+    ))
+
+    text = await retrieve_rotmg_hub(
+        redis_client, "Where does the new prism drop?", cache_only=True
+    )
+    assert "Rectangular Prism" in text
+    assert "Cube Deity" in text
+    assert "Alien Overdrive" not in text
+    assert "Stromwell" not in text
+    hit = await hub_drop_for_query(redis_client, "prism")
+    assert hit is not None
+    assert hit[0] == "Rectangular Prism"
+    assert "Cube Deity" in hit[1]
 
 
 @pytest.mark.asyncio

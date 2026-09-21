@@ -28,6 +28,14 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.21-3",
+    date: "Sep 21, 2026",
+    items: [
+      "Questions about new items now read this season's Month of the Mad God notes, not last season's update cards.",
+      "Hovering Snake Eye and other items now shows the awakened enchant, even when RealmEye lists it in its own table.",
+    ],
+  },
+  {
     version: "2026.09.21-2",
     date: "Sep 21, 2026",
     items: [

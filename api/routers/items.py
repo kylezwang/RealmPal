@@ -6,6 +6,7 @@ GET /items/{name}
   - Also ingested into Qdrant so later chat answers have the real stats
 """
 from typing import Annotated, Optional
+import re
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -22,7 +23,7 @@ from ..services.item_aliases import (
     resolve_item_query_with_trim,
     suggest_terms,
 )
-from ..services.scraper import scrape_item, ScraperError
+from ..services.scraper import scrape_item, ScraperError, fetch_wiki_awakened_line
 from ..services.ingestion import ingest_item
 from ..services.validation import sanitize_lookup_name
 from ..services.class_gear import class_can_wear_item
@@ -64,6 +65,41 @@ async def _with_wearable(
             )
         except Exception:
             awakened = None
+        if not awakened and any(
+            "on equip" in str(key).lower() for key in (item.stats or {})
+        ):
+            miss_key = f"wiki:awakened-miss:v1:{item.name.lower()}"
+            try:
+                already_miss = await redis.get(miss_key)
+            except Exception:
+                already_miss = None
+            if not already_miss:
+                try:
+                    raw = await fetch_wiki_awakened_line(item.name)
+                except Exception:
+                    raw = None
+                if raw:
+                    awakened = (
+                        raw
+                        if re.match(r"^awakened\b", raw, re.I)
+                        else f"Awakened: {raw}"
+                    )
+                    stats = dict(item.stats or {})
+                    stats["Awakened Enchantment"] = raw
+                    updates["stats"] = stats
+                    try:
+                        await write_cached_item(
+                            redis,
+                            item.model_copy(update={"stats": stats}),
+                            ttl_seconds,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        await redis.setex(miss_key, min(ttl_seconds, 86400), "1")
+                    except Exception:
+                        pass
         if awakened:
             updates["awakened_enchant"] = awakened
     if not updates:

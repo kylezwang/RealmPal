@@ -22,6 +22,7 @@ import json
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
+from html import unescape
 from typing import Optional
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -895,11 +896,15 @@ _ITEM_PAGE_JS = """
     const isCombat = firstKeys.some((k) =>
       /^(damage|shots|summon lifetime|summon cost|projectile speed|range)$/i.test(k)
     );
-    if (!isCombat) continue;
+    const isAwakened = firstKeys.some((k) => /^awakened/i.test(k));
+    if (!isCombat && !isAwakened) continue;
     for (const row of t.querySelectorAll('tr')) {
       const cells = Array.from(row.querySelectorAll('th, td'));
       if (cells.length < 2) continue;
-      addStat(cellText(cells[0]).replace(/:$/, ''), cellText(cells[1]));
+      const key = cellText(cells[0]).replace(/:$/, '');
+      const parts = cells.slice(1).map((c) => cellText(c)).filter(Boolean);
+      const val = isAwakened ? (parts[parts.length - 1] || parts.join('\\n')) : parts[0];
+      addStat(key, val);
     }
   }
 
@@ -1101,6 +1106,42 @@ def _item_from_raw(raw: dict, fallback_name: str, url: str) -> ItemProfile:
         limited_edition=bool(raw.get("limited")),
         original_name=original or None,
     )
+
+
+def parse_awakened_from_wiki_html(html: str) -> Optional[str]:
+    """Awakened Enchantment sits in its own table after On Equip, not the infobox."""
+    match = re.search(
+        r"<th[^>]*>\s*Awakened Enchantments?\s*</th>(.*?)</tr>",
+        html or "",
+        re.I | re.S,
+    )
+    if not match:
+        return None
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", match.group(1), re.I | re.S)
+    if not cells:
+        return None
+    raw = cells[-1]
+    raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+    raw = re.sub(r"<img[^>]*>", "", raw, flags=re.I)
+    raw = re.sub(r"<[^>]+>", " ", raw)
+    text = unescape(re.sub(r"\s+", " ", raw)).strip()
+    return text or None
+
+
+async def fetch_wiki_awakened_line(item_name: str) -> Optional[str]:
+    """HTTP-only backfill so hover works on an already-cached item profile."""
+    import httpx
+
+    slug = _item_wiki_slug(item_name)
+    url = f"{REALMEYE_BASE}/wiki/{slug}"
+    try:
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": _USER_AGENT}) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            return parse_awakened_from_wiki_html(res.text)
+    except Exception as e:
+        logger.bind(item=item_name, error=str(e)).warning("Wiki awakened fetch failed")
+        return None
 
 
 async def scrape_ability_hub(slug: str) -> list[dict]:
