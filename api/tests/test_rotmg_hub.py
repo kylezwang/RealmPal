@@ -95,8 +95,10 @@ def test_extract_hub_query():
     assert extract_hub_query("new shinies this update")
     assert extract_hub_query("https://hub.realmofthemadgod.com/news0/updates0/motmg")
     assert extract_hub_query("Where does the new prism drop?")
+    assert extract_hub_query("what's the new rectangular prism")
     assert extract_hub_query("Attack Bard build") is None
     assert extract_hub_query("Turbine's huntress look") is None
+    assert extract_hub_query("I'm a new player") is None
 
 
 @pytest.mark.asyncio
@@ -153,6 +155,59 @@ async def test_new_prism_drop_uses_hub_event_white(redis_client):
     assert hit is not None
     assert hit[0] == "Rectangular Prism"
     assert "Cube Deity" in hit[1]
+
+
+@pytest.mark.asyncio
+async def test_new_prism_drop_prefers_hub_over_wiki_prisms(redis_client):
+    """Found live Sep 21: wiki had a Prisms ability hub with no loot, so
+    Claude cited RealmEye instead of the Cube Deity Hub line."""
+    from api.models.item import ItemProfile
+    from api.services.stored_answers import _drop_reply
+    from api.services.wiki_scaling import write_cached_item
+
+    post = parse_article_html(ARTICLE_HTML, "motmg", date="Aug 31, 2026")
+    await redis_client.set(
+        INDEX_KEY,
+        json.dumps(
+            [
+                {
+                    "slug": "motmg",
+                    "title": "Month of the Mad God Patch Notes",
+                    "date": "Aug 31, 2026",
+                    "url": "https://hub.realmofthemadgod.com/news0/updates0/motmg",
+                }
+            ]
+        ),
+    )
+    await redis_client.set(f"{POST_PREFIX}motmg", json.dumps(post))
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Prisms",
+            wiki_url="https://www.realmeye.com/wiki/prisms",
+            drop_locations=[],
+        ),
+        60,
+    )
+    reply = await _drop_reply(
+        redis_client, "Where does the new prism drop?", ttl=60
+    )
+    assert reply is not None
+    assert "Rectangular Prism" in reply.text
+    assert "Cube Deity" in reply.text
+    assert "realmeye.com/wiki/prisms" not in reply.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_new_item_hub_miss_returns_empty_so_wiki_can_run(redis_client, monkeypatch):
+    async def no_seed(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("api.services.rotmg_hub.seed_motmg_if_empty", no_seed)
+    text = await retrieve_rotmg_hub(
+        redis_client, "Where does the new prism drop?", cache_only=True
+    )
+    assert text == ""
 
 
 @pytest.mark.asyncio

@@ -70,11 +70,33 @@ _ARMOR_HINT = re.compile(r"\b(robe|leather|heavy|armor|armour)\b", re.I)
 _RING_HINT = re.compile(r"\b(rings?|amulet|bracer|scarf|mask)\b", re.I)
 
 
-def awakened_enchant_for_item(rolls: list[dict], item_name: str) -> Optional[str]:
+def awakened_from_item_stats(stats: Optional[dict]) -> Optional[str]:
+    """Wiki infobox 'Awakened Enchantment' row, when the rolls table omits the item name."""
+    if not stats:
+        return None
+    for key, val in stats.items():
+        if not re.search(r"awakened", str(key), re.I):
+            continue
+        text = str(val or "").strip()
+        if not text:
+            continue
+        if re.match(r"^awakened\b", text, re.I):
+            return text
+        return f"Awakened: {text}"
+    return None
+
+
+def awakened_enchant_for_item(
+    rolls: list[dict], item_name: str, *, stats: Optional[dict] = None
+) -> Optional[str]:
     """One awakened unique line for this wiki title, or None."""
+    from_stats = awakened_from_item_stats(stats)
+    if from_stats:
+        return from_stats
     key = (item_name or "").strip().lower()
     if not key:
         return None
+    tokens = [part for part in re.split(r"\s+", key) if len(part) > 2]
     for roll in rolls:
         category = (roll.get("category") or "").lower()
         name = (roll.get("name") or "").strip()
@@ -83,7 +105,10 @@ def awakened_enchant_for_item(rolls: list[dict], item_name: str) -> Optional[str
         blob = f"{name} {effects} {labels}".lower()
         if "awakened" not in category and "awakened" not in blob:
             continue
-        if key not in blob:
+        named = key in blob
+        if not named and tokens:
+            named = all(part in blob for part in tokens)
+        if not named:
             continue
         if effects:
             return f"Awakened: {name}. {effects}"
@@ -93,13 +118,20 @@ def awakened_enchant_for_item(rolls: list[dict], item_name: str) -> Optional[str
 
 
 async def awakened_enchant_text(
-    redis: aioredis.Redis, item_name: str, *, ttl_seconds: int
+    redis: aioredis.Redis,
+    item_name: str,
+    *,
+    ttl_seconds: int,
+    stats: Optional[dict] = None,
 ) -> Optional[str]:
+    from_stats = awakened_from_item_stats(stats)
+    if from_stats:
+        return from_stats
     store = await load_enchanting_store(
         redis, ttl_seconds=ttl_seconds, cache_only=True
     )
     rolls = list((store or {}).get("rolls") or [])
-    return awakened_enchant_for_item(rolls, item_name)
+    return awakened_enchant_for_item(rolls, item_name, stats=stats)
 
 
 def is_enchant_query(message: str) -> bool:

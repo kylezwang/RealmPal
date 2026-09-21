@@ -8,6 +8,33 @@ import { SpriteZoomTrigger } from "./SpriteZoom";
 
 const ICON_SIZE = 40;
 
+function statValue(item: ItemProfile, key: string): string | undefined {
+  const stats = item.stats || {};
+  const found = Object.entries(stats).find(
+    ([name]) => name.toLowerCase() === key.toLowerCase(),
+  );
+  const value = found?.[1];
+  if (value == null || String(value).trim() === "") return undefined;
+  return String(value).trim();
+}
+
+function awakenedLine(item: ItemProfile): string | undefined {
+  if (item.awakened_enchant) return item.awakened_enchant;
+  const fromStats = statValue(item, "Awakened Enchantment");
+  if (!fromStats) return undefined;
+  return /^awakened\b/i.test(fromStats) ? fromStats : `Awakened: ${fromStats}`;
+}
+
+function loadoutHoverBody(item: ItemProfile): string {
+  const bits: string[] = [];
+  const onEquip = statValue(item, "On Equip");
+  if (onEquip) bits.push(`On Equip: ${onEquip}`);
+  const awakened = awakenedLine(item);
+  if (awakened) bits.push(awakened);
+  else if (!onEquip && item.description) bits.push(item.description);
+  return bits.join("\n");
+}
+
 function findLoadoutItem(loaded: ItemProfile[], rawName: string): ItemProfile | undefined {
   const key = cleanItemName(rawName).toLowerCase();
   const exact = loaded.find((item) => {
@@ -59,6 +86,14 @@ export function LoadoutItemIcon({
   const showShiny = hasShiny && src === shinySrc;
   const glow = showcase.rarity ? RARITY_GLOW[showcase.rarity] : undefined;
   const iconSrc = src || regularSrc;
+  const hoverTitle = [
+    showShiny ? "Shiny" : "",
+    item.name,
+    showcase.rarity ? `(${RARITY_LABEL[showcase.rarity]})` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const hoverBody = loadoutHoverBody(item);
 
   return (
     <div className="group relative">
@@ -67,9 +102,9 @@ export function LoadoutItemIcon({
           <SpriteZoomTrigger
             source={{ kind: "url", src: iconSrc, alt: item.name }}
             details={{
-              title: showShiny ? `Shiny ${item.name}` : item.name,
+              title: hoverTitle,
               wikiUrl: item.wiki_url,
-              caption: item.awakened_enchant || item.description,
+              caption: hoverBody || undefined,
               divine: showcase.rarity === "divine",
               rarity: showcase.rarity,
               shiny: showShiny,
@@ -118,17 +153,12 @@ export function LoadoutItemIcon({
       </div>
       <div
         className="pointer-events-none absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-1.5
-          hidden group-hover:block w-max max-w-[200px] rounded-lg bg-[#0d0d0d] border border-[#404040]
-          px-2.5 py-1.5 text-[11px] leading-snug text-[#ececec] shadow-xl"
+          hidden group-hover:block w-max max-w-[240px] rounded-lg bg-[#0d0d0d] border border-[#404040]
+          px-2.5 py-1.5 text-[11px] leading-snug text-[#ececec] shadow-xl whitespace-pre-line"
         role="tooltip"
       >
-        {showShiny ? `Shiny ${item.name}` : item.name}
-        {showcase.rarity ? ` (${RARITY_LABEL[showcase.rarity]})` : ""}
-        {item.awakened_enchant ? (
-          <span className="block mt-1 text-[#c4c4c4]">{item.awakened_enchant}</span>
-        ) : item.description ? (
-          <span className="block mt-1 text-[#c4c4c4]">{item.description}</span>
-        ) : null}
+        {hoverTitle}
+        {hoverBody ? <span className="block mt-1 text-[#c4c4c4]">{hoverBody}</span> : null}
       </div>
     </div>
   );

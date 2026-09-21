@@ -45,7 +45,7 @@ from ..services.rag import build_system_prompt, rag_exclude_slugs, retrieve_cont
 from ..services.realmshark import parse_query, retrieve_build_knowledge
 from ..services.dungeon_guide import extract_dungeon_query
 from ..services.biomes import extract_biome_query
-from ..services.rotmg_hub import extract_hub_query
+from ..services.rotmg_hub import extract_hub_query, retrieve_rotmg_hub
 from ..services.enchanting import is_enchant_query
 from ..services.dps_specialist import is_dps_query, is_stat_number_query
 from ..services.item_aliases import (
@@ -739,9 +739,23 @@ async def chat_stream(
             query_text = attachments[0].filename
         class_name, stat, buildish = parse_query(query_text, history=user_history)
         this_class, _this_stat, _this_build = parse_query(query_text)
-        hub_only = bool(extract_hub_query(query_text, history=user_history)) and not (
-            extract_player_ign(query_text) or extract_player_ign(query_text, history=user_history)
-        )
+        hub_preview = ""
+        if extract_hub_query(query_text, history=user_history) and not extract_player_ign(
+            query_text
+        ):
+            try:
+                hub_preview = await retrieve_rotmg_hub(
+                    redis,
+                    query_text,
+                    cache_only=True,
+                    history=user_history,
+                )
+            except Exception as e:
+                logger.bind(error=str(e)).warning("RotMG Hub preview failed")
+                hub_preview = ""
+        # Skip wiki RAG only when Hub actually returned patch notes.
+        # A new-item miss must still reach RealmEye.
+        hub_only = bool((hub_preview or "").strip())
         dungeon_only = (
             bool(extract_dungeon_query(query_text, history=user_history))
             or bool(extract_biome_query(query_text))

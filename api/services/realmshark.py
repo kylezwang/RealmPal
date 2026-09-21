@@ -180,11 +180,22 @@ def _stat_alias_pairs() -> list[tuple[str, str]]:
     return list(STAT_ALIASES.items())
 
 
+_DROP_TURN = re.compile(
+    r"\b(?:where\s+(?:does|do).+\bdrop|drop\s+locations?)\b",
+    re.I,
+)
+
+
 def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
     lower = text.lower()
+    # "prism"/"lute"/... are class aliases for "best prism" builds. A drop
+    # or official-new-item ask is about that item, not Trickster/Bard.
+    skip_slot_class = bool(extract_hub_query(text) or _DROP_TURN.search(text or ""))
     classes: list[str] = []
     for canon, aliases in CLASS_ALIASES.items():
         needles = (canon.lower(),) + aliases
+        if skip_slot_class:
+            needles = tuple(n for n in needles if n not in _SLOT_NOUNS)
         if any(re.search(rf"\b{re.escape(n)}\b", lower) for n in needles):
             classes.append(canon)
     class_name = classes[0] if len(classes) == 1 else None
@@ -253,6 +264,8 @@ def _has_own_topic(message: str, history: Optional[list[str]] = None) -> bool:
         or is_set_visualize_query(message)
         or extract_dungeon_query(message)
         or extract_player_ign(message)
+        or extract_hub_query(message, history=history)
+        or _DROP_TURN.search(message or "")
     )
 
 
@@ -843,18 +856,22 @@ async def retrieve_build_knowledge(
     player_lookup_turn = bool(extract_player_ign(message)) or (
         bool(player_ign) and not this_class
     )
-    if hub_ask and not player_lookup_turn:
+    # Inherited IGN from a prior lookup must not steal a new-item / patch
+    # turn. Only a this-turn player ask skips Hub.
+    if hub_ask and not extract_player_ign(message):
         try:
-            return await retrieve_rotmg_hub(
+            hub_ctx = await retrieve_rotmg_hub(
                 redis,
                 message,
                 ttl_seconds=ttl_seconds,
                 cache_only=True,
                 history=history,
             )
+            if (hub_ctx or "").strip():
+                return hub_ctx
         except Exception as e:
             logger.bind(error=str(e)).warning("RotMG Hub specialist unavailable")
-            return ""
+        # New-item asks fall through to RealmEye when Hub has nothing.
 
     if biome_ask and biome_ask.survey:
         try:

@@ -60,7 +60,7 @@ async def _with_wearable(
     if ttl_seconds:
         try:
             awakened = await awakened_enchant_text(
-                redis, item.name, ttl_seconds=ttl_seconds
+                redis, item.name, ttl_seconds=ttl_seconds, stats=item.stats
             )
         except Exception:
             awakened = None

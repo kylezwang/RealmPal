@@ -11,6 +11,21 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.21-2] - Sep 21, 2026
+
+### Fixed
+- **New-item asks read official Hub notes before RealmEye** (`extract_hub_query`, `_drop_reply`, `retrieve_build_knowledge`, `api/routers/chat.py`). "Where does the new prism drop?" still hit the RealmEye Prisms ability hub: `prism` is a Trickster class alias, Hub-only routing skipped wiki when the store was empty, and `_drop_reply` preferred a wiki page with no loot. Slot-noun class aliases are skipped on drop / new-item turns. Hub is tried first (with an HTTP MOTMG seed if the Playwright index is empty). A Hub miss falls through to RealmEye. Inherited IGN from an earlier lookup no longer steals the Hub path.
+- **Shiny/divine loadout hover shows On Equip plus the awakened enchant** (`awakened_enchant_for_item`, `GET /items`, `LoadoutRow`). RealmEye's Awakened table lists Draconic Gaze with label tokens, not "Snake Eye Ring", so hover never attached. Wiki infobox `Awakened Enchantment` is now the source of truth, and the tooltip includes On Equip the same way the set preview does. A second `fetchItem` for the same slot merges those fields instead of keeping the first empty card.
+
+### Tests
+- `test_new_prism_drop_is_not_a_trickster_build`
+- `test_new_prism_drop_prefers_hub_over_wiki_prisms`
+- `test_new_item_hub_miss_returns_empty_so_wiki_can_run`
+- `test_snake_eye_awakened_comes_from_wiki_infobox_when_rolls_omit_the_item`
+- `test_get_item_attaches_awakened_from_wiki_infobox`
+
+---
+
 ## [2026.09.21] - Sep 21, 2026
 
 ### Added

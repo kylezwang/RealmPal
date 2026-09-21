@@ -134,6 +134,43 @@ def test_awakened_enchant_for_item_is_named_in_the_hover_line():
     ) is None
 
 
+def test_snake_eye_awakened_comes_from_wiki_infobox_when_rolls_omit_the_item():
+    """Found live Sep 21: RealmEye's Awakened table lists Draconic Gaze with
+    label tokens, not 'Snake Eye Ring', so hover never attached. The item
+    wiki infobox has the row."""
+    line = enchanting.awakened_enchant_for_item(
+        [
+            {
+                "name": "Draconic Gaze",
+                "category": "Awakened Enchantments",
+                "effects": "+50 MP. On ability use, gain Damaging for 2 seconds.",
+                "labels": "AWAKENEDDAMAGINGSINGLESTAT",
+            }
+        ],
+        "Snake Eye Ring",
+        stats={
+            "On Equip": "+50 HP, +5 ATT, +5 DEF, +5 SPD",
+            "Awakened Enchantment": (
+                "Draconic Gaze. +50 MP. On ability use, gain Damaging "
+                "for 2 seconds, 5 second cooldown."
+            ),
+        },
+    )
+    assert line is not None
+    assert "Draconic Gaze" in line
+    assert enchanting.awakened_enchant_for_item(
+        [
+            {
+                "name": "Draconic Gaze",
+                "category": "Awakened Enchantments",
+                "effects": "+50 MP",
+                "labels": "AWAKENEDDAMAGINGSINGLESTAT",
+            }
+        ],
+        "Snake Eye Ring",
+    ) is None
+
+
 def test_basic_enchant_row_missing_eligible_cell_still_defaults_to_all():
     """Only Awakened rows get the item-locked treatment - a stray row from
     a normal table missing its eligible cell keeps the old ALL default."""
