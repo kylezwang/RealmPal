@@ -283,3 +283,9 @@ def test_awakening_counts_as_an_enchant_question():
     assert enchanting.is_enchant_query(
         "is cbow awakening or lbow awakening better"
     )
+    assert enchanting.is_enchant_query(
+        "Shiny divine snake eye ring. Is it insane with the awakened enchantment?"
+    )
+    assert not enchanting.is_enchant_query(
+        "Shiny divine awakened snake eye ring"
+    )

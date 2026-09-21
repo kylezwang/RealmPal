@@ -465,6 +465,8 @@ _HM_PLAYER_NOTES = (
 
 def _clean_drop_name(raw: str) -> str:
     name = re.sub(r"\b(drop|drops|from|locations?)\b", "", raw or "", flags=re.I)
+    name = re.sub(r"\b(?:the|a|an)\b", "", name, flags=re.I)
+    name = re.sub(r"\bnew\b", "", name, flags=re.I)
     return re.sub(r"[?.!]+$", "", name).strip(" \t-")
 
 
@@ -492,6 +494,9 @@ def _shiny_divine_item_name(message: str) -> Optional[str]:
     if not match:
         return None
     name = re.sub(r"\b(item|sprite|set|loadout|build|gear)\b", "", match.group(1), flags=re.I)
+    # "awakened" is an enchant flag, not part of the wiki title. Found live
+    # Sep 21: "Shiny divine awakened snake eye ring" resolved nothing.
+    name = re.sub(r"\bawakened\b", "", name, flags=re.I)
     name = re.sub(r"[?.!]+$", "", name).strip(" \t-")
     name = re.sub(r"\s+", " ", name)
     if not name or len(name) > 80:
@@ -747,9 +752,38 @@ async def _drop_reply(redis: aioredis.Redis, message: str, ttl: int) -> Optional
     except Exception:
         lookup = name
     item = await read_cached_item(redis, lookup)
+    hub_hit = None
+    try:
+        from .rotmg_hub import hub_drop_for_query
+
+        hub_hit = await hub_drop_for_query(redis, name)
+    except Exception:
+        hub_hit = None
+    if item is None and hub_hit:
+        item_name, source, url = hub_hit
+        body = (
+            f"**{item_name}** drops from {source}.\n\n"
+            f"Source: {url}"
+        )
+        return StoredReply(
+            text=body + _item_tags([item_name]),
+            kind="drop",
+            key=f"rotmg-hub:drop:{item_name.lower()}",
+        )
     if item is None:
         return None
     drops = [d for d in (item.drop_locations or []) if d]
+    if not drops and hub_hit:
+        item_name, source, url = hub_hit
+        body = (
+            f"**{item_name}** drops from {source}.\n\n"
+            f"Source: {url}"
+        )
+        return StoredReply(
+            text=body + _item_tags([item_name]),
+            kind="drop",
+            key=f"rotmg-hub:drop:{item_name.lower()}",
+        )
     if not drops:
         body = (
             f"**{item.name}** is in the wiki store, but this profile has no "

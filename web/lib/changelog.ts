@@ -32,9 +32,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "Sep 21, 2026",
     items: [
       "Pal now reads official RotMG Hub patch notes, so event calendars and new items match what DECA posted.",
+      "Asking for a shiny divine item, including awakened, now shows the framed sprite instead of a text apology.",
       "You can upload a sprite and ask to see it as Uncommon, Rare, Legendary, or Divine, including shiny, with the same glow and diamonds as a set preview.",
       "Asking to see the same set, or a player's worn gear, as Divine now keeps those exact items in the four slots.",
-      "Dungeon loot is grouped by enemy, including Hardmode Shatters bosses, and hovering a set item can show its awakened enchant.",
     ],
   },
   {

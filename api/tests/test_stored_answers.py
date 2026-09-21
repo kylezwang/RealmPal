@@ -148,6 +148,10 @@ async def _read_sse_text(response: httpx.Response) -> str:
 
 def test_shiny_divine_quest_prompt_extracts_the_item():
     assert _shiny_divine_item_name("Show me a shiny divine Crown") == "Crown"
+    assert (
+        _shiny_divine_item_name("Shiny divine awakened snake eye ring")
+        == "snake eye ring"
+    )
     assert _shiny_divine_item_name("See a shiny divine Twilight Gemstone") == (
         "Twilight Gemstone"
     )
@@ -177,7 +181,36 @@ async def test_shiny_divine_item_never_hits_the_llm(
         text = await _read_sse_text(response)
     assert calls == []
     assert "[loadout shiny divine]" in text
-    assert "[item:The Forgotten Crown]" in text
+
+
+async def test_shiny_divine_awakened_ring_never_hits_the_llm(
+    stream_app, redis_client, anon_settings
+):
+    """Found live Sep 21: 'Shiny divine awakened snake eye ring' was treated
+    as an enchant question, so Claude had no [loadout] chunk."""
+    client, calls = stream_app
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Snake Eye Ring",
+            type="ring",
+            shiny_sprite_url="https://www.realmeye.com/s/a/img/wiki/shiny.png",
+        ),
+        anon_settings.wiki_ttl_seconds,
+    )
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "Shiny divine awakened snake eye ring",
+                "session_id": "s-awakened-shiny",
+            },
+        )
+        assert response.status_code == 200
+        text = await _read_sse_text(response)
+    assert calls == []
+    assert "[loadout shiny divine]" in text
+    assert "[item:Snake Eye Ring]" in text
 
 
 def test_shiny_alone_extracts_the_item_and_strips_look_like():

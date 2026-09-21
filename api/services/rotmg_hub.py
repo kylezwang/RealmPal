@@ -74,6 +74,11 @@ _TIME_CHAMBER = re.compile(r"\btime chamber\b|\blegacy portals?\b", re.I)
 _ROTATION = re.compile(r"\bweek(?:ly)?\s*(?:\d|one|two|three|four|five)\b", re.I)
 _SHINIES = re.compile(r"\bnew shinies?\b", re.I)
 _EVENT_WHITE = re.compile(r"\bevent whites?\b|\bnew encounters?\b", re.I)
+_NEW_DROP = re.compile(
+    r"\b(?:where\s+(?:does|do)\s+(?:the\s+)?new\b|(?:the\s+)?new\s+\w+\s+drop)\b",
+    re.I,
+)
+_DROP_ASK = re.compile(r"\b(?:where\s+(?:does|do).+\bdrop|drop\s+locations?)\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -197,18 +202,44 @@ def _parse_list_items_from_html(prose_html: str, section_title: str) -> list[str
 
 
 def _parse_event_whites(section_body: str) -> list[str]:
-    items: list[str] = []
-    for line in (section_body or "").splitlines():
+    return [row["name"] for row in _parse_event_white_rows(section_body)]
+
+
+def _parse_event_white_rows(section_body: str) -> list[dict[str, str]]:
+    """'Rectangular Prism (Prism) from the Cube Deity' lines."""
+    rows: list[dict[str, str]] = []
+    blob = section_body or ""
+    for line in blob.splitlines():
         stripped = line.strip()
-        if not (stripped.startswith("* ") or stripped.startswith("- ")):
-            continue
-        text = stripped[2:].strip()
-        m = re.match(r"^(.+?)\s*\([^)]+\)\s+from\s+", text, re.I)
+        if stripped.startswith("* ") or stripped.startswith("- "):
+            stripped = stripped[2:].strip()
+        m = re.match(
+            r"^(.+?)\s*\(([^)]+)\)\s+from\s+(.+?)\.?$",
+            stripped,
+            re.I,
+        )
         if m:
-            items.append(m.group(1).strip())
-        elif "(" in text:
-            items.append(text.split("(")[0].strip())
-    return items
+            rows.append(
+                {
+                    "name": m.group(1).strip(),
+                    "slot": m.group(2).strip(),
+                    "source": m.group(3).strip(" ."),
+                }
+            )
+    if rows:
+        return rows
+    for m in re.finditer(
+        r"([A-Z][A-Za-z0-9'’\- ]+?)\s*\(([^)]+)\)\s+from\s+([^.(]+)",
+        blob,
+    ):
+        rows.append(
+            {
+                "name": m.group(1).strip(),
+                "slot": m.group(2).strip(),
+                "source": m.group(3).strip(" ."),
+            }
+        )
+    return rows
 
 
 def _caption_for_img(prose_html: str, match: re.Match[str]) -> str:
@@ -274,7 +305,8 @@ def parse_article_html(
             item_names.extend(_parse_list_items_from_html(prose_html, title_lower))
             item_names.extend(_parse_list_items(body))
         elif "new uts" in title_lower or "encounters" in title_lower:
-            item_names.extend(_parse_event_whites(body))
+            whites = _parse_event_white_rows(body)
+            item_names.extend(row["name"] for row in whites)
         elif "twelve dungeons" in title_lower or "time chamber" in title_lower:
             item_names.extend(_parse_list_items_from_html(prose_html, title_lower))
             item_names.extend(_parse_list_items(body))
@@ -293,6 +325,17 @@ def parse_article_html(
             structured["new_shinies"] = _parse_list_items_from_html(
                 prose_html, section["title"]
             ) or _parse_list_items(section["body"])
+        if "new uts" in key or "encounters" in key:
+            structured["event_whites"] = _parse_event_white_rows(
+                section["body"]
+            ) or _parse_event_white_rows(
+                "\n".join(
+                    f"* {n}"
+                    for n in _parse_list_items_from_html(prose_html, section["title"])
+                )
+            )
+            if not structured["event_whites"]:
+                structured["event_whites"] = _parse_event_white_rows(section["body"])
 
     return {
         "slug": slug,
@@ -325,6 +368,8 @@ def extract_hub_query(message: str, history: Optional[list[str]] = None) -> Opti
         return HubQuery(topic="shinies")
     if _EVENT_WHITE.search(text):
         return HubQuery(topic="encounters")
+    if _NEW_DROP.search(text) or (_DROP_ASK.search(text) and re.search(r"\bnew\b", text, re.I)):
+        return HubQuery(topic="new_drop")
     if _PATCH.search(text):
         return HubQuery(survey=True, topic="patch")
     if history:
@@ -405,6 +450,12 @@ def _score_post(post: dict[str, Any], query: HubQuery, message: str) -> int:
         score += 120
     if query.topic == "encounters" and "new uts" in body:
         score += 120
+    if query.topic == "new_drop":
+        score += 80
+        for token in re.findall(r"[a-z0-9']{4,}", text):
+            for name in post.get("items") or []:
+                if token in normalize_hub_name(name):
+                    score += 40
     for token in re.findall(r"[a-z0-9']{4,}", text):
         if token in title or token in body:
             score += 5
@@ -425,7 +476,15 @@ def _format_post_brief(post: dict[str, Any]) -> str:
             "Time Chamber dungeons: "
             + ", ".join(structured["time_chamber_dungeons"])
         )
-    if structured.get("table_pairs"):
+    if structured.get("event_whites"):
+        whites = structured["event_whites"][:16]
+        lines.append(
+            "New event whites: "
+            + "; ".join(
+                f"{row['name']} ({row.get('slot') or '?'}) from {row.get('source') or '?'}"
+                for row in whites
+            )
+        )
         pairs = structured["table_pairs"][:12]
         pair_text = "; ".join(f"{p['base']} -> {p['new']}" for p in pairs)
         lines.append(f"Venerable / reskin tables: {pair_text}")
@@ -493,6 +552,36 @@ async def retrieve_rotmg_hub(
             wrap_slot_chunk("patchnotes", body, source=post.get("url") or post_url(post["slug"]))
         )
     return "\n\n".join(blocks)
+
+
+async def hub_drop_for_query(
+    redis: aioredis.Redis, needle: str
+) -> Optional[tuple[str, str, str]]:
+    """Match a drop ask like 'prism' to a Hub new-item + source.
+
+    Returns (item_name, source_line, post_url) or None.
+    """
+    token = normalize_hub_name(needle)
+    if not token or token in {"item", "items", "drop", "drops"}:
+        return None
+    index = await load_index(redis)
+    for card in index:
+        post = await load_post(redis, card.get("slug") or "")
+        if not post:
+            continue
+        whites = (post.get("structured") or {}).get("event_whites") or []
+        for row in whites:
+            name = row.get("name") or ""
+            if token in normalize_hub_name(name).split() or normalize_hub_name(name).endswith(token):
+                src = row.get("source") or "the latest RotMG Hub patch notes"
+                url = post.get("url") or post_url(post.get("slug") or "")
+                return name, src, url
+        for name in post.get("items") or []:
+            key = normalize_hub_name(name)
+            if token in key.split() or key.endswith(token):
+                url = post.get("url") or post_url(post.get("slug") or "")
+                return name, "the latest RotMG Hub patch notes", url
+    return None
 
 
 async def matching_hub_excerpt(
