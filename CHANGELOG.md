@@ -32,6 +32,12 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - `test_forge_question_does_not_inherit_stale_class_and_stat` in `test_realmshark_parse_query.py`
 - `test_forge_question_routes_to_forge_agent_only` in `test_slot_graph.py`
 
+### Fixed
+- **Single-item shiny/divine asks no longer replay a stale set from history** (`api/services/stored_answers.py`, `_set_visualize_reply`). Found live Sep 22, unrelated to the forge/item-scaling work above (confirmed via `git diff` against the pre-session commit; `_set_visualize_reply`, `_shiny_divine_reply`, and their call order in `try_stored_reply` were untouched by this session). Root cause predates this chat: whenever the current message did not itself name 2+ items, `_set_visualize_reply` unconditionally searched chat history for an older 4-item `[item:...]` loadout to replay. A later, single, specific item ask in the same chat (e.g. "shiny divine awakened snake eye ring", asked right after an unrelated 4-item set was shown) matched that "no names on this turn" branch and reused the old set, printing "Same items, shown as Shiny Divine" - no sprite for the newly named item, and the frontend's own prefetch (`extractNamedSetItems`) also only recognizes 2+ named items, so nothing rendered at all. `_set_visualize_reply` now bails out (returns `None`) before touching history whenever the message names exactly one real item on its own (`_shiny_divine_item_name`) and is not itself a "same set" follow-up or a character-equipment ask, letting `_shiny_divine_reply` resolve that single item instead.
+
+### Tests
+- `test_new_single_item_ask_does_not_reuse_a_stale_set_from_history` in `api/tests/test_stored_answers.py`
+
 ---
 
 ## [2026.09.21-4] - Sep 21, 2026

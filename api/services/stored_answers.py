@@ -638,6 +638,21 @@ async def _set_visualize_reply(
     shiny, rarity = set_visualize_flags(message)
     names = extract_set_item_names(message)
     if not names:
+        # A message that names exactly one real item (e.g. "shiny divine
+        # awakened snake eye ring") is _shiny_divine_reply's job, not a
+        # request to replay an unrelated earlier 4-item set from history.
+        # Found live Sep 22: this fallback used to fire on ANY message
+        # without 2+ named items, so a fresh single-item ask reused a
+        # stale set from earlier in the same chat and printed "Same items,
+        # shown as Shiny Divine" with no sprite for the item actually
+        # asked about (the frontend has no matching item to fetch either,
+        # since it also only recognizes >=2 named items as a set ask).
+        if (
+            _shiny_divine_item_name(message)
+            and not is_set_followup(message)
+            and not _is_character_set_visualize(message, history)
+        ):
+            return None
         prior_shiny, prior_rarity = False, None
         for prev in reversed(history or []):
             named = extract_set_item_names(prev or "")

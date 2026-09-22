@@ -334,6 +334,45 @@ async def test_shiny_divine_reply_resolves_a_still_glued_run_on_via_the_catalog(
     assert "[item:Snake Eye Ring]" in reply.text
 
 
+async def test_new_single_item_ask_does_not_reuse_a_stale_set_from_history(
+    redis_client, anon_settings
+):
+    """Regression: found live Sep 22. A chat that had earlier visualized a
+    real 4-item set, then later asked for a *different*, single new item
+    ("shiny divine awakened snake eye ring"), got "Same items, shown as
+    Shiny Divine" replaying the old 4-item set - because
+    _set_visualize_reply's "no names on this turn? borrow 2+ [item:] tokens
+    from history" fallback fired on ANY message without 2+ named items,
+    not just genuine "same set" follow-ups. The frontend also has no item
+    to fetch for that stale set (it re-derives names from the *current*
+    prompt), so nothing rendered at all - no sprite, just the text. A
+    message that names exactly one real item on its own must resolve that
+    item via _shiny_divine_reply instead."""
+    await write_cached_item(
+        redis_client,
+        ItemProfile(
+            name="Snake Eye Ring",
+            type="ring",
+            shiny_sprite_url="https://www.realmeye.com/s/a/img/wiki/shiny.png",
+        ),
+        anon_settings.wiki_ttl_seconds,
+    )
+    reply = await try_stored_reply(
+        redis_client,
+        "shiny divine awakened snake eye ring",
+        history=[
+            "shiny divine snake ring",
+            "[loadout shiny divine]\n[item:Doom Bow]\n[item:Quiver of Thunder]\n"
+            "[item:Cackling Straitjacket]\n[item:The Forgotten Crown]",
+        ],
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert reply is not None
+    assert "[item:Snake Eye Ring]" in reply.text
+    assert "Doom Bow" not in reply.text
+    assert "Same items" not in reply.text
+
+
 async def test_shiny_divine_reply_gives_up_cleanly_on_pure_extraction_garbage(
     redis_client, anon_settings
 ):
