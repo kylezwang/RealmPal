@@ -272,6 +272,7 @@ WIKI_HUB_SLUGS = (
     "armor",
     "rings",
     "enchanting",
+    "forge",
     *WIKI_WEAPON_SLUGS,
     *WIKI_ABILITY_SLUGS,
     *WIKI_ARMOR_SLUGS,

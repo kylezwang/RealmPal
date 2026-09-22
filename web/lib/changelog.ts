@@ -28,6 +28,14 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.09.22",
+    date: "Sep 22, 2026",
+    items: [
+      "Questions about the Forge, including whether shinies can be forged, now follow the RealmEye forge page instead of mixing it up with enchanting.",
+      "Asking how an item scales, including follow-ups like another stat on the same item, now uses that item's wiki formulas instead of guessing from unrelated class pages.",
+    ],
+  },
+  {
     version: "2026.09.21-4",
     date: "Sep 21, 2026",
     items: [

@@ -44,6 +44,12 @@ def test_shiny_divine_with_no_resolved_class_stat_does_not_force_set_agent():
     assert "set" not in slots
 
 
+def test_forge_question_routes_to_forge_agent_only():
+    slots, depth = route_slots("Is shiny forging possible?", None, None)
+    assert slots == ["forge"]
+    assert depth == "deep"
+
+
 def test_enchant_comparison_of_two_nicknames_also_routes_dps():
     slots, depth = route_slots(
         "is cbow awakening or lbow awakening better", None, None

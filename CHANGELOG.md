@@ -11,6 +11,29 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.09.22] - Sep 22, 2026
+
+### Added
+- **Item scaling specialist** (`api/services/item_scaling.py`):
+  - Named-item and stat follow-up turns (`scale off attack`, `what about scaling off wis?`) inject the cached infobox via `scaling_from_item()`, skipping class ability-hub RAG
+  - `_has_own_topic` / RAG skip / stored-answer guards aligned with enchant and forge specialists
+  - **`wis` token guard** in `parse_query`: stat alias `wis` no longer fuzzy-maps to Wizard
+
+### Added
+- **Forge specialist** (`api/services/forging.py`, `scrape_forge_page` in `api/services/scraper.py`):
+  - `is_forge_query()` with phrase aliases, token fuzzy match (`forgin`, `dismantl`), and visualizer/enchant negative gates
+  - Redis store `wiki:forge:v1` (heading-scoped sections from RealmEye `/wiki/forge`)
+  - `retrieve_forging_brief()` injects shiny-forging rules (most shinies not forgeable; upgrade-path exception) and forbids citing `/wiki/enchanting`
+  - `forge_only` routing in `retrieve_build_knowledge`, `chat.py` RAG skip (no vector dump, no RealmShark citation), `stored_answers` guards, LangGraph `forge` slot in `slot_graph.py`
+  - Specialist warm + Qdrant hub seed slug `forge`
+
+### Tests
+- `api/tests/test_forging.py` (screenshot regression: "Is shiny forging possible?")
+- `test_forge_question_does_not_inherit_stale_class_and_stat` in `test_realmshark_parse_query.py`
+- `test_forge_question_routes_to_forge_agent_only` in `test_slot_graph.py`
+
+---
+
 ## [2026.09.21-4] - Sep 21, 2026
 
 ### Fixed

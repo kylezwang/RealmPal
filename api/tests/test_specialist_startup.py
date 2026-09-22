@@ -15,6 +15,7 @@ from api.services.wiki_scaling import CACHE_PREFIX, HUB_PREFIX
 from api.services.specialist_warm import REQUIRED_HUB_SLUGS
 from api.services.dungeon_guide import INDEX_CACHE_KEY
 from api.services.enchanting import CACHE_KEY as ENCHANTING_CACHE_KEY
+from api.services.forging import CACHE_KEY as FORGING_CACHE_KEY
 from api.services.realmshark import GRAPH_CACHE_KEY
 from api.services.skin_visualizer import CATALOG_KEY
 
@@ -38,6 +39,7 @@ def _full_snapshot() -> dict:
         ],
         "skins": {"stored": 1, "classes": 19, "ttl_seconds": 60},
         "enchanting": {"stored": 1, "rolls": 30, "ttl_seconds": 60},
+        "forging": {"stored": 1, "sections": 8, "ttl_seconds": 60},
         "rotmg_hub": {"stored": 1, "posts": 3, "sprites": 10, "ttl_seconds": 60},
     }
 
@@ -127,6 +129,10 @@ async def test_startup_does_not_warm_when_every_store_is_full(
     await redis_client.set(
         ENCHANTING_CACHE_KEY,
         json.dumps({"rolls": [{"name": "Attack Bonus", "eligible": "ALL", "effects": "+1 ATT"}]}),
+    )
+    await redis_client.set(
+        FORGING_CACHE_KEY,
+        json.dumps({"sections": [{"heading": "Materials", "text": "x", "tables": []}]}),
     )
 
     monkeypatch.setattr("api.dependencies._get_redis", lambda url: redis_client)

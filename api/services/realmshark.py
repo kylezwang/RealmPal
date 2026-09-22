@@ -44,6 +44,12 @@ from .rotmg_hub import (
     retrieve_rotmg_hub,
 )
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
+from .forging import (
+    _enchant_signal_besides_orb,
+    is_forge_query,
+    retrieve_forging_brief,
+)
+from .item_scaling import is_item_scaling_query, retrieve_item_scaling_brief
 from .dps_specialist import (
     dps_subject_from_history,
     is_dps_follow_up,
@@ -188,6 +194,7 @@ _DROP_TURN = re.compile(
     r"\b(?:where\s+(?:does|do).+\bdrop|drop\s+locations?)\b",
     re.I,
 )
+_STAT_TOKENS = frozenset(alias.lower() for alias in STAT_ALIASES)
 
 
 def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
@@ -206,6 +213,9 @@ def _parse_query_text(text: str) -> tuple[Optional[str], Optional[str], bool]:
     if class_name is None and not classes:
         fuzzy_classes: list[str] = []
         for token in re.findall(r"[a-z]+", lower):
+            # "wis" is Wisdom, not a 1-edit typo for Wizard/wiz.
+            if token in _STAT_TOKENS:
+                continue
             canon = fuzzy_closed_vocab(token, _class_alias_pairs())
             if canon and canon not in fuzzy_classes:
                 fuzzy_classes.append(canon)
@@ -263,7 +273,9 @@ def _has_own_topic(message: str, history: Optional[list[str]] = None) -> bool:
     reuse them here instead of guessing from a weaker signal.
     """
     return bool(
-        is_enchant_query(message)
+        is_item_scaling_query(message, history=history)
+        or is_forge_query(message)
+        or is_enchant_query(message)
         or is_skin_visualize_query(message, history=history)
         or is_set_visualize_query(message)
         or extract_dungeon_query(message)
@@ -840,6 +852,15 @@ async def retrieve_build_knowledge(
     # brief entirely and fell through to the generic DPS-graph context for
     # an unrelated class/stat. Only a real class+stat pair (an actual
     # combined build+enchant ask) should still skip the enchant-only path.
+    item_scale_only = (
+        is_item_scaling_query(message, history=history)
+        and not dps_follow_up
+    )
+    forge_only = (
+        is_forge_query(message)
+        and not (class_name and stat)
+        and not dps_follow_up
+    )
     enchant_only = (
         is_enchant_query(message)
         and not (class_name and stat)
@@ -852,6 +873,8 @@ async def retrieve_build_knowledge(
         and not dungeon_name
         and not set_visualize
         and not skin_visualize
+        and not item_scale_only
+        and not forge_only
         and not enchant_only
         and not numbers_only
         and not biome_ask
@@ -985,6 +1008,48 @@ async def retrieve_build_knowledge(
             logger.bind(
                 error=str(e), player=player_ign, dungeon=dungeon_name
             ).warning("Lookup specialist unavailable")
+            return ""
+
+    if item_scale_only:
+        try:
+            return await retrieve_item_scaling_brief(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                history=history,
+                cache_only=True,
+            )
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Item scaling specialist unavailable")
+            return ""
+
+    if forge_only:
+        try:
+            forge_text = await retrieve_forging_brief(
+                redis,
+                message,
+                ttl_seconds=ttl_seconds,
+                cache_only=True,
+            )
+            if _enchant_signal_besides_orb(message):
+                try:
+                    enchant_text = await retrieve_enchanting_brief(
+                        redis,
+                        message,
+                        ttl_seconds=ttl_seconds,
+                        class_name=class_name,
+                        stat=stat,
+                        cache_only=True,
+                    )
+                    if enchant_text:
+                        forge_text = f"{forge_text}\n\n---\n\n{enchant_text}"
+                except Exception as e:
+                    logger.bind(error=str(e)).warning(
+                        "Enchantment specialist unavailable (dual with forge)"
+                    )
+            return forge_text
+        except Exception as e:
+            logger.bind(error=str(e)).warning("Forge specialist unavailable")
             return ""
 
     if enchant_only:
