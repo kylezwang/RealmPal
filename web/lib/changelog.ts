@@ -33,6 +33,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       "Questions about the Forge, including whether shinies can be forged, now follow the RealmEye forge page instead of mixing it up with enchanting.",
       "Asking how an item scales, including follow-ups like another stat on the same item, now uses that item's wiki formulas instead of guessing from unrelated class pages.",
+      "Asking to see a specific item as shiny or divine right after viewing an unrelated set now shows that item's own sprite instead of repeating the earlier set.",
     ],
   },
   {
