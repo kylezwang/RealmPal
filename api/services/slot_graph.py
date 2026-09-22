@@ -33,6 +33,12 @@ from .dps_specialist import (
 )
 from .dungeon_guide import extract_dungeon_query, retrieve_dungeon_guide
 from .enchanting import is_enchant_query, retrieve_enchanting_brief
+from .forging import (
+    SOURCE_URL as FORGE_SOURCE_URL,
+    _enchant_signal_besides_orb,
+    is_forge_query,
+    retrieve_forging_brief,
+)
 from .item_aliases import (
     extract_mentioned_items,
     is_set_visualize_query,
@@ -55,6 +61,7 @@ SlotName = Literal[
     "armor",
     "ring",
     "enchantment",
+    "forge",
     "dps",
     "set",
     "skin",
@@ -124,6 +131,21 @@ def route_slots(
         if dungeon_name:
             extras.append("dungeon")
         return ["skin", *extras], "deep"
+
+    forge_buildish = bool(
+        re.search(r"\b(build|loadout|gear|equip|best items?)\b", lower)
+        or (class_name and stat)
+    )
+    if is_forge_query(message) and not forge_buildish and not dps_follow_up:
+        forge_slots: list[SlotName] = ["forge"]
+        if _enchant_signal_besides_orb(message):
+            forge_slots.append("enchantment")
+        extras: list[SlotName] = []
+        if player_ign:
+            extras.append("player")
+        if dungeon_name:
+            extras.append("dungeon")
+        return [*forge_slots, *extras], "deep"
 
     named: list[SlotName] = []
     if re.search(r"\b(rings?|amulet|bracer|scarf|mask)\b", lower):
@@ -346,6 +368,17 @@ def _compile_graph(redis: aioredis.Redis):
             ]
         }
 
+    async def forge(state: SlotState) -> dict:
+        return {
+            "reports": [
+                wrap_slot_chunk(
+                    "forge",
+                    await _forge_agent(redis, state),
+                    source=FORGE_SOURCE_URL,
+                )
+            ]
+        }
+
     async def dps(state: SlotState) -> dict:
         return {
             "reports": [wrap_slot_chunk("dps", await _dps_agent(redis, state))]
@@ -361,6 +394,7 @@ def _compile_graph(redis: aioredis.Redis):
     graph.add_node("armor", armor)
     graph.add_node("ring", ring)
     graph.add_node("enchantment", enchantment)
+    graph.add_node("forge", forge)
     graph.add_node("dps", dps)
     graph.add_node("player", player)
     graph.add_node("dungeon", dungeon)
@@ -375,6 +409,7 @@ def _compile_graph(redis: aioredis.Redis):
         "armor",
         "ring",
         "enchantment",
+        "forge",
         "dps",
         "set",
         "skin",
@@ -399,13 +434,20 @@ async def _run_specialists(redis: aioredis.Redis, seed: SlotState) -> str:
         "set": _set_agent,
         "skin": _skin_agent,
         "enchantment": _enchantment_agent,
+        "forge": _forge_agent,
         "dps": _dps_agent,
     }
     texts = []
     for slot in state.get("slots") or []:
         runner = runners.get(slot)
         if runner:
-            texts.append(wrap_slot_chunk(slot, await runner(redis, state)))
+            body = await runner(redis, state)
+            if slot == "forge":
+                texts.append(
+                    wrap_slot_chunk(slot, body, source=FORGE_SOURCE_URL)
+                )
+            else:
+                texts.append(wrap_slot_chunk(slot, body))
     state["reports"] = [t for t in texts if t]
     return _join_reports(state)
 
@@ -453,6 +495,12 @@ def _join_reports(state: SlotState) -> str:
             "the enchantment chunk. Copy I/II/III/IV and unique values "
             "exactly. RealmEye is truth; Umi notes are supplementary. "
             "Do not invent a roll that is not in the chunk."
+        )
+    elif "forge" in slots and "enchantment" not in slots:
+        header = (
+            "FORGE FOLLOW-UP. Copy forge rules from the forge chunk only. "
+            "Cite RealmEye /wiki/forge. Forging is not enchanting. "
+            "Do not cite /wiki/enchanting or enchant roll rarity."
         )
     elif slots == ["dps"] or (depth == "deep" and slots == ["dps"]):
         header = (
@@ -701,6 +749,19 @@ async def _enchantment_agent(redis: aioredis.Redis, state: SlotState) -> str:
         )
     except Exception as e:
         logger.bind(error=str(e)).warning("Enchantment specialist unavailable")
+        return ""
+
+
+async def _forge_agent(redis: aioredis.Redis, state: SlotState) -> str:
+    try:
+        return await retrieve_forging_brief(
+            redis,
+            state["message"],
+            ttl_seconds=state["ttl_seconds"],
+            cache_only=True,
+        )
+    except Exception as e:
+        logger.bind(error=str(e)).warning("Forge specialist unavailable")
         return ""
 
 

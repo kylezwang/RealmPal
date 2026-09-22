@@ -47,6 +47,8 @@ from ..services.dungeon_guide import extract_dungeon_query
 from ..services.biomes import extract_biome_query
 from ..services.rotmg_hub import extract_hub_query, retrieve_rotmg_hub
 from ..services.enchanting import is_enchant_query
+from ..services.forging import is_forge_query
+from ..services.item_scaling import is_item_scaling_query
 from ..services.dps_specialist import is_dps_query, is_stat_number_query
 from ..services.item_aliases import (
     is_set_followup,
@@ -760,6 +762,8 @@ async def chat_stream(
             bool(extract_dungeon_query(query_text, history=user_history))
             or bool(extract_biome_query(query_text))
         ) and not buildish
+        item_scale_only = is_item_scaling_query(query_text, history=user_history)
+        forge_only = is_forge_query(query_text) and not (class_name and stat)
         enchant_only = is_enchant_query(query_text) and not (class_name and stat)
         numbers_only = is_stat_number_query(query_text)
         dps_ask = is_dps_query(query_text)
@@ -784,6 +788,8 @@ async def chat_stream(
             dungeon_only
             or player_only
             or hub_only
+            or item_scale_only
+            or forge_only
             or enchant_only
             or numbers_only
             or is_skin_visualize_query(query_text, history=outfit_history)
@@ -838,7 +844,15 @@ async def chat_stream(
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
         )
         if build_ctx:
-            if player_only or enchant_only or dungeon_only or hub_only or set_or_skin:
+            if (
+                player_only
+                or item_scale_only
+                or forge_only
+                or enchant_only
+                or dungeon_only
+                or hub_only
+                or set_or_skin
+            ):
                 # Named sets, skins, dungeon guides, patch notes, player
                 # lookups, and enchant briefs scrape RealmEye or the official
                 # Hub. Stamping the RealmShark leaderboard citation on top

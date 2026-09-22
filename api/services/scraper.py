@@ -1615,6 +1615,75 @@ _ENCHANT_PAGE_JS = """() => {
 """
 
 
+_FORGE_PAGE_JS = """() => {
+  const root = document.querySelector('.wiki-page, #mw-content-text, main') || document.body;
+  const sections = [];
+  let current = null;
+  const flush = () => {
+    if (current && (current.text || current.tables.length)) sections.push(current);
+    current = null;
+  };
+  for (const el of root.querySelectorAll('h2, h3, h4, p, table')) {
+    const tag = (el.tagName || '').toUpperCase();
+    if (tag === 'H2' || tag === 'H3' || tag === 'H4') {
+      flush();
+      const title = (el.innerText || '')
+        .replace(/\\[edit.*?\\]/gi, '')
+        .replace(/back to top/gi, '')
+        .trim();
+      if (title) current = { heading: title, text: '', tables: [] };
+      continue;
+    }
+    if (!current) continue;
+    if (tag === 'P') {
+      const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (t) current.text += (current.text ? '\\n\\n' : '') + t;
+      continue;
+    }
+    const rows = [...el.querySelectorAll('tr')].map((tr) =>
+      [...tr.querySelectorAll('th, td')].map((c) =>
+        (c.innerText || '').replace(/\\s+/g, ' ').trim()
+      ).filter((c) => c)
+    ).filter((r) => r.length);
+    if (rows.length) current.tables.push({ rows });
+  }
+  flush();
+  const paras = [...root.querySelectorAll('p')]
+    .map((p) => (p.innerText || '').trim())
+    .filter(Boolean);
+  return { overview: paras.slice(0, 4).join('\\n\\n'), sections };
+}"""
+
+
+async def scrape_forge_page() -> dict:
+    """RealmEye /wiki/forge: heading-scoped prose and tables."""
+    url = f"{REALMEYE_BASE}/wiki/forge"
+    logger.bind(url=url).info("Scraping RealmEye forge page")
+    async with _playwright_browser() as browser:
+        try:
+            page = await _new_page(browser)
+            await _goto_with_retry(
+                page, url, ready_selector=".wiki-page, #mw-content-text, main"
+            )
+            title = (await page.title()).split("|")[0].strip()
+            if "404" in title:
+                raise ScraperError("Wiki page 'forge' not found")
+            payload = await page.locator(
+                ".wiki-page, #mw-content-text, main"
+            ).first.evaluate(_FORGE_PAGE_JS)
+            return {
+                "title": title or "Forge",
+                "url": url,
+                "overview": (payload or {}).get("overview") or "",
+                "sections": list((payload or {}).get("sections") or []),
+            }
+        except ScraperError:
+            raise
+        except Exception as e:
+            logger.exception("Error scraping forge wiki")
+            raise ScraperError(f"Failed to scrape wiki page 'forge': {e}") from e
+
+
 async def scrape_enchanting_page() -> dict:
     """RealmEye /wiki/enchanting tables: name, eligible slot, tiered effects."""
     url = f"{REALMEYE_BASE}/wiki/enchanting"

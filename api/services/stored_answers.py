@@ -36,6 +36,8 @@ from .dungeon_guide import (
 from .biomes import compose_biome_brief, extract_biome_query
 from .farm_guides import extract_farm_guide, farm_reply_text
 from .enchanting import is_enchant_query
+from .forging import is_forge_query
+from .item_scaling import is_item_scaling_query
 from .dps_specialist import is_dps_query, is_stat_number_query
 from .item_aliases import (
     community_canonical,
@@ -1291,9 +1293,17 @@ async def _slot_reply(
 
 
 async def _build_reply(
-    redis: aioredis.Redis, message: str
+    redis: aioredis.Redis,
+    message: str,
+    *,
+    history: Optional[list[str]] = None,
 ) -> Optional[StoredReply]:
-    if is_enchant_query(message) or is_stat_number_query(message):
+    if (
+        is_item_scaling_query(message, history=history)
+        or is_forge_query(message)
+        or is_enchant_query(message)
+        or is_stat_number_query(message)
+    ):
         # An enchant question (e.g. "...insane with the awakened
         # enchantment?") almost always names a slot noun (ring/armor/weapon/
         # ability), which alone flips parse_query's weak `buildish` regex to
@@ -1350,7 +1360,12 @@ async def _ability_reply(
     path required a named stat (wiki:build:v1:{class}:{stat}) and skipped
     Haiku, so a class-only ability ask never landed in the store.
     """
-    if not is_ability_ask(message) or is_enchant_query(message):
+    if (
+        not is_ability_ask(message)
+        or is_enchant_query(message)
+        or is_forge_query(message)
+        or is_item_scaling_query(message)
+    ):
         return None
     class_name, stat, _buildish = parse_query(message)
     if not class_name or class_name not in CLASS_ABILITY_HUB:
@@ -1570,7 +1585,7 @@ async def try_stored_reply(
     ability = await _ability_reply(redis, message)
     if ability:
         return ability
-    return await _build_reply(redis, message)
+    return await _build_reply(redis, message, history=history)
 
 
 async def maybe_mint_brief(
@@ -1596,7 +1611,12 @@ async def maybe_mint_brief(
         return None
     if parse_progression_query(message):
         return None
-    if is_enchant_query(message) or is_stat_number_query(message):
+    if (
+        is_item_scaling_query(message, history=history)
+        or is_forge_query(message)
+        or is_enchant_query(message)
+        or is_stat_number_query(message)
+    ):
         # Same reasoning as _build_reply: a slot noun (ring/armor/weapon/
         # ability) alone can flip buildish True. Enchant answers are never
         # a substitute for the general build brief. Number/DPS answers must

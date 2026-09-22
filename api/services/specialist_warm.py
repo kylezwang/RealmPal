@@ -16,6 +16,7 @@ from ..models.build import CLASS_ABILITY_HUB, CLASS_ARMOR_HUB, STAT_RING_HUB
 from .dungeon_guide import INDEX_CACHE_KEY, PAGE_CACHE_PREFIX, get_or_scrape_index, get_or_scrape_wiki
 from .biomes import biome_index_entries
 from .enchanting import enchanting_store_status, warm_enchanting_store
+from .forging import forging_store_status, warm_forging_store
 from .ingestion import WIKI_HUB_SLUGS
 from .item_aliases import load_item_catalog, warm_suggest_index
 from .realmshark import GRAPH_CACHE_KEY, LOADOUT_CACHE_PREFIX, load_graph, load_top_loadouts
@@ -42,7 +43,7 @@ UMI_PREFIX = UMI_BIS_PREFIX
 LOADOUT_PREFIX = f"{LOADOUT_CACHE_PREFIX}:"
 ITEM_CHUNK = 25
 # Category pages, not item tables. Warm the index; do not scrape every link.
-INDEX_HUB_SLUGS = frozenset({"weapons", "ability-items", "armor", "enchanting"})
+INDEX_HUB_SLUGS = frozenset({"weapons", "ability-items", "armor", "enchanting", "forge"})
 # Wiki pages that never render `.wiki-page`. Counting them as missing
 # restarts a scrape on every boot.
 DEAD_WIKI_ITEMS = frozenset({"babel blocks"})
@@ -391,6 +392,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
     umi = await umi_store_status(redis)
     skins = await skin_catalog_status(redis)
     enchanting = await enchanting_store_status(redis)
+    forging = await forging_store_status(redis)
     rotmg_hub = await rotmg_hub_store_status(redis)
     return {
         "abilities": abilities,
@@ -401,6 +403,7 @@ async def specialist_snapshot(redis: aioredis.Redis) -> dict[str, Any]:
         "umi": umi,
         "skins": skins,
         "enchanting": enchanting,
+        "forging": forging,
         "rotmg_hub": rotmg_hub,
     }
 
@@ -441,6 +444,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
     ]
     skins = snapshot.get("skins") or {}
     enchanting = snapshot.get("enchanting") or {}
+    forging = snapshot.get("forging") or {}
     rotmg_hub = snapshot.get("rotmg_hub") or {}
     item_cached = int(items.get("cached") or 0)
     item_total = int(items.get("total") or 0)
@@ -459,6 +463,7 @@ def missing_specialist_work(snapshot: dict[str, Any]) -> dict[str, Any]:
         "umi": umi,
         "skins": not skins.get("stored"),
         "enchanting": not enchanting.get("stored"),
+        "forging": not forging.get("stored"),
         "rotmg_hub": not rotmg_hub.get("stored") or int(rotmg_hub.get("posts") or 0) <= 0,
     }
 
@@ -473,6 +478,7 @@ def has_missing_work(work: dict[str, Any]) -> bool:
         or work.get("umi")
         or work.get("skins")
         or work.get("enchanting")
+        or work.get("forging")
         or work.get("rotmg_hub")
     )
 
@@ -575,6 +581,14 @@ async def warm_all_specialists(
         )
     else:
         result["enchanting"] = snapshot["enchanting"]
+
+    if force or work["forging"]:
+        await _phase(
+            "forging",
+            lambda: warm_forging_store(redis, ttl_seconds=ttl_seconds, force=force),
+        )
+    else:
+        result["forging"] = snapshot.get("forging") or {}
 
     if force or work["dungeons"]:
         await _phase(

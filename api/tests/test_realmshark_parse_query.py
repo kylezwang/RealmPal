@@ -42,6 +42,19 @@ def test_enchant_question_does_not_inherit_stale_class_and_stat():
     assert stat is None
 
 
+def test_forge_question_does_not_inherit_stale_class_and_stat():
+    history = [
+        "Best attack ninja build",
+        "Would this be the bis attack ninja then?",
+    ]
+    class_name, stat, _buildish = parse_query(
+        "Is shiny forging possible?",
+        history=history,
+    )
+    assert class_name is None
+    assert stat is None
+
+
 def test_dungeon_guide_followup_does_not_inherit_stale_class_and_stat():
     history = ["Best wis mystic build"]
     class_name, stat, _buildish = parse_query(

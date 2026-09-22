@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated: 9/18/26 (9:15 AM)
+Last updated: Sep 22, 2026
 
 Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
@@ -227,6 +227,8 @@ every OS-level dep the scraper needs ships in the image. Registry created as
 Foundry `rg-certio`). Also found and fixed local disk at 0.43 GB free
 (Docker's storage went read-only mid-build) - cleared Temp, pruned Docker's
 build cache and two unrelated old images, back to a healthy ~12 GB free.
+
+**Forge specialist is done** (RealmEye `/wiki/forge` store, intent routing, shiny-forging grounding, Sep 22). See `CHANGELOG.md` [2026.09.22] for detail.
 
 **Enchantment specialist is done** (wiring + implied-stat inference + tests, Sep 13). See `CHANGELOG.md` [2026.09.13] for detail.
 
