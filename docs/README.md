@@ -10,6 +10,7 @@ This directory contains all project documentation. Most files are tracked in git
 | `DEPLOYMENT_QUICK_REFERENCE.md` | Quick summary of priorities and commands |
 | `DEPLOYMENT_ARCHITECTURE.md` | Infrastructure diagrams and data flows |
 | `chat-quality-benchmarks.md` | Chat response quality traces and stored-answer map |
+| `jev-routing-plan.md` | Saved plan (Sep 23, 2026): optional Jev disambiguator for ambiguous chat routing |
 
 ## Private Documentation (Gitignored)
 
