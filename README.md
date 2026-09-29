@@ -2,7 +2,7 @@
 
 [![PR validation](https://github.com/kylezwang/RealmPal/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/kylezwang/RealmPal/actions/workflows/pr-validation.yml)
 
-RotMG AI Companion. Ask about players, items, classes, and dungeons. RealmPal answers with stored RealmEye wiki, item sprites, set loadouts, and dyed skin portraits. Player lookups stay live.
+An AI companion for Realm of the Mad God. Ask about players, items, classes, and dungeons - RealmPal answers with stored RealmEye wiki, item sprites, set loadouts, and dyed skin portraits. Player lookups stay live.
 
 Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com), [umienjoyers.com](https://umienjoyers.com), and [RealmShark](https://tracker.realmshark.cc/dps-leaderboards).
 
