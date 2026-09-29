@@ -17,7 +17,7 @@ llama-index==0.12.5
 llama-index-llms-anthropic==0.6.4
 llama-index-vector-stores-qdrant==0.4.3
 python-multipart==0.0.20
-langgraph==0.3.34
+langgraph==1.2.12
 langchain-core==0.3.86
 langchain-text-splitters==0.3.9
 # zoneinfo (stdlib) needs an IANA tz database on disk; not every base image
