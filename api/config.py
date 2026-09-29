@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
 
     # Scraping. Wiki pages (items, dungeons, skins, equipment hubs) almost
-    # never change — serve Redis/Qdrant and refresh on a weekly job
+    # never change - serve Redis/Qdrant and refresh on a weekly job
     # (`api/scripts/refresh_wiki.py`), not on every chat turn. Player
     # profiles change constantly, so those scrape on lookup; the short TTL
     # only collapses duplicate hits in one session (sidebar + chat).
@@ -200,9 +200,11 @@ class Settings(BaseSettings):
     # Admin notifications feed (Claude turn costs). Same DATABASE_URL as the
     # other stores when set; SQLite file locally.
     admin_events_db_path: str = "data/admin_events.db"
-    # Comma-separated IGNs / emails that may open the admin notifications
-    # modal. Server-checked on every /admin call. Default is the founder IGN.
-    admin_igns: str = "Turbine"
+    # Comma-separated IGNs that may open the admin notifications modal.
+    # Server-checked on every /admin call. Empty unless ADMIN_IGNS is set.
+    # Set that variable on the container app before the next API image
+    # deploy so production admin does not depend on this default.
+    admin_igns: str = ""
     admin_emails: str = ""
 
     # Auth (magic link JWT) | legacy, being replaced by the identity provider
@@ -367,7 +369,7 @@ class Settings(BaseSettings):
         Origins the API answers CORS preflights for.
 
         `app_url` plus any `extra_cors_origins` are the only origins in
-        production. `localhost:3000` is added only in debug — it used to be
+        production. `localhost:3000` is added only in debug - it used to be
         hardcoded unconditionally, which meant a deployed API would accept
         credentialed requests from anyone running the frontend locally
         against it.

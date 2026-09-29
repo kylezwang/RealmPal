@@ -171,7 +171,7 @@ async def _has_legacy_paid_token(auth_header: Optional[str], settings: Settings)
     if not email:
         return bool(claims.get("paid"))
     # The JWT `paid` claim is stale the moment someone finishes Stripe
-    # Checkout — the webhook / confirm path writes entitlements, not a
+    # Checkout - the webhook / confirm path writes entitlements, not a
     # new token. Always trust the store for a signed-in email.
     return await entitlements.is_active(email, settings)
 

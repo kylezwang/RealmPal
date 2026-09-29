@@ -32,13 +32,21 @@ def _user(email: str, ign: str) -> AuthenticatedUser:
     )
 
 
+def _named_admin(settings):
+    """The published default list is empty. Tests that need an admin name one."""
+    settings.admin_igns = "Turbine"
+    return settings
+
+
 async def test_turbine_ign_is_admin(anon_settings):
-    assert await is_admin(_user("a@example.com", "Turbine"), anon_settings) is True
-    assert await is_admin(_user("a@example.com", "turbine"), anon_settings) is True
+    settings = _named_admin(anon_settings)
+    assert await is_admin(_user("a@example.com", "Turbine"), settings) is True
+    assert await is_admin(_user("a@example.com", "turbine"), settings) is True
 
 
 async def test_other_ign_is_not_admin(anon_settings):
     assert await is_admin(_user("a@example.com", "SomeoneElse"), anon_settings) is False
+    assert await is_admin(_user("a@example.com", "Turbine"), anon_settings) is False
     assert await is_admin(None, anon_settings) is False
 
 
@@ -64,8 +72,9 @@ async def test_admin_email_grants_access_without_ign(tmp_path):
 
 
 async def test_jwt_role_is_admin_for_turbine(anon_settings):
-    assert await jwt_role("a@example.com", "Turbine", anon_settings) == "admin"
-    assert await jwt_role("a@example.com", "SomeoneElse", anon_settings) == "user"
+    settings = _named_admin(anon_settings)
+    assert await jwt_role("a@example.com", "Turbine", settings) == "admin"
+    assert await jwt_role("a@example.com", "SomeoneElse", settings) == "user"
 
 
 async def test_guest_cannot_read_notifications(redis_client, anon_settings):
@@ -83,8 +92,9 @@ async def test_non_admin_cannot_read_notifications(redis_client, anon_settings):
 
 
 async def test_usage_sets_is_admin_for_turbine(redis_client, anon_settings):
+    settings = _named_admin(anon_settings)
     async with _client(
-        redis_client, anon_settings, user=_user("player@example.com", "Turbine")
+        redis_client, settings, user=_user("player@example.com", "Turbine")
     ) as http:
         body = (await http.get("/chat/usage")).json()
     assert body["is_admin"] is True
@@ -154,8 +164,9 @@ async def test_admin_feed_merges_existing_stores(redis_client, anon_settings):
         ign="Rogue",
     )
 
+    settings = _named_admin(anon_settings)
     async with _client(
-        redis_client, anon_settings, user=_user("admin@example.com", "Turbine")
+        redis_client, settings, user=_user("admin@example.com", "Turbine")
     ) as http:
         response = await http.get("/admin/notifications")
     assert response.status_code == 200
@@ -179,7 +190,8 @@ async def test_admin_feed_merges_existing_stores(redis_client, anon_settings):
 
 
 async def test_register_turbine_session_includes_admin_role(redis_client, anon_settings):
-    async with _client(redis_client, anon_settings) as http:
+    settings = _named_admin(anon_settings)
+    async with _client(redis_client, settings) as http:
         created = await http.post(
             "/auth/register",
             json={

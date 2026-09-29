@@ -2,7 +2,7 @@
 Shared input checks for names that end up in a scrape URL or a cache key.
 
 `REALMEYE_BASE` / `UMI_BASE` are fixed constants, so nothing a caller sends
-can redirect the scraper to a different host — this isn't SSRF host
+can redirect the scraper to a different host - this isn't SSRF host
 takeover. What it can still do without a check here: path traversal noise
 (`..`, extra `/` segments), control/newline characters that behave oddly
 inside a URL or a log line, and unbounded length feeding an expensive

@@ -145,7 +145,7 @@ async def retrieve_item_scaling_brief(
     )
     if not item_name:
         return (
-            "ITEM SCALING AGENT — No item name in this turn or recent history. "
+            "ITEM SCALING AGENT - No item name in this turn or recent history. "
             "Do not guess scaling or generalize about weapon/ability families."
         )
 
@@ -173,7 +173,7 @@ async def retrieve_item_scaling_brief(
     asked = _requested_stat(message)
 
     parts = [
-        "ITEM SCALING AGENT — RealmEye item infobox only. "
+        "ITEM SCALING AGENT - RealmEye item infobox only. "
         "Copy every formula row below; do not invent stats. "
         "One item can scale with multiple stats (e.g. main Damage with "
         "Wisdom and Shockblast lines with Attack). Never say an entire "
@@ -204,7 +204,7 @@ async def retrieve_item_scaling_brief(
     if asked:
         if asked in scales:
             parts.append(
-                f"User asked about {asked}: yes — copy the {asked} lines above."
+                f"User asked about {asked}: yes - copy the {asked} lines above."
             )
         else:
             parts.append(

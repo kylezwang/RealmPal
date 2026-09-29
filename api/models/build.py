@@ -91,11 +91,11 @@ CLASS_ABILITY_HUB: dict[str, str] = {
 }
 
 # Armor wiki hub for the class's armor type. Rings are universal
-# (/wiki/rings) — not class- or character-specific.
+# (/wiki/rings) - not class- or character-specific.
 RINGS_HUB = "rings"
 
 # RealmEye keeps one list page per 8/8 stat. The Ring agent must read
-# attack-rings for Attack — never magic-rings (those +140 values are MP).
+# attack-rings for Attack - never magic-rings (those +140 values are MP).
 STAT_RING_HUB: dict[str, str] = {
     "HP": "health-rings",
     "MP": "magic-rings",
@@ -123,7 +123,7 @@ T7_RING_NAME: dict[str, str] = {
 
 # Fallback On Equip from the same RealmEye list pages, used only when
 # the hub row is missing. Combat T7 is +11; Health/Magic T7 is +160.
-# T0–T6 names of each stat line → the T7 Transcendent ring.
+# T0-T6 names of each stat line → the T7 Transcendent ring.
 _LOWER_TIER_PREFIXES = (
     "Ring of Unbound ",
     "Ring of Exalted ",

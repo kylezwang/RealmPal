@@ -481,8 +481,8 @@ def _join_reports(state: SlotState) -> str:
     elif slots == ["player"] or (depth == "deep" and slots == ["player"]):
         header = (
             "PLAYER LOOKUP. Copy the summary bullets from the player chunk "
-            "exactly — each fact on its own markdown list line starting with "
-            "'- ' (Fame, Guild, Total exaltations, Top pet, Last seen) — "
+            "exactly - each fact on its own markdown list line starting with "
+            "'- ' (Fame, Guild, Total exaltations, Top pet, Last seen) - "
             "then ## Sources. Do not squash them onto one line. Do not list "
             "characters and do not write a Class/Fame/Weapon/Ability/Armor/"
             "Ring table. The UI already renders the scraped character cards."
@@ -537,7 +537,7 @@ def _join_reports(state: SlotState) -> str:
             "Wild Shadow, then King Azamoth and The Shattered Queen. Before "
             "Valen, kill the Stone Idol via the Void Phantasm; do not break "
             "all 8 monuments until the Idol is dead. After the purple dome on "
-            "the clear to Nox, drag all 4 branches/flames to the center — "
+            "the clear to Nox, drag all 4 branches/flames to the center - "
             "never call those wings (that is regular The Shatters). Cite every "
             "Source URL in the chunk."
         )
@@ -586,7 +586,7 @@ def _join_reports(state: SlotState) -> str:
         " Each <slot_chunk> is isolated context for that slot only. "
         "Do not mention an item that does not appear inside its slot chunk, "
         "and never move an item between slots. Every stat number you print "
-        "must be copied from the chunk — do not recall values from memory or "
+        "must be copied from the chunk - do not recall values from memory or "
         "from RealmShark loadouts. Limited Edition clones (Amulet of "
         "Superior/Exalted/Unbound ...) are filtered out on purpose; never "
         "reintroduce them."

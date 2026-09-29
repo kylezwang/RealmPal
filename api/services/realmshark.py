@@ -2,8 +2,8 @@
 RealmShark DPS tracker client and ability-scaling knowledge graph.
 
 The tracker publishes:
-  GET /api/v1/dps-builds     — which ability items scale with which 8/8 stat
-  GET /api/v1/dps-leaderboard — top potential-DPS loadouts per build
+  GET /api/v1/dps-builds     - which ability items scale with which 8/8 stat
+  GET /api/v1/dps-leaderboard - top potential-DPS loadouts per build
 
 We treat the builds catalog as a graph (class --stat--> ability) and keep
 the top-5 loadouts on each edge so chat can cite what the best characters
@@ -552,7 +552,7 @@ def format_graph(graph: StatScalingGraph, *, class_name: Optional[str] = None, s
                 lines.append(
                     "  (no RealmShark DPS board for: "
                     + ", ".join(missing)
-                    + " — check RealmEye wiki scaling for those stats)"
+                    + " - check RealmEye wiki scaling for those stats)"
                 )
         lines.append("")
     return "\n".join(lines).strip()
@@ -566,7 +566,7 @@ def format_loadouts(build_label: str, loadouts: list[Loadout]) -> str:
         "(5s window, 8 ability uses, full buffs; not live combat logs). "
         "Render this as a markdown table with columns Rank | Player | DPS | "
         "Weapon | Ability | Armor | Ring, using [item:Name] in equipment cells. "
-        "Keep each player's actual ring, even if it is T6 Unbound — do not "
+        "Keep each player's actual ring, even if it is T6 Unbound - do not "
         "replace loadout rings with T7 Transcendent.",
         "",
         "| Rank | Player | DPS | Weapon | Ability | Armor | Ring |",
@@ -633,7 +633,7 @@ async def _sister_weapon_loadouts(
         if formatted:
             _hubs, label = weapon_family(class_name)
             return (
-                f"Weapon hint from {sister} ({label} — the only weapons "
+                f"Weapon hint from {sister} ({label} - the only weapons "
                 f"{class_name} can use). Use their Weapon column for "
                 f"high-damage {label}. Do not recommend a weapon from another "
                 f"family. Rings on that table are universal. Ability and armor "

@@ -1,6 +1,6 @@
 """Resolve RotMG item nicknames to RealmEye wiki titles.
 
-Players type QOT, Vest, Vile, Snake Ring, Lean — not the full wiki name.
+Players type QOT, Vest, Vile, Snake Ring, Lean - not the full wiki name.
 The set-visualizer specialist expands those before the UI fetches sprites.
 """
 from __future__ import annotations

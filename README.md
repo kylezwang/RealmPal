@@ -1,6 +1,8 @@
 # RealmPal
 
-An AI companion for Realm of the Mad God. Ask about players, items, classes, and dungeons — RealmPal answers with stored RealmEye wiki, item sprites, set loadouts, and dyed skin portraits. Player lookups stay live.
+[![PR validation](https://github.com/kylezwang/RealmPal/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/kylezwang/RealmPal/actions/workflows/pr-validation.yml)
+
+RotMG AI Companion. Ask about players, items, classes, and dungeons. RealmPal answers with stored RealmEye wiki, item sprites, set loadouts, and dyed skin portraits. Player lookups stay live.
 
 Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com), [umienjoyers.com](https://umienjoyers.com), and [RealmShark](https://tracker.realmshark.cc/dps-leaderboards).
 
@@ -36,6 +38,27 @@ Not affiliated with DECA Games. Data via [realmeye.com](https://www.realmeye.com
 | Payments        | Stripe Checkout + magic-link JWT                  |
 | Mobile          | Flutter (planned)                                 |
 
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  web[Next.js chat UI]
+  api[FastAPI]
+  stored[Redis stored replies]
+  claude[Claude]
+  wiki[RealmEye wiki cache]
+  web --> api
+  api --> stored
+  stored -->|miss| claude
+  api --> wiki
+```
+
+A chat turn is classified in [`api/services/stored_answers.py`](api/services/stored_answers.py). Drops, minted builds, dungeon pages, and skins stream from Redis. Other asks are routed in [`api/services/slot_graph.py`](api/services/slot_graph.py). Player-set damage is reconstructed in [`api/services/realmshark.py`](api/services/realmshark.py). Dyed portraits are composited in [`api/services/skin_visualizer.py`](api/services/skin_visualizer.py).
+
+25,833 non-blank lines of Python in `api/` (tests not counted) and 12,178 non-blank lines of TypeScript in `web/`.
 
 ---
 
@@ -75,7 +98,7 @@ RealmPal/
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USER/RealmPal.git
+git clone https://github.com/kylezwang/RealmPal.git
 cd RealmPal
 
 cp .env.example .env

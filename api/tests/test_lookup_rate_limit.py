@@ -6,7 +6,7 @@ A cache miss on any of those endpoints launches a real headless browser
 behind a single-Chromium semaphore in api/services/scraper.py. Before this,
 none of them were rate limited at all: an anonymous caller could queue an
 unbounded number of Playwright launches, which delays every other visitor's
-lookup and burns real compute — a free denial-of-service the chat quota in
+lookup and burns real compute - a free denial-of-service the chat quota in
 api/services/budget.py never covered.
 """
 from __future__ import annotations

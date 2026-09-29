@@ -7,7 +7,7 @@ alwaysApply: true
 
 **This rule is for user-visible changes only.** This feeds `web/lib/changelog.ts` (the "What's new" modal in the app).
 
-For developer-facing technical notes (breaking changes, migrations, internal refactors), see `CHANGELOG.md` (the developer changelog) — that's updated separately.
+For developer-facing technical notes (breaking changes, migrations, internal refactors), see `CHANGELOG.md` (the developer changelog) - that's updated separately.
 
 Every change a user would notice (new feature, pricing/limit change, UI
 change, a bug fix they'd feel) needs one entry in `web/lib/changelog.ts`

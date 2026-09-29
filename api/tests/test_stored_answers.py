@@ -1044,7 +1044,7 @@ def test_wiki_chrome_keeps_realmeye_prose():
         "Last updated: Exalt Version 5.13.0.0 (June 2025)\n"
         "Contents\n"
         "Hard Mode has three boss fights.\n"
-        "Do not mention wings — that mechanic is regular The Shatters.\n"
+        "Do not mention wings - that mechanic is regular The Shatters.\n"
         "Back to top\n"
     )
     assert "Hard Mode has three boss fights." in text
@@ -1086,7 +1086,7 @@ async def test_dungeon_brief_dumps_wiki_not_a_claude_essay(redis_client):
                     "The Shatters is an extremely dangerous and lengthy dungeon.\n\n"
                     "Hard Mode\n\n"
                     "Kill the Source and then fight Valen, Nox, and Azamoth.\n"
-                    "Do not mention wings — that mechanic is regular The Shatters.\n"
+                    "Do not mention wings - that mechanic is regular The Shatters.\n"
                 ),
             }
         ),

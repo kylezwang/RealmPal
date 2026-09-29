@@ -19,10 +19,10 @@ const EQUIPMENT_ICON_SIZE = 40;
  * are the four plain rarity-diamond frames (0-pip green, 2-pip blue, 2-pip
  * purple, 4-pip gold); x=192/240/288/336 are those exact same four frames
  * again with RealmEye's own star baked into the top-left corner; x=384 is a
- * fifth, diamond-less shiny frame — just the star, no pips, with no plain
+ * fifth, diamond-less shiny frame - just the star, no pips, with no plain
  * counterpart at all. We paint our own `<ShinyStar>` on every shiny item
  * ourselves (so it looks and sits the same everywhere), so the frame drawn
- * underneath should always be a *plain* one — naively subtracting 192 from
+ * underneath should always be a *plain* one - naively subtracting 192 from
  * x=384 lands back on x=192, which is itself a baked-star tile, so
  * top-rarity shiny items ended up with a wrong diamond *and* two stars. */
 const SHINY_SLOT_OFFSET = 192;
@@ -169,7 +169,7 @@ function CharacterRow({
         />
       ) : (
         <div className="w-11 h-11 flex items-center justify-center text-xl flex-shrink-0" aria-hidden="true">
-          ⚔️
+          +
         </div>
       )}
 
@@ -443,7 +443,7 @@ function ExaltationRow({ exaltation }: { exaltation: ExaltationEntry }) {
         />
       ) : (
         <div className="w-9 h-9 flex items-center justify-center text-lg flex-shrink-0" aria-hidden="true">
-          ✨
+          *
         </div>
       )}
 

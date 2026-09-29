@@ -276,7 +276,7 @@ _SLOT_SLUG = {
 }
 
 _EARLY_TEXT = (
-    "Early-game gear is T0–T6 from the Nexus priest and the first dungeons "
+    "Early-game gear is T0-T6 from the Nexus priest and the first dungeons "
     "(Snake Pit, Sprite World, Undead Lair). Buy the T6 weapon, ability, and "
     "armor for your class; swap the ring once you have something with a real "
     "stat (Sprite Wand / Snake Eye Ring are common first finds).\n\n"
@@ -286,7 +286,7 @@ _EARLY_TEXT = (
 )
 
 _SKIN_TEXT = (
-    "Composited from RealmEye sprites — class skin plus clothing and accessory "
+    "Composited from RealmEye sprites - class skin plus clothing and accessory "
     "dyes. That render is code, not a model guess. Ask if you want a different "
     "cloth or dye combo."
 )
