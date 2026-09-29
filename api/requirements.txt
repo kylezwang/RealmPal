@@ -7,7 +7,7 @@ azure-identity==1.25.3
 qdrant-client==1.13.0
 redis[asyncio]==5.2.1
 asyncpg==0.30.0
-playwright==1.49.1
+playwright==1.63.0
 loguru==0.7.3
 PyJWT[crypto]==2.10.1
 stripe==11.4.1
