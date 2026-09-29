@@ -6,7 +6,7 @@ often scale with a stat that has no board (Huntress traps + Dexterity,
 etc.). This module reads the class's ability hub and each unique item's
 infobox, then records which 8/8 stats actually appear in damage/effect
 formulas. Results are cached per class so later questions reuse the same
-graph — no per-item or per-stat special cases.
+graph - no per-item or per-stat special cases.
 """
 from __future__ import annotations
 
@@ -204,8 +204,8 @@ def _tier_bucket(row: dict) -> str:
 
 def _pick_ability_pages(items: list[dict]) -> tuple[list[dict], list[dict]]:
     """T7 first (baseline scaling) + all ST, then every UT (caller pages
-    through the UT list in batches — see `load_class_wiki_scaling`). Skip
-    T0–T6.
+    through the UT list in batches - see `load_class_wiki_scaling`). Skip
+    T0-T6.
     """
     cleaned = [
         row
@@ -310,7 +310,7 @@ def _bonus_value(row: dict, stat: str) -> int:
 
 
 def _is_low_tier_ring(row: dict) -> bool:
-    """T0–T6 named rings only. Blank-tier UTs like Chrysalis must stay."""
+    """T0-T6 named rings only. Blank-tier UTs like Chrysalis must stay."""
     name = row.get("name") or ""
     if re.search(r"^ring of transcendent\b", name, re.I):
         return False
@@ -337,7 +337,7 @@ def _t7_fallback(stat: str) -> dict:
 
 
 def _offense_package(row: dict) -> tuple[int, int]:
-    """ATT+DEX and HP — Attack/Dex UTs like Chrysalis beat a lone T6 ATT ring."""
+    """ATT+DEX and HP - Attack/Dex UTs like Chrysalis beat a lone T6 ATT ring."""
     return (
         _bonus_value(row, "Attack") + _bonus_value(row, "Dexterity"),
         _bonus_value(row, "HP"),
@@ -733,7 +733,7 @@ def format_wiki_scaling(
         "(e.g. '+10 per WIS over 50', 'scaling with VIT') or its Stat "
         "Multiplier is a dash-stack STAT Boost. A +DEX On Equip bonus is "
         "not scaling. When RealmShark has no board for a class+stat, use "
-        "this section — do not say the class has no ability for that stat "
+        "this section - do not say the class has no ability for that stat "
         "if an ability is listed here. When several abilities scale, prefer "
         "a damage/effect formula over a boost-only row, then prefer the "
         "one whose Effect(s) on that same item help more. Do not invent "
@@ -926,7 +926,7 @@ _STAT_ABBR = {
 
 def _ring_why(row: dict, stat: str) -> str:
     if _is_t7_ring(row, stat):
-        return f"T7 Transcendent — only tiered {stat} ring to list"
+        return f"T7 Transcendent - only tiered {stat} ring to list"
     bits: list[str] = []
     bonus = row.get("bonus") or ""
     for other, abbr in _STAT_ABBR.items():
@@ -959,10 +959,10 @@ def format_stat_gear(
     abbr = _STAT_ABBR.get(stat, stat)
     if kind == "rings":
         header = (
-            f"RING AGENT — {stat} rings only (source {hub_url}). "
+            f"RING AGENT - {stat} rings only (source {hub_url}). "
             f"The only tiered ring allowed is T7 [{t7}]. "
             "Never list Ring of Unbound / Exalted / Paramount / Superior / "
-            "Greater — those are T6 and below. After T7, remaining slots are "
+            "Greater - those are T6 and below. After T7, remaining slots are "
             "UT/ST only, ranked from each item's On Equip infobox. "
             "For Attack or Dexterity, dual-offensive UTs (Chrysalis of "
             "Eternity +7 ATT +7 DEX, Overclocking Amulet, Forgotten Crown) "
@@ -970,12 +970,12 @@ def format_stat_gear(
             f"{stat} ring bonuses are never 100+; those are HP/MP. "
             "RealmShark equipped rings are what players wore, not this ranking. "
             "Limited Edition / LE amulets (Amulet of Superior Dexterity, "
-            "Amulet of Superior Speed, etc.) are omitted on purpose — never "
+            "Amulet of Superior Speed, etc.) are omitted on purpose - never "
             "add them. Only rows in this table are allowed. "
             f"Copy this markdown table. Columns must be Ring | {stat} | Why "
             f"({stat} uses {abbr} bonuses so they can be compared). Why stays "
             "the last column. You may tighten Why text; do not drop the "
-            f"{stat} column or add T0–T6 rings.\n"
+            f"{stat} column or add T0-T6 rings.\n"
         )
         lines = [
             header,
@@ -1003,7 +1003,7 @@ def format_stat_gear(
     for row in rows:
         ranked = f"+{row.get('stat_value')} {stat}"
         extra = row.get("bonus") or ""
-        shown = f"{ranked}" + (f" — On Equip {extra}" if extra and extra != ranked else "")
+        shown = f"{ranked}" + (f" - On Equip {extra}" if extra and extra != ranked else "")
         lines.append(f"  [item:{row['name']}] ({row.get('tier') or '?'}) {shown}")
     return "\n".join(lines)
 
@@ -1170,7 +1170,7 @@ async def retrieve_weapon_brief(
                 "RealmEye weapon hub unavailable"
             )
     lines = [
-        f"WEAPON AGENT — {class_name} can only use {label} "
+        f"WEAPON AGENT - {class_name} can only use {label} "
         f"({', '.join(f'{REALMEYE_BASE}/wiki/{h}' for h in hubs)}). "
         "Never recommend a weapon from another family."
     ]
@@ -1290,7 +1290,7 @@ async def retrieve_ability_brief(
     text = format_wiki_scaling(payload, stat=stat)
     if not text:
         return ""
-    prefix = "ABILITY AGENT — this slot only. "
+    prefix = "ABILITY AGENT - this slot only. "
     if brief:
         prefix += (
             "On a full build, name the scaling ability plus 2-3 "
@@ -1563,7 +1563,7 @@ async def retrieve_umi_bis(
     cache_only: bool = False,
     stat: Optional[str] = None,
 ) -> str:
-    """UmiEnjoyers BIS tabs — weapon/slot ideas, not stat truth."""
+    """UmiEnjoyers BIS tabs - weapon/slot ideas, not stat truth."""
     cache_key = f"{UMI_BIS_PREFIX}{class_name.lower()}"
     cached = await redis.get(cache_key)
     if cached:

@@ -2,7 +2,7 @@
 
 Last updated: Sep 22, 2026
 
-Target platform: **Azure**. Chosen for portfolio reasons — it's screened for by the
+Target platform: **Azure**. Chosen for portfolio reasons - it's screened for by the
 enterprise half of the roles being targeted, and invisible to the startup half.
 Container Apps for compute (the API needs a real container for Playwright, which
 rules out serverless), Entra External ID for identity, Key Vault for secrets.
@@ -101,7 +101,7 @@ Item 2 read: "**Build/loadout quality - no single source is the best build.** Se
 - **UmiEnjoyers**: `retrieve_umi_bis()` is scraped and injected for enchantment specialist + armor context, but not for weapon/ability/ring picks or the set-visualizer derived path.
 - **Stored briefs vs visualizer**: minted `wiki:build:v1:{class}:{stat}` text briefs and `top_build_items()` can diverge (different code paths). Goal: one ranking source per slot, reused by text reply, set visualizer, and Claude context.
 - **Confirmed ranking (Sep 16, player):** RealmShark first (top 5 sets plus on-character enchants; most accurate of the three). Then this player overlay. Umi in synergy. RealmEye class-page Maximum Achievable Stats last. Even RealmShark can miss a ceiling: Doom Bow showing in a top 5 is fine, but the brief must also name its upgrade Clockwork Repeater. Skip Limited Edition items when they are a reskin of a real item. Attack robe classes: Diplomatic Robe and Vesture of Duality, Flowering Kimono as honorable mention.
-- **Player overlay (started Sep 16):** `api/services/community_knowledge.py` + aliases in `COMMUNITY_ALIASES`. Attack Bard weapon/armor forced to The Triangle + Vesture of Duality. Nicknames: triangle, cbow (Coral Bow), lbow (Leaf Bow), dbow (Doom Bow), lean crown (Chrysalis of Eternity). `top_build_items` applies the overlay. Weapon briefs mention upgrades when the base item is listed. `retrieve_umi_bis()` prompt now matches the ranking above (no longer "RealmEye is the source of truth"). Every ring brief always names Kagenohikari with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone (`TOP_RINGS`) — Kage is usually missing from all three scrapers unless a RealmShark top 5 happens to wear it.
+- **Player overlay (started Sep 16):** `api/services/community_knowledge.py` + aliases in `COMMUNITY_ALIASES`. Attack Bard weapon/armor forced to The Triangle + Vesture of Duality. Nicknames: triangle, cbow (Coral Bow), lbow (Leaf Bow), dbow (Doom Bow), lean crown (Chrysalis of Eternity). `top_build_items` applies the overlay. Weapon briefs mention upgrades when the base item is listed. `retrieve_umi_bis()` prompt now matches the ranking above (no longer "RealmEye is the source of truth"). Every ring brief always names Kagenohikari with Chrysalis of Eternity, The Forgotten Crown, and The Twilight Gemstone (`TOP_RINGS`) - Kage is usually missing from all three scrapers unless a RealmShark top 5 happens to wear it.
 - Tests: Attack Bard overlay beats hub Concertina/Diplomatic; Doom Bow brief names Clockwork Repeater; triangle/cbow/lbow/dbow resolve; Attack Huntress picks include a Huntress-scaling trap (not Archer quiver)."
 
 
@@ -299,13 +299,13 @@ Resume order was:
 
 
 
-### Azure Foundry — code done, blocked on Azure billing account review
+### Azure Foundry - code done, blocked on Azure billing account review
 
-Chat client is finished in `api/services/llm.py` and doesn't need more work. `_stream_response` picks Foundry when `FOUNDRY_RESOURCE`/`FOUNDRY_BASE_URL` is set (endpoint allowlisted to `https://<resource>.services.ai.azure.com/anthropic`, Entra or a Foundry key, never both), otherwise falls back to `ANTHROPIC_API_KEY`. CCU-aware spend logging, `/health` reporting `provider`, startup warnings on a raw key in prod — all in.
+Chat client is finished in `api/services/llm.py` and doesn't need more work. `_stream_response` picks Foundry when `FOUNDRY_RESOURCE`/`FOUNDRY_BASE_URL` is set (endpoint allowlisted to `https://<resource>.services.ai.azure.com/anthropic`, Entra or a Foundry key, never both), otherwise falls back to `ANTHROPIC_API_KEY`. CCU-aware spend logging, `/health` reporting `provider`, startup warnings on a raw key in prod - all in.
 
-**Deployment fails in the portal**: both `claude-sonnet-4-6` and `claude-sonnet-4-5` deployments show `Provisioning state: Failed`, with "This purchase cannot be completed" from Azure Marketplace. Root cause found: **the Azure billing account (Kyle Wang) is "Under Review" / inactive** — Cost Management + Billing → Billing scopes → that account shows "Your account is under review... buying new products and services... will be restricted until the review is complete." Marketplace can't fulfill any paid model purchase while that's true. This is Microsoft-side, not a RealmPal config problem — resource providers, region (confirm East US 2 / Sweden Central), and subscription type are all fine; the account itself is locked.
+**Deployment fails in the portal**: both `claude-sonnet-4-6` and `claude-sonnet-4-5` deployments show `Provisioning state: Failed`, with "This purchase cannot be completed" from Azure Marketplace. Root cause found: **the Azure billing account is "Under Review" / inactive** - Cost Management + Billing → Billing scopes → that account shows "Your account is under review... buying new products and services... will be restricted until the review is complete." Marketplace can't fulfill any paid model purchase while that's true. This is Microsoft-side, not a RealmPal config problem - resource providers, region (confirm East US 2 / Sweden Central), and subscription type are all fine; the account itself is locked.
 
-Do not keep retrying deployments — each attempt just fails the same way. Resume when:
+Do not keep retrying deployments - each attempt just fails the same way. Resume when:
 
 1. Billing account review clears (check Cost Management + Billing → Billing scopes → account status), or
 2. Support resolves it directly.
@@ -320,7 +320,7 @@ Then: subscribe the `claude-sonnet-4-6-ccu-plan` Marketplace offer (not `-plan-n
 
 
 
-### Entra External ID — portal done, MSAL sign-in built on a side branch, not merged yet
+### Entra External ID - portal done, MSAL sign-in built on a side branch, not merged yet
 
 **Portal (done Sep 13):** External tenant `RealmPal`, apps `RealmPal API` + `RealmPal Web` (SPA, single-tenant), user flow email+password collecting email only. Values in `.env`: tenant ID, SPA client ID, API client ID, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `ENTRA_USER_FLOW`. Backend `api/identity.py` already verifies JWKS tokens when `auth_configured` is true, and already tried first (before the local session JWT) in `api/dependencies.py`'s `get_optional_user` - no backend changes were needed for any of this.
 
@@ -367,41 +367,41 @@ Portal values to collect: tenant ID, SPA client ID, API client ID / Application 
 
 
 
-## Done (Sep 13, 2026) — See CHANGELOG.md for Technical Details
+## Done (Sep 13, 2026) - See CHANGELOG.md for Technical Details
 
 The following were completed and archived:
 
-**Enchantment specialist** — LangGraph slot next to weapon/ability/armor/ring. Reads RealmEye `/wiki/enchanting` tables + Umi BIS notes. Infers the implied stat from an item's own base stat (or a class's dominant scaling stat for stat-less full builds) when the user doesn't name one.
+**Enchantment specialist** - LangGraph slot next to weapon/ability/armor/ring. Reads RealmEye `/wiki/enchanting` tables + Umi BIS notes. Infers the implied stat from an item's own base stat (or a class's dominant scaling stat for stat-less full builds) when the user doesn't name one.
 
-**Stored answers** — Redis caching of drops, builds, dungeon guides, shiny items. Specialist warming system. 70/30 stored/Claude as success metric.
+**Stored answers** - Redis caching of drops, builds, dungeon guides, shiny items. Specialist warming system. 70/30 stored/Claude as success metric.
 
-**Daily quests** — Rotating dungeon/player/shiny item, persistent per-user, grant +1 message/day via `POST /chat/quests/claim`.
+**Daily quests** - Rotating dungeon/player/shiny item, persistent per-user, grant +1 message/day via `POST /chat/quests/claim`.
 
-**Pay-as-you-go billing** — 68 included Claude/mo (~$2.50), $0.08 overage, user spend cap, Stripe Link payment method.
+**Pay-as-you-go billing** - 68 included Claude/mo (~$2.50), $0.08 overage, user spend cap, Stripe Link payment method.
 
-**Stripe audit + Customer Portal** — Full checkout → webhook → entitlement review. Fixed a real bug: guest-checkout emails only present in `customer_details.email` were silently dropped, no entitlement created. Added self-service "Manage subscription or cancel" via `stripe.billing_portal.Session` (`POST /payments/portal`), gated on enabling the Portal once in the Stripe Dashboard.
+**Stripe audit + Customer Portal** - Full checkout → webhook → entitlement review. Fixed a real bug: guest-checkout emails only present in `customer_details.email` were silently dropped, no entitlement created. Added self-service "Manage subscription or cancel" via `stripe.billing_portal.Session` (`POST /payments/portal`), gated on enabling the Portal once in the Stripe Dashboard.
 
-**Email+password auth** — Local SQLite (PBKDF2-SHA256), fallback to magic-link. Primary sign-in method until Entra.
+**Email+password auth** - Local SQLite (PBKDF2-SHA256), fallback to magic-link. Primary sign-in method until Entra.
 
-**Account-scoped history** — Chats & quests keyed per email, separate from guest sessions. LocalStorage persistence.
+**Account-scoped history** - Chats & quests keyed per email, separate from guest sessions. LocalStorage persistence.
 
-**Card zoom** — Sprites & full cards clickable → centered modal with RealmEye link.
+**Card zoom** - Sprites & full cards clickable → centered modal with RealmEye link.
 
-**Top pet detection** — Highest RealmEye ability sum, not first slot.
+**Top pet detection** - Highest RealmEye ability sum, not first slot.
 
-**Sidebar improvements** — Collapsible quick-suggestion prompts, daily quests progress bar.
+**Sidebar improvements** - Collapsible quick-suggestion prompts, daily quests progress bar.
 
-**Lookup rate limiting** — 12/min anon, 40/min signed-in on `/players`, `/items`, `/dungeons`, `/skins/render`, `/sprite`.
+**Lookup rate limiting** - 12/min anon, 40/min signed-in on `/players`, `/items`, `/dungeons`, `/skins/render`, `/sprite`.
 
-**Magic-link hardening** — Separate `MAGIC_LINK_SECRET`, single-use via Redis `SET NX`, no link logging.
+**Magic-link hardening** - Separate `MAGIC_LINK_SECRET`, single-use via Redis `SET NX`, no link logging.
 
-**CORS hardening** — Only `app_url` unless `DEBUG=true`.
+**CORS hardening** - Only `app_url` unless `DEBUG=true`.
 
-**What's new changelog** — User-facing UI with first-load popup, wired to settings page.
+**What's new changelog** - User-facing UI with first-load popup, wired to settings page.
 
-**Multi-tenancy foundation** — `DEPLOYMENT_NAMESPACE` for Redis & Qdrant scoping; entitlements SQLite store; subscription lookup on every JWT; fails open for unknown emails.
+**Multi-tenancy foundation** - `DEPLOYMENT_NAMESPACE` for Redis & Qdrant scoping; entitlements SQLite store; subscription lookup on every JWT; fails open for unknown emails.
 
-**Security hardening** — Server-issued JWTs, real entitlement checks, lookup rate limits, input sanitization, CORS/CSURF, cost budgets.
+**Security hardening** - Server-issued JWTs, real entitlement checks, lookup rate limits, input sanitization, CORS/CSURF, cost budgets.
 
 See `CHANGELOG.md` [2026.09.13] for commits, migrations, tests, and technical detail.
 
@@ -528,14 +528,14 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 
 **Changelog structure:**
 
-- `CHANGELOG.md` — Developer changelog (technical, breaking changes, migrations)
-- `web/lib/changelog.ts` — User-facing changelog (app UI only)
-- `.cursor/rules/changelog.mdc` — Enforce user-facing entries on every deploy
-- `.cursor/rules/development-workflow.mdc` — NEW: Separates BACKLOG (forward), CHANGELOG (completed), UI changelog
+- `CHANGELOG.md` - Developer changelog (technical, breaking changes, migrations)
+- `web/lib/changelog.ts` - User-facing changelog (app UI only)
+- `.cursor/rules/changelog.mdc` - Enforce user-facing entries on every deploy
+- `.cursor/rules/development-workflow.mdc` - NEW: Separates BACKLOG (forward), CHANGELOG (completed), UI changelog
 
 **Doc history:**
 
-- `.cursor/rules/doc-history.mdc` — Keep dated prior text when updating BACKLOG, CHANGELOG, README, or docs/
+- `.cursor/rules/doc-history.mdc` - Keep dated prior text when updating BACKLOG, CHANGELOG, README, or docs/
 
 **Project structure:**
 
@@ -545,12 +545,12 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 
 **Related references:**
 
-- `docs/DEPLOYMENT_GUIDE.md` — Exact Azure portal steps
-- `docs/DEPLOYMENT_QUICK_REFERENCE.md` — Commands & timeline
-- `docs/DEPLOYMENT_ARCHITECTURE.md` — Infrastructure diagrams
-- `docs/chat-quality-benchmarks.md` — Traces & stored-answer map
-- `docs/pricing.md` (gitignored) — Unit-econ, hosting costs, break-even
-- `docs/README.md` — Doc structure & audience guide
+- `docs/DEPLOYMENT_GUIDE.md` - Exact Azure portal steps
+- `docs/DEPLOYMENT_QUICK_REFERENCE.md` - Commands & timeline
+- `docs/DEPLOYMENT_ARCHITECTURE.md` - Infrastructure diagrams
+- `docs/chat-quality-benchmarks.md` - Traces & stored-answer map
+- `docs/pricing.md` (gitignored) - Unit-econ, hosting costs, break-even
+- `docs/README.md` - Doc structure & audience guide
 
 ---
 
@@ -570,7 +570,7 @@ Found Sep 13 while checking `web/`'s build for the Static Web Apps deploy, not c
 
 **Known issues:**
 
-- Google SSO silent renewal bug in Entra (12–24h after first sign-in). Decision pending.
+- Google SSO silent renewal bug in Entra (12-24h after first sign-in). Decision pending.
 - Infrastructure lockdown pending (Redis/Qdrant credentials, docker-compose → Container Apps)
 - Prompt-injection defense weak (regex denylist; should be stronger)
 - Entra MSAL sign-in on `feature/entra-auth` (Sep 13) throws a "failed to fetch" error on the redirect callback when manually tested; not diagnosed yet, deprioritized behind Container Apps. Likely candidates whenever this gets picked back up: `knownAuthorities` mismatch, the JWKS/token endpoint not actually reachable at the `ciamlogin.com` path MSAL is calling, or a redirect URI that doesn't exactly match what's registered on the SPA app

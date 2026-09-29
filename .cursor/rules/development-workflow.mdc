@@ -11,7 +11,7 @@ alwaysApply: true
 
 RealmPal maintains three separate changelogs for three audiences:
 
-### 1. BACKLOG.md (product roadmap — this is forward-looking)
+### 1. BACKLOG.md (product roadmap - this is forward-looking)
 
 **What goes here:**
 - Current priorities and in-progress work
@@ -21,7 +21,7 @@ RealmPal maintains three separate changelogs for three audiences:
 - Research notes and findings
 
 **What goes here after completion:**
-- ❌ Nothing. Remove completed work and archive it to CHANGELOG.md
+- Nothing. Remove completed work and archive it to CHANGELOG.md
 
 **Structure:**
 - "Resume order when context is fresh" at top (next priorities)
@@ -29,7 +29,7 @@ RealmPal maintains three separate changelogs for three audiences:
 - Each active feature as a section with "**done**" marker when complete
 - Do not edit BACKLOG the week after a feature ships (let CHANGELOG capture it)
 
-### 2. CHANGELOG.md (developer changelog — technical & migrations)
+### 2. CHANGELOG.md (developer changelog - technical & migrations)
 
 **What goes here:**
 - Every completed version (not every commit)
@@ -49,7 +49,7 @@ RealmPal maintains three separate changelogs for three audiences:
 3. Remove from BACKLOG (don't keep stale copies)
 4. Add related user-visible items to web/lib/changelog.ts (see rule 3 below)
 
-### 3. web/lib/changelog.ts (user-facing changelog — UI modal only)
+### 3. web/lib/changelog.ts (user-facing changelog - UI modal only)
 
 **What goes here:**
 - User-visible improvements only
@@ -75,7 +75,7 @@ LangGraph slot next to weapon / ability / armor / ring. Reads RealmEye `/wiki/en
 
 **Already done:**
 - `api/services/enchanting.py`
-- `api/services/scraper.py` — `scrape_enchanting_page()`
+- `api/services/scraper.py` - `scrape_enchanting_page()`
 
 **In progress (Sep 13-14):**
 1. Wire `warm_enchanting_store` into specialist warming
@@ -96,7 +96,7 @@ LangGraph slot next to weapon / ability / armor / ring. Reads RealmEye `/wiki/en
 ### Added
 - **Enchantment specialist** (`api/services/enchanting.py`):
   - Isolate enchant-only questions via LangGraph
-  - Read RealmEye `/wiki/enchanting` tables (eligible slot, I–IV, unique/awakened)
+  - Read RealmEye `/wiki/enchanting` tables (eligible slot, I-IV, unique/awakened)
   - Inject brief into build context via `retrieve_enchanting_brief`
   - Store in `wiki:enchanting:v1` with 7-day TTL
   - Skip extra RAG on enchant-only turns (brief is sufficient)
@@ -161,7 +161,7 @@ BACKLOG no longer mentions Enchantment. If you want to know what it was before S
 
 ## Anti-Patterns (Don't Do This)
 
-### ❌ Stale BACKLOG
+### Stale BACKLOG
 
 ```markdown
 ## Enchantment specialist (started, not finished)
@@ -175,11 +175,11 @@ BACKLOG no longer mentions Enchantment. If you want to know what it was before S
 
 **Fix:** Either it's in-progress with a date, or it's done (move to CHANGELOG.md and remove).
 
-### ❌ User-Visible Details in CHANGELOG.md
+### User-Visible Details in CHANGELOG.md
 
 ```markdown
 ### Added
-- **Enchantment specialist**: read RealmEye /wiki/enchanting (eligible slot, I–IV, unique/awakened),
+- **Enchantment specialist**: read RealmEye /wiki/enchanting (eligible slot, I-IV, unique/awakened),
   inject via retrieve_build_knowledge, store wiki:enchanting:v1, 7-day TTL
 ```
 
@@ -187,7 +187,7 @@ BACKLOG no longer mentions Enchantment. If you want to know what it was before S
 
 **Fix:** CHANGELOG.md: technical details (for devs/ops). web/lib/changelog.ts: user benefit ("Enchanting advice is now instant").
 
-### ❌ Duplicate BACKLOG History
+### Duplicate BACKLOG History
 
 ```markdown
 # BACKLOG

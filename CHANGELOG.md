@@ -3,9 +3,9 @@
 All notable changes to RealmPal are documented here. This is the **developer changelog** (technical details, internal changes, breaking changes, migrations). 
 
 **Related files:**
-- **User-facing changelog:** `web/lib/changelog.ts` — rendered in the app UI ("What's new" modal, first-load popup, settings page)
-- **Product decisions:** `BACKLOG.md` — high-level roadmap, current priorities, research notes
-- **Deployment guide:** `docs/DEPLOYMENT_GUIDE.md` — exact Azure portal steps
+- **User-facing changelog:** `web/lib/changelog.ts` - rendered in the app UI ("What's new" modal, first-load popup, settings page)
+- **Product decisions:** `BACKLOG.md` - high-level roadmap, current priorities, research notes
+- **Deployment guide:** `docs/DEPLOYMENT_GUIDE.md` - exact Azure portal steps
 
 Format: each version has technical notes, linked commits, migration guides (if needed), and internal changes not exposed to users.
 
@@ -402,7 +402,7 @@ Source loot stored path only matched dungeon-index titles (Keyper as an event pa
 
 ### Changed
 - **Paywall demo videos play on mobile** (`web/public/staticwebapp.config.json`, `PaywallModal`, remuxed MP4s): production was serving `/videos/paywall/*.mp4` as `application/octet-stream` with `X-Content-Type-Options: nosniff`, so Safari and other phones refused to treat the files as video. SWA now maps `.mp4` to `video/mp4`. Both Clipchamp exports also had `moov` after `mdat`, so the player could not start until the whole file arrived; they are remuxed with `-movflags +faststart`. The player uses a `type="video/mp4"` source and `preload="metadata"`.
-- **Class progression briefs** (`api/services/progression.py`): "best early/mid/end game items for {class}" (and "X progression") is a stored three-band farm route with `[item:]` cards. Sorcerer is the hand-verified ratchet (Mad Lab / Cemetery / Snake Pit, Parasite + Cnidarian + Draconis, MV / O3 / Shadows). Other classes keep the same shape but use that family's dungeons and store cores (bows get Coral / Leaf / Maka + leather, staves get Unholy + Water Dragon Silk, and so on). Generic T0–T6 Nexus copy only remains when no class is named. Claude does not mint over these.
+- **Class progression briefs** (`api/services/progression.py`): "best early/mid/end game items for {class}" (and "X progression") is a stored three-band farm route with `[item:]` cards. Sorcerer is the hand-verified ratchet (Mad Lab / Cemetery / Snake Pit, Parasite + Cnidarian + Draconis, MV / O3 / Shadows). Other classes keep the same shape but use that family's dungeons and store cores (bows get Coral / Leaf / Maka + leather, staves get Unholy + Water Dragon Silk, and so on). Generic T0-T6 Nexus copy only remains when no class is named. Claude does not mint over these.
 - **Ability asks mint and replay** (`maybe_mint_brief`, `_ability_reply`, `chat.py` `_mint`): "Best druid abilities" has a class and the word ability, but no stat, so it never wrote `wiki:build:v1:{class}:{stat}`. Haiku replies were also skipped (`model != claude_model`). Live Sep 16: the same guest ask burned two in-depth turns. Class-only ability essays now store at `wiki:ability-brief:v1:{class}` (or `:{stat}` when named). The second identical ask is a stored hit. Haiku and Sonnet both mint. Constrained / dungeon / enchant asks still do not.
 - **Slot lists rank Umi + RealmShark, not hub T0 order** (`stored_answers._slot_reply`, `community_knowledge.rank_community_slot_names`, `realmshark.shark_name_counts`): "Best bows in the game" took the first six `wiki:hub-index:v8:bows` rows (Shortbow, Reinforced Bow, ...). RealmEye hubs are T0-first. Lists now seed family cores (Makakoyumi / Divinity+Damnation / robe+leather cores / TOP_RINGS), then cached RealmShark top-5 frequency, then UmiEnjoyers BIS names. Same path for swords, armor, rings, and other mapped slots. "Best equipment/gear/items for {stat}" (no class) aims to maximize that stat. Class+stat asks still defer to the build brief.
 - **Stored build briefs only match this turn's class+stat** (`stored_answers._build_reply`, `maybe_mint_brief`): `parse_query(..., history=...)` used to inherit Huntress/Dexterity (and `buildish`) from earlier turns, so an LLM-bound follow-up after a minted `wiki:build:v1:huntress:dexterity` brief streamed that same loadout instead of falling through to `_enforce_quota`. Live Sep 16 prod: a guest at 0 in-depth left sent a Claude-activating test prompt and got the prior Dexterity Huntress essay. Briefs now parse this message only. Asking the same class+stat again is still a cache hit. History inheritance stays on the Claude path for thin follow-ups.
@@ -737,7 +737,7 @@ Compact pet lookup timeout (`PET_LOOKUP_TIMEOUT_SECONDS`, `PET_LOOKUP_TIMEOUT_MS
 
 ### Known Issues
 - **Azure Foundry deployment blocked**: Billing account under review; cannot purchase Marketplace models until cleared by Azure Support
-- **Entra Google SSO silent renewal bug**: 12–24h after first sign-in, token renewal fails; workaround is email OTP only or force `prompt=select_account`
+- **Entra Google SSO silent renewal bug**: 12-24h after first sign-in, token renewal fails; workaround is email OTP only or force `prompt=select_account`
 - **Infrastructure lockdown pending**: Docker Compose still exposes Redis 6379 and Qdrant 6333 with no credentials (local dev only; move to private networking + creds on real deploy)
 
 ### Next Up

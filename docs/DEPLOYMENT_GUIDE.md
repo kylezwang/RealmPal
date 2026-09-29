@@ -7,11 +7,11 @@
 
 ## PRIORITY 1: Unblock Azure Foundry (BLOCKER)
 
-**Status:** Billing account under review — must clear before Foundry deployments work.
+**Status:** Billing account under review - must clear before Foundry deployments work.
 
 ### Step 1: Check Billing Account Status
 
-1. Go to **[Azure Portal](https://portal.azure.com)** → sign in with `Kyle Wang` account
+1. Go to **[Azure Portal](https://portal.azure.com)** and sign in with the Azure account
 2. Search for **"Cost Management + Billing"** (top search bar)
 3. Click **"Billing scopes"** (left sidebar)
 4. Look for your subscription in the list
@@ -33,7 +33,7 @@
    - **Description:** "Azure billing account is under review and cannot purchase marketplace models (Claude Sonnet 4.6 via Foundry). Can this be expedited?"
 4. Submit and wait for response
 
-**Expected wait:** 24–48 hours. In the meantime, proceed to sections 2–6 below (all can run without Foundry).
+**Expected wait:** 24-48 hours. In the meantime, proceed to sections 2-6 below (all can run without Foundry).
 
 ### Step 3: Once Billing Review Clears
 
@@ -323,7 +323,7 @@ user, then swap local email+password for Entra-issued tokens.
 5. Click **"Review + create"**, then **"Create"** once validation passes
 6. Wait ~30 seconds for deployment, then click **"Go to resource"**
 7. On the registry's **Overview** page, copy the **Login server** value
-   (looks like `realmpalacr.azurecr.io`) — save it, needed for every step
+   (looks like `realmpalacr.azurecr.io`) - save it, needed for every step
    after this
 8. Click **"Access keys"** (left sidebar) → toggle **"Admin user"** to
    **Enabled** → copy the **Username** and one of the two **Password**
@@ -714,8 +714,8 @@ If something breaks in production:
 ## Support & Next Steps
 
 - **Foundry blocked?** Contact Azure Support (see Priority 1, Step 2)
-- **Entra issues?** Known bug with Google SSO + silent renewal — use email OTP only for MVP
-- **Performance issues?** Scale Container App to 2–3 replicas and increase CPU/memory
+- **Entra issues?** Known bug with Google SSO + silent renewal - use email OTP only for MVP
+- **Performance issues?** Scale Container App to 2-3 replicas and increase CPU/memory
 - **After MVP:** Set up CI/CD pipeline to auto-deploy on git push to `master`
 
 ---

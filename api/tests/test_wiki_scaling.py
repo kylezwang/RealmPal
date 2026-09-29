@@ -999,7 +999,7 @@ async def test_in_depth_build_uses_slot_agents_set_picks_and_one_shark_top5(
     assert "[item:Vesture of Duality]" in text
     assert "RealmShark potential-DPS loadouts for Attack Bard" in text
     assert "Wisdom Bard" not in text
-    assert "ABILITY AGENT — stored wiki scaling" not in text
+    assert "ABILITY AGENT - stored wiki scaling" not in text
     assert "SOURCE RANKING" in text
 
 

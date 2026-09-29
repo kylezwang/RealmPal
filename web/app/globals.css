@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Semibold in this UI is extra-bold — 800, not Tailwind's default 600. */
+  /* Semibold in this UI is extra-bold - 800, not Tailwind's default 600. */
   --font-weight-semibold: 800;
   --font-weight-extrabold: 800;
 }

@@ -2,7 +2,7 @@
 
 /**
  * Quest progress indicator for the chat chrome (header + sidebar).
- * Shows percent complete only — no exact counts, no billing link.
+ * Shows percent complete only - no exact counts, no billing link.
  * Paid-tier pool data is a temporary stand-in until the quest system ships.
  */
 interface Props {

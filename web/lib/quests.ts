@@ -44,7 +44,7 @@ export function portalForDungeon(name: string, fallback?: string | null): string
   return known?.url || fallback || undefined;
 }
 
-/** Same order as api/services/daily_quests.py — keep in sync. */
+/** Same order as api/services/daily_quests.py - keep in sync. */
 const DUNGEON_ROTATION = [
   "Hardmode Shatters",
   "Moonlight Village",
@@ -287,7 +287,7 @@ function writeProgress(progress: StoredProgress): void {
   try {
     window.localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(progress));
   } catch {
-    // Private mode / storage disabled — progress just won't persist.
+    // Private mode / storage disabled - progress just won't persist.
   }
 }
 

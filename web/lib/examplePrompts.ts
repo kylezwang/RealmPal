@@ -16,7 +16,7 @@ export interface ExamplePromptConfig extends ExamplePromptField {
   infix?: string;
   suffix?: string;
   layout: ExamplePromptLayout;
-  /** 0, 1, 2… — each step delays the delete animation by 0.5s. */
+  /** 0, 1, 2… - each step delays the delete animation by 0.5s. */
   stagger: number;
   second?: ExamplePromptField;
   toMessage: (raw: string, extra?: string) => string | null;
@@ -124,7 +124,7 @@ export const ANIMATED_EXAMPLE_PROMPTS: ExamplePromptConfig[] = [
 ];
 
 /** Sidebar: same order as the source array, minus the stat+class builder
- * (the landing grid still shows it — it's just too cramped for the rail). */
+ * (the landing grid still shows it - it's just too cramped for the rail). */
 export const SIDEBAR_EXAMPLE_PROMPTS: ExamplePromptConfig[] = ANIMATED_EXAMPLE_PROMPTS.filter(
   (config) => config.id !== "stat-class",
 );

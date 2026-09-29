@@ -10,6 +10,8 @@ This directory contains all project documentation. Most files are tracked in git
 | `DEPLOYMENT_QUICK_REFERENCE.md` | Quick summary of priorities and commands |
 | `DEPLOYMENT_ARCHITECTURE.md` | Infrastructure diagrams and data flows |
 | `chat-quality-benchmarks.md` | Chat response quality traces and stored-answer map |
+| `jev-routing-plan.md` | Saved plan (Sep 23, 2026): optional Jev disambiguator for ambiguous chat routing |
+| `DEVELOPMENT_SYSTEM.md` | Changelog workflow: backlog, developer notes, and the in-app list |
 
 ## Private Documentation (Gitignored)
 
@@ -22,16 +24,16 @@ This directory contains all project documentation. Most files are tracked in git
 
 | File | Purpose |
 |---|---|
-| `../CHANGELOG.md` | **Developer changelog** — technical details, breaking changes, migrations (git-tracked) |
-| `../BACKLOG.md` | **Product roadmap** — current priorities, decisions, research notes (git-tracked) |
-| `../README.md` | **Project overview** — feature list, setup instructions (git-tracked) |
-| `../web/lib/changelog.ts` | **User-facing changelog** — rendered in app UI ("What's new" modal) (git-tracked) |
+| `../CHANGELOG.md` | **Developer changelog** - technical details, breaking changes, migrations (git-tracked) |
+| `../BACKLOG.md` | **Product roadmap** - current priorities, decisions, research notes (git-tracked) |
+| `../README.md` | **Project overview** - feature list, setup instructions (git-tracked) |
+| `../web/lib/changelog.ts` | **User-facing changelog** - rendered in app UI ("What's new" modal) (git-tracked) |
 
 ## Guidelines
 
 - **New doc?** Put it in `docs/` unless it's a changelog, backlog, or readme (those stay at root)
 - **Business logic or pricing?** Add to `docs/pricing.md` and gitignore it
-- **Keep old info?** See `.cursor/rules/doc-history.mdc` — add a `## History` section with timestamped prior text
+- **Keep old info?** See `.cursor/rules/doc-history.mdc` - add a `## History` section with timestamped prior text
 - **User-facing changelog?** Update `web/lib/changelog.ts` per `.cursor/rules/changelog.mdc`
 - **Dev changelog?** Update `../CHANGELOG.md` with technical details
 
