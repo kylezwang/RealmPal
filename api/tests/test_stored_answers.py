@@ -135,17 +135,20 @@ def stream_app(redis_client, anon_settings, monkeypatch):
     return _client(app, redis_client, anon_settings), calls
 
 
-async def _read_sse_text(response: httpx.Response) -> str:
+async def _read_sse_chunks(response: httpx.Response) -> list[dict]:
     import json
 
-    parts: list[str] = []
+    chunks: list[dict] = []
     async for line in response.aiter_lines():
         if not line.startswith("data: "):
             continue
-        chunk = json.loads(line[6:])
-        if chunk.get("content"):
-            parts.append(chunk["content"])
-    return "".join(parts)
+        chunks.append(json.loads(line[6:]))
+    return chunks
+
+
+async def _read_sse_text(response: httpx.Response) -> str:
+    chunks = await _read_sse_chunks(response)
+    return "".join(chunk.get("content") or "" for chunk in chunks)
 
 
 def test_shiny_divine_quest_prompt_extracts_the_item():
@@ -733,10 +736,12 @@ async def test_player_lookup_at_daily_limit_is_stored_not_claude(
             json={"message": "Look up player Nutz", "session_id": "s-player-capped"},
         )
         assert response.status_code == 200, response.status_code
-        text = await _read_sse_text(response)
+        chunks = await _read_sse_chunks(response)
+        text = "".join(chunk.get("content") or "" for chunk in chunks)
     assert calls == []
     assert "Fame" in text
     assert "Copy these" not in text
+    assert any(chunk.get("player_ign") == "Nutz" for chunk in chunks)
     assert await peek(redis_client, quota) == anon_settings.anonymous_message_limit
 
 

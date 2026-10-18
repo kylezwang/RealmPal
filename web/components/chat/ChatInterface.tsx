@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { streamChat, fetchPlayer, fetchPlayerPet, fetchItem, fetchItemSuggest, fetchDungeon, fetchChatUsage, uploadChatImage, confirmCheckout, decodeAuthEmail, decodeAuthIgn, AUTH_CHANGED_EVENT, claimDailyQuestBonus, fetchQuestArt, type PlayerProfile, type ItemProfile, type DungeonGuide, type PaywallInfo, type ChatUsage, type FeedbackRating } from "@/lib/api";
-import { extractPlayerLookup, isAccountPlayerLookup, shouldReusePlayerCard, wantsExaltationTable } from "@/lib/playerLookup";
+import { extractPlayerLookup, isAccountPlayerLookup, shouldReusePlayerCard, storedPlayerCardIgn, wantsExaltationTable } from "@/lib/playerLookup";
 import { extractDungeonLookup } from "@/lib/dungeonLookup";
 import { LANDING_EXAMPLE_PROMPTS } from "@/lib/examplePrompts";
 import { ExamplePrompt } from "./ExamplePrompt";
@@ -741,7 +741,14 @@ export function ChatInterface() {
         ? "account"
         : "character"
       : undefined;
-    if (lookupName) {
+    let playerCardStarted = false;
+    const beginPlayerCard = (
+      name: string,
+      scope: "account" | "character",
+      highlight: string | undefined,
+    ) => {
+      if (playerCardStarted) return;
+      playerCardStarted = true;
       // The backend's own player-brief scrape (for the text summary above)
       // and this card fetch hit the same short-TTL cache but race the same
       // single shared Playwright browser | when this one loses that race
@@ -751,7 +758,7 @@ export function ChatInterface() {
       // failure (rather than silently dropping the card) once that retry
       // also fails.
       const attemptFetchPlayer = (attempt: number) => {
-        fetchPlayer(lookupName)
+        fetchPlayer(name)
           .then((profile) => {
             setMessages((prev) => {
               if (assistantMsgIndex < 0 || assistantMsgIndex >= prev.length) return prev;
@@ -760,8 +767,8 @@ export function ChatInterface() {
                 ...updated[assistantMsgIndex],
                 playerProfile: profile,
                 showExaltationTable,
-                highlightClass: playerCardScope === "character" ? highlightClass : undefined,
-                playerCardScope,
+                highlightClass: scope === "character" ? highlight : undefined,
+                playerCardScope: scope,
               };
               return updated;
             });
@@ -783,6 +790,13 @@ export function ChatInterface() {
           });
       };
       attemptFetchPlayer(0);
+    };
+    if (lookupName && playerCardScope) {
+      beginPlayerCard(
+        lookupName,
+        playerCardScope,
+        playerCardScope === "character" ? highlightClass : undefined,
+      );
     }
 
     const dungeonName = extractDungeonLookup(trimmed);
@@ -932,6 +946,10 @@ export function ChatInterface() {
           break;
         }
         assembled += chunk.content;
+        const cardIgn = storedPlayerCardIgn(chunk.player_ign);
+        if (cardIgn) {
+          beginPlayerCard(cardIgn, "account", undefined);
+        }
         setMessages((prev) => {
           const updated = [...prev];
           // Spread the existing message rather than replacing it outright |

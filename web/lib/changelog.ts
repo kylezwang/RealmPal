@@ -32,6 +32,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "Oct 18, 2026",
     items: [
       "If a question needs a class, or a name could be a boss or a player, RealmPal asks a short question instead of guessing.",
+      "Asking who a player is now shows their characters and gear, the same card as Look up player.",
+      "A short \"what is\" question now asks which item you mean when the name is not already known, instead of guessing one.",
+      "If a question is missing a class, item, dungeon, or player, RealmPal asks for that piece instead of guessing it.",
     ],
   },
   {

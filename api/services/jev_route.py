@@ -39,6 +39,7 @@ SHORT_VAGUE_MIN = 0.70  # off_topic + other: no game specialist is plausible
 SHORT_WORDS = 3
 NOUL_YES = 0.80
 NOUL_NO = 0.20
+MISSING_MIN = 0.70  # missing class/item/dungeon/player, then the catalog must agree
 CLARIFY_GAP = 0.12  # top two intents this close, and neither wins, so ask
 CLARIFY_FLOOR = 0.40  # second intent must clear this or the tie is noise
 NAME_ASK_MIN = 0.45  # player probability before a known game name is asked about
@@ -55,6 +56,16 @@ ABOUT_TEXT = (
 CLASS_CLARIFY_TEXT = (
     "Which class are you asking about? A class name is enough, "
     "and I can answer from there."
+)
+DUNGEON_CLARIFY_TEXT = (
+    "Which dungeon are you asking about? A dungeon name is enough, "
+    "and I can answer from there."
+)
+PLAYER_CLARIFY_TEXT = (
+    "Which player are you asking about? An in-game name is enough."
+)
+ITEM_CLARIFY_TEXT = (
+    "Which item are you asking about? The full name is enough."
 )
 _CLASS_NEEDED = frozenset({"dps", "slot", "build", "ability"})
 _QUIET_GAME = frozenset({"dungeon", "item_info", "item_scale", "portal"})
@@ -91,6 +102,68 @@ _GEAR_RECOMMEND = re.compile(
     r"\b(?:should i (?:use|wear)|best)\b.{0,30}"
     r"\b(?:rings?|armou?r|weapons?|staff|staves|wand|sword|bow)\b",
     re.I,
+)
+_YES = re.compile(
+    r"^(?:yes|yeah|yep|yup|correct|that one|that(?:'s| is) (?:it|the one))\.?!?$",
+    re.I,
+)
+_DO_YOU_MEAN_ITEM = re.compile(r"^Do you mean ([^?\n]{2,80})\?$")
+# "What is jugg?" is one subject token. "What is a white bag?" is not.
+_WHAT_IS_TOKEN = re.compile(
+    r"^(?:what(?:'s| is)|whats)\s+(?:a |an |the )?([a-z][a-z0-9']{2,19})\s*\??$",
+    re.I,
+)
+# Real game words a "what is" question may explain without a wiki page title.
+_KNOWN_MECHANIC = frozenset(
+    {
+        "fame",
+        "pet",
+        "pets",
+        "bag",
+        "bags",
+        "exalt",
+        "exalts",
+        "exaltation",
+        "exaltations",
+        "dps",
+        "forge",
+        "forging",
+        "enchant",
+        "enchanting",
+        "enchants",
+        "shiny",
+        "skin",
+        "skins",
+        "guild",
+        "realm",
+        "potion",
+        "potions",
+        "stat",
+        "stats",
+        "set",
+        "sets",
+        "loot",
+        "drop",
+        "drops",
+        "dex",
+        "dexterity",
+        "attack",
+        "defense",
+        "speed",
+        "vitality",
+        "wisdom",
+        "mana",
+        "life",
+        "health",
+        "hp",
+        "mp",
+        "def",
+        "att",
+        "spd",
+        "vit",
+        "wis",
+        "tier",
+    }
 )
 
 CALLING_GATES = frozenset({"conflict", "followup", "standalone"})
@@ -192,6 +265,33 @@ _FIELD_CRITERIA = {
     "player": "The same player, asked about again.",
 }
 
+_MISSING_CRITERIA = {
+    "nothing": (
+        "Nothing required is missing. The subject is already named, or the "
+        "question does not need a class, item, dungeon, or player. A name in "
+        "`known_game_terms` counts as named. Pets, trading, guilds, fame, bags, "
+        "and game mechanics need nothing more."
+    ),
+    "class": "Gear, damage, a build, or an ability is asked about, and no class is named.",
+    "item": (
+        "The answer depends on one item, and that item's name or nickname is "
+        "not a wiki title in `known_game_terms`."
+    ),
+    "dungeon": "A dungeon guide or its loot is asked about, and no dungeon is named.",
+    "player": "A player is asked about, and no in-game name is given.",
+}
+
+_MISSING_QUESTION = {
+    "type": "choice",
+    "instructions": (
+        "What must still be named for `current_message` to be answered "
+        "without guessing? Use `known_game_terms` as names that are already "
+        "known. Choose nothing when the subject is already there, or when "
+        "no class, item, dungeon, or player is required."
+    ),
+    "criteria": _MISSING_CRITERIA,
+}
+
 _QUESTIONS = {
     "intent": {
         "type": "choice",
@@ -235,11 +335,13 @@ _QUESTIONS = {
             "false": "The stored facts are enough and a lighter model can phrase them.",
         },
     },
+    "missing": _MISSING_QUESTION,
 }
 
 _STORED_QUESTIONS = {
     "intent": _QUESTIONS["intent"],
     "continue_field": _QUESTIONS["continue_field"],
+    "missing": _MISSING_QUESTION,
 }
 
 # What each history-dependent stored card shows. Jev answers whether this
@@ -307,6 +409,8 @@ class JevDecision:
     player_name_p: float = 0.0
     stored_fits: Optional[float] = None
     no_request: Optional[float] = None
+    missing: Optional[str] = None
+    missing_confidence: float = 0.0
     from_cache: bool = False
 
     @property
@@ -347,7 +451,11 @@ def reply_kind(text: str) -> str:
     stripped = body.lstrip()
     if (
         stripped.startswith("Which class are you asking about?")
-        or stripped.startswith("Do you mean the ")
+        or stripped.startswith("Which dungeon are you asking about?")
+        or stripped.startswith("Which player are you asking about?")
+        or stripped.startswith("Which item are you asking about?")
+        or stripped.startswith("Do you mean ")
+        or stripped.startswith("I don't know ")
         or (
             stripped.startswith("Are you asking about ")
             and ", or about " in stripped
@@ -540,6 +648,7 @@ def _decision_from_body(body: dict, requested_model: str, gate: str) -> JevDecis
     sonnet_row = answers.get("needs_sonnet") or {}
     player_row = answers.get("player_name") or {}
     fits_row = answers.get("stored_fits") or {}
+    missing_row = answers.get("missing") or {}
     intent = intent_row.get("choice")
     if intent not in _INTENT_CRITERIA:
         intent = None
@@ -554,6 +663,9 @@ def _decision_from_body(body: dict, requested_model: str, gate: str) -> JevDecis
     player = player_row.get("choice")
     player_probs = player_row.get("probabilities") or {}
     player_p = _float_or_none(player_probs.get(player)) if player else None
+    missing = missing_row.get("choice")
+    if missing not in _MISSING_CRITERIA:
+        missing = None
     return JevDecision(
         called=True,
         reason="ok",
@@ -570,6 +682,8 @@ def _decision_from_body(body: dict, requested_model: str, gate: str) -> JevDecis
         player_name_p=player_p or 0.0,
         stored_fits=_float_or_none(fits_row.get("noul")),
         no_request=_float_or_none((answers.get("no_request") or {}).get("noul")),
+        missing=missing,
+        missing_confidence=_float_or_none(missing_row.get("confidence")) or 0.0,
     )
 
 
@@ -603,6 +717,8 @@ def _dump(decision: JevDecision) -> str:
             "player_name_p": decision.player_name_p,
             "stored_fits": decision.stored_fits,
             "no_request": decision.no_request,
+            "missing": decision.missing,
+            "missing_confidence": decision.missing_confidence,
         }
     )
 
@@ -625,6 +741,8 @@ def _load(raw: str) -> JevDecision:
         player_name_p=float(body.get("player_name_p") or 0),
         stored_fits=body.get("stored_fits"),
         no_request=body.get("no_request"),
+        missing=body.get("missing"),
+        missing_confidence=float(body.get("missing_confidence") or 0),
         from_cache=True,
     )
     return decision
@@ -649,6 +767,9 @@ def _log(decision: JevDecision, *, hits: set[str], cache: str, elapsed_ms: int) 
         and decision.player_name_p >= PLAYER_MIN
     ):
         bound["jev_player_name"] = decision.player_name
+    if decision.missing and decision.missing != "nothing":
+        bound["jev_missing"] = decision.missing
+        bound["jev_missing_conf"] = decision.missing_confidence
     logger.bind(**bound).info("Jev route")
 
 
@@ -903,6 +1024,12 @@ def clarify_reply(
     stated = _wiki_who(decision, message, hits)
     if stated:
         return stated
+    unknown = _unknown_term_clarify(decision, message, hits)
+    if unknown:
+        return unknown
+    gap = _missing_clarify(decision, message, hits, history)
+    if gap:
+        return gap
     asked = _class_clarify(decision, message, hits, history)
     if asked:
         return asked
@@ -943,6 +1070,252 @@ def _name_clarify(
             f"Do you mean the {term.get('kind')} {term.get('name')}, "
             f"or a player named {token}?"
         )
+    return None
+
+
+def accepted_nickname(message: str, prior_text: str) -> Optional[str]:
+    """The item named in our last question, once the user agrees.
+
+    "Do you mean the boss X, or a player" is a different question and is ignored.
+    """
+    if not _YES.match((message or "").strip()):
+        return None
+    match = _DO_YOU_MEAN_ITEM.match((prior_text or "").strip())
+    if not match:
+        return None
+    name = match.group(1).strip()
+    if not name or " or " in name.lower():
+        return None
+    return f"{name}\n\n[item:{name}]"
+
+
+def _what_is_token(message: str) -> Optional[str]:
+    match = _WHAT_IS_TOKEN.search((message or "").strip())
+    if not match:
+        return None
+    token = match.group(1)
+    if token.lower() in _KNOWN_MECHANIC:
+        return None
+    return token
+
+
+def _term_covers_token(token: str, terms: list[dict]) -> bool:
+    needle = token.lower()
+    for term in terms:
+        matched = (term.get("matched") or "").lower()
+        if needle == matched:
+            return True
+        name_words = re.findall(r"[a-z0-9']+", (term.get("name") or "").lower())
+        if needle in name_words:
+            return True
+    return False
+
+
+def _unknown_term_clarify(
+    decision: JevDecision, message: str, terms: list[dict]
+) -> Optional[str]:
+    """Ask before Claude invents a name for a short "what is X?" question.
+
+    An exact community nickname proposes that item. A token in the wiki
+    list is left on the normal path. Anything else is asked in the open,
+    because a model guess (jugg as Jug of the Undead) is worse than a question.
+    """
+    if decision.gate not in ("standalone", "followup", "stored"):
+        return None
+    if (
+        decision.intent == "player"
+        and decision.probabilities.get("player", 0.0) >= PLAYER_INTENT_MIN
+    ):
+        return None
+    token = _what_is_token(message)
+    if not token or _term_covers_token(token, terms):
+        return None
+    from .item_aliases import COMMUNITY_ALIASES
+
+    canonical = COMMUNITY_ALIASES.get(token.lower())
+    if canonical:
+        return f"Do you mean {canonical}?"
+    shown = token if token[:1].isupper() else token
+    return (
+        f'I don\'t know "{shown}". '
+        "Which item, boss, or dungeon do you mean?"
+    )
+
+
+_NOT_A_NICKNAME = frozenset(
+    {
+        "white",
+        "black",
+        "red",
+        "blue",
+        "green",
+        "purple",
+        "orange",
+        "pink",
+        "gold",
+        "golden",
+        "yellow",
+        "cyan",
+        "complete",
+        "compare",
+        "compared",
+        "versus",
+        "worth",
+        "wear",
+        "wearing",
+        "swap",
+        "swapped",
+        "recommend",
+        "recommended",
+        "early",
+        "game",
+        "newer",
+        "character",
+        "characters",
+        "account",
+        "ring",
+        "rings",
+        "staff",
+        "staves",
+        "wand",
+        "wands",
+        "sword",
+        "swords",
+        "bow",
+        "bows",
+        "dagger",
+        "daggers",
+        "katana",
+        "katanas",
+        "armor",
+        "armour",
+        "weapon",
+        "weapons",
+        "ability",
+        "abilities",
+        "robe",
+        "helm",
+        "spell",
+        "tome",
+        "quiver",
+        "shield",
+        "seal",
+        "orb",
+        "trap",
+        "skull",
+        "cloak",
+        "lute",
+        "prism",
+        "scepter",
+        "poison",
+    }
+)
+
+
+def _item_subjects(message: str, terms: list[dict]) -> tuple[list[str], list[str]]:
+    """Community nicknames, then words that are not in any catalog."""
+    from ..models.build import CLASS_ALIASES
+    from .fuzzy_match import _ENGLISH_FILLER
+    from .item_aliases import COMMUNITY_ALIASES
+
+    classes = {name.lower() for name in CLASS_ALIASES}
+    for aliases in CLASS_ALIASES.values():
+        classes.update(alias.lower() for alias in aliases)
+    aliases_found: list[str] = []
+    unknowns: list[str] = []
+    seen_alias: set[str] = set()
+    seen_unknown: set[str] = set()
+    for raw in re.findall(r"[A-Za-z][A-Za-z0-9']{2,19}", message or ""):
+        token = raw.lower().replace("'", "")
+        if (
+            token in _ENGLISH_FILLER
+            or token in _KNOWN_MECHANIC
+            or token in _NOT_A_NICKNAME
+            or token in classes
+            or _term_covers_token(token, terms)
+        ):
+            continue
+        canonical = COMMUNITY_ALIASES.get(token)
+        if canonical:
+            key = canonical.lower()
+            if key not in seen_alias:
+                seen_alias.add(key)
+                aliases_found.append(canonical)
+            continue
+        if len(token) < 4 or token in seen_unknown:
+            continue
+        seen_unknown.add(token)
+        unknowns.append(raw if raw[:1].isupper() else token)
+    return aliases_found, unknowns
+
+
+def _dungeon_named(message: str, terms: list[dict], history: Optional[list[str]]) -> bool:
+    if any(term.get("kind") == "dungeon" for term in terms):
+        return True
+    from .dungeon_guide import extract_dungeon_query
+
+    name = extract_dungeon_query(message, history=history)
+    if not name:
+        return False
+    # "how do I complete it" captures the pronoun, not a dungeon title.
+    return name.strip().lower() not in {"it", "this", "that", "there", "one", "them"}
+
+
+def _missing_clarify(
+    decision: JevDecision,
+    message: str,
+    terms: list[dict],
+    history: Optional[list[str]],
+) -> Optional[str]:
+    """Ask for the one gap Jev named, after the catalog confirms it is unnamed.
+
+    A low intent score does not ask. `missing` has to clear MISSING_MIN, and
+    a class, item, dungeon, or player that is already in the message or the
+    wiki list is left alone.
+    """
+    if decision.gate not in ("standalone", "followup", "conflict", "stored"):
+        return None
+    if decision.missing_confidence < MISSING_MIN:
+        return None
+    gap = decision.missing
+    if gap in (None, "nothing"):
+        return None
+    if gap == "class":
+        if _mentioned_class(message, history):
+            return None
+        if any(term.get("kind") in ("boss", "dungeon") for term in terms) and not _class_wording(
+            message
+        ):
+            return None
+        if decision.intent not in _CLASS_NEEDED and not _class_wording(message):
+            return None
+        return CLASS_CLARIFY_TEXT
+    if gap == "dungeon":
+        if decision.intent not in ("dungeon", "portal"):
+            return None
+        if _dungeon_named(message, terms, history):
+            return None
+        return DUNGEON_CLARIFY_TEXT
+    if gap == "player":
+        if decision.intent != "player":
+            return None
+        from .player_lookup import extract_player_ign
+
+        if extract_player_ign(message, history=history) or confident_player_name(decision):
+            return None
+        return PLAYER_CLARIFY_TEXT
+    if gap != "item":
+        return None
+    aliases, unknowns = _item_subjects(message, terms)
+    if len(aliases) == 1 and not unknowns:
+        return f"Do you mean {aliases[0]}?"
+    if len(aliases) > 1:
+        return None
+    if len(unknowns) == 1:
+        shown = unknowns[0]
+        return f'I don\'t know "{shown}". Which item do you mean?'
+    if len(unknowns) > 1:
+        return ITEM_CLARIFY_TEXT
     return None
 
 

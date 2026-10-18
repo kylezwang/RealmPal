@@ -82,6 +82,7 @@ from ..services.game_names import format_known_terms, match_message_terms
 from ..services.jev_route import (
     STORED_KIND_INTENT,
     JevDecision,
+    accepted_nickname,
     canned_reply,
     clarify_reply,
     confident_player_name,
@@ -366,10 +367,23 @@ def _checkout_url_for(
         return None
 
 
-async def _stream_stored(text: str) -> AsyncGenerator[str, None]:
-    chunk = json.dumps({"content": text, "done": False, "stored": True})
+async def _stream_stored(
+    text: str, *, player_ign: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    extra: dict = {}
+    if player_ign:
+        extra["player_ign"] = player_ign
+    chunk = json.dumps({"content": text, "done": False, "stored": True, **extra})
     yield f"data: {chunk}\n\n"
-    yield f"data: {json.dumps({'content': '', 'done': True, 'stored': True})}\n\n"
+    yield f"data: {json.dumps({'content': '', 'done': True, 'stored': True, **extra})}\n\n"
+
+
+def _player_card_ign(stored: Optional[object]) -> Optional[str]:
+    """IGN for the UI character card. Only real player lookups set it."""
+    ign = str(getattr(stored, "player_ign", "") or "").strip()
+    if getattr(stored, "kind", "") != "player" or not ign:
+        return None
+    return ign
 
 
 def _log_jev_shadow(
@@ -426,9 +440,11 @@ def _log_jev_shadow(
         logger.bind(error=type(exc).__name__).warning("Jev shadow log failed")
 
 
-def _stored_response(text: str) -> StreamingResponse:
+def _stored_response(
+    text: str, *, player_ign: Optional[str] = None
+) -> StreamingResponse:
     return StreamingResponse(
-        _stream_stored(text),
+        _stream_stored(text, player_ign=player_ign),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -782,10 +798,17 @@ async def chat_stream(
     if not query_text and attachments:
         query_text = attachments[0].filename
     prior_reply_kind = "none"
+    prior_assistant = ""
     for msg in reversed(body.history[-10:]):
         if msg.role == "assistant":
-            prior_reply_kind = reply_kind(msg.content)
+            prior_assistant = msg.content or ""
+            prior_reply_kind = reply_kind(prior_assistant)
             break
+
+    agreed = accepted_nickname(query_text, prior_assistant)
+    if agreed:
+        logger.bind(session_id=body.session_id[:8]).info("Jev nickname confirmed")
+        return _stored_response(agreed)
 
     stored = None
     try:
@@ -839,7 +862,7 @@ async def chat_stream(
                 kind=stored.kind,
                 stored_key=stored.key,
             ).info("Chat served from stored answer")
-            return _stored_response(stored.text)
+            return _stored_response(stored.text, player_ign=_player_card_ign(stored))
         jev = checked
         jev_from_stored = True
         stored = None
@@ -851,7 +874,7 @@ async def chat_stream(
             kind=stored.kind,
             stored_key=stored.key,
         ).info("Chat served from stored answer")
-        return _stored_response(stored.text)
+        return _stored_response(stored.text, player_ign=_player_card_ign(stored))
 
     if not jev_from_stored:
         jev = await disambiguate(
@@ -900,7 +923,7 @@ async def chat_stream(
                 logger.exception("Jev player lookup failed")
                 looked = None
             if looked:
-                return _stored_response(looked.text)
+                return _stored_response(looked.text, player_ign=_player_card_ign(looked))
             forced_player = named_player
         if jev.intent_wins and jev.intent == "skin":
             try:

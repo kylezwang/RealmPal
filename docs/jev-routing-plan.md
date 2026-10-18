@@ -222,6 +222,8 @@ Short messages (Oct 18, 2026). When the message has at most `SHORT_WORDS` words,
 
 **6b. Player name, in `chat.py`, right after 6a.** If `intent == "player"` with `probabilities["player"] >= PLAYER_INTENT_MIN` (Oct 18, 2026; it was intent confidence at least `CHOICE_MIN`), and `player_name` is not `none` with `player_name_p >= PLAYER_MIN`, and `jev_route.is_game_name(redis, player_name)` is False, call `try_stored_reply(redis, f"Look up player {player_name}", history=[], ttl_seconds=..., player_ttl_seconds=...)`. If it returns a reply, stream it as a stored reply. Otherwise continue to Claude with `player_ign` set to that name.
 
+The stored SSE for `kind="player"` includes `player_ign` (Oct 18, 2026). The page fetches that account and attaches the same character card "Look up player" already uses: heading, fact lines, class rows, sprites, ranks. "Who is Nutz" does not match the lookup regex, so without this field the page rendered only the six fact bullets. The portraits are not part of the stored text.
+
 `is_game_name` is cache only. It returns True when the item cache has that name, the dungeon index matches it, or a cached dungeon page lists it as a drop source (`cached_drops_from_source`). Jev does not know the game's boss list: "who is thessal" scored player 0.70 to 0.75 with name probability 0.78 to 0.81, the same range as the real player Nightmvre. The `player_name` criteria also say a boss, NPC, item, class, or dungeon name is not a player, which moved "oryx" to `none` at 0.96.
 
 **6c. Slot override, `jev_route.forced_slots(decision, message, *, class_name, stat, player_ign, dungeon_name, named)`.** `named` is the slot-noun list `route_slots` already computes. Move that block into a helper `slot_graph.named_slots(message)` so both can call it. Return `None` (keep the regex route) unless `intent` confidence is at least `CHOICE_MIN`. Then:
@@ -386,12 +388,14 @@ Jev still cannot browse. Chat reads one Redis key, `wiki:game-names:v1`, built b
 
 Before a Jev call, chat matches the sentence against that key and sends at most six hits in `known_game_terms`, capped at 800 characters. A measured call grew from 4,492 characters to 4,560 when the Thessal line was included.
 
-When `JEV_MODE=on`, three free replies can replace a Claude turn. They do not fire on the turn after another clarifying reply.
+When `JEV_MODE=on`, these free replies can replace a Claude turn. They do not fire on the turn after another clarifying reply.
 
 - Class missing, and the sentence asks for damage on a weapon or which gear to use: "Which class are you asking about? A class name is enough, and I can answer from there." Rows 14 and 19 did this on all three repeats. A class already named in this turn or the recent history skips it. "what rings drop in the nest" does not match.
 - A name is both a wiki boss, dungeon, or item and a plausible player (`player` probability at least 0.45, or a confident player name): "Do you mean the boss Thessal the Mermaid Goddess, or a player named Thessal?"
 - "who is X" matches exactly one wiki name and the player probability is under 0.45: one sentence, no question. With the term in the request, "who is thessal" and "who is oryx" both did this on all three repeats (player probability 0.05 to 0.09). Without the term, Oryx still resolves to `none` and is not looked up.
 - Two specialist intents both at least 0.40, within 0.12, and neither at 0.80: "Are you asking about damage numbers, or about an item?" No tuned or held-out row hit this on the Oct 18 runs.
+- A one-word "what is X?" whose token is not on the wiki list. An exact community nickname asks "Do you mean Helm of the Juggernaut?" (`jugg` is that nickname in `COMMUNITY_ALIASES`). "Yes" to that question returns the item and an `[item:]` token, with no Claude call. A token with no nickname and no wiki hit asks which item, boss, or dungeon they mean. "What is Thessal?" still answers, because Thessal is on the list. "What is a white bag?" is more than one word, so it stays on the normal path. This is the guard against a model inventing Jug of the Undead for jugg. A player lookup ("What is Nutz?" with intent `player`) is not asked this way.
+- On every gated call, including a stored-card check, Jev also answers `missing`: `nothing`, `class`, `item`, `dungeon`, or `player`. A low intent score does not ask. `missing` has to clear `MISSING_MIN` (0.70), and the catalog has to agree the piece is unnamed. A class already in the sentence, a dungeon on the wiki list, a player name the lookup regex found, or an item word that is only English or a gear noun does not ask. One uncovered nickname proposes that item ("is jugg good on a new warrior?"). Two known nicknames ("cbow or lbow") do not ask. A sentence Jev marks `nothing` is not asked, even if a nickname is present.
 
 `PLAYER_MIN` is 0.65. On the three-repeat run, Nightmvre's name probability was 0.65, 0.70, and 0.71. The old 0.70 bar missed one of the three. No other row named a non-player token in that band.
 
@@ -439,6 +443,14 @@ First run, original criteria: 22/29 strict passes. "What data were you trained o
 Second run, criteria revised as noted above: 25/29 strict passes. With `STORE_KEEP_MIN` 0.18 the guild row is a keep, so the routing effect is 26/29. The other three misses do not change slots, as listed above. Model `jev-1.13.0`. `bool(typesafe_api_key)` was True. The key was not printed.
 
 ## History
+
+### Until Oct 18, 2026, before the missing-piece question
+
+Jev did not answer `missing`. A clarification for an unnamed item ran only on a one-word "what is X?". "is jugg good on a new warrior?" still went to Claude. Intent confidence was not, and is not, the signal for that ask.
+
+### Until Oct 18, 2026, before unknown "what is" questions
+
+The clarifying section said three free replies: class missing, boss-or-player, a wiki "who is" sentence, and a close intent tie. A one-word "what is X?" with no wiki hit still went to Claude. "What is jugg?" was answered as Jug of the Undead.
 
 ### Until Oct 18, 2026, before the wiki list
 
