@@ -29,6 +29,11 @@ Format: each version has technical notes, linked commits, migration guides (if n
 - **Wiki name list** (`api/services/game_names.py`): `wiki:game-names:v1`, rebuilt from Redis at the end of specialist warm and the weekly refresh. No Playwright on that path. Chat sends at most six matched names to Jev
 - **Clarifying replies** when `JEV_MODE=on`, stored and free, and never twice in a row: which class, boss-or-player, a one-line wiki identity for "who is X", or a tie between two intents. Guild lookup is not included
 
+### Fixed
+- **"Who is IGN" now attaches the character card.** `StoredReply.player_ign` is set from the scraped username. Stored player SSE chunks include `player_ign`. The web client fetches that profile when the user text did not already match a lookup (`web/lib/playerLookup.ts` `storedPlayerCardIgn`). Before this, Jev's stored reply was only the six fact bullets, because "Who is Nutz" never matched `extractPlayerLookup` and the portraits live on the UI card, not in the stored text.
+- **"What is jugg?" asks instead of inventing an item.** `_unknown_term_clarify` in `api/services/jev_route.py` runs on a one-word "what is X?" when that token is not on the wiki list. An exact `COMMUNITY_ALIASES` key proposes that item (`jugg` is Helm of the Juggernaut). Any other unknown token asks which item, boss, or dungeon. Claude is not called. "What is Thessal?" and "What is a white bag?" are unchanged.
+- **Jev names the missing piece on every gated call.** The `missing` choice is `nothing`, `class`, `item`, `dungeon`, or `player`, including stored-card checks. `MISSING_MIN` is 0.70. A clarification fires only when that piece is still absent from the sentence, the wiki list, or the nickname list. Intent confidence is not the trigger. "is jugg good on a new warrior?" proposes Helm of the Juggernaut. "cbow or lbow", "what is a white bag?", and a `missing=nothing` label do not ask.
+
 ### Tests
 - New in `api/tests/test_jev_route.py`: short-message rule, player-probability rule, `stored_fits` keep, cache key, inheritance, never-raise, game-name guard
 - Full suite: 769 passed on Oct 18, 2026

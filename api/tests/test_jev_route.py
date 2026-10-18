@@ -19,6 +19,7 @@ from api.services.jev_route import (
     OFF_TOPIC_TEXT,
     CLASS_CLARIFY_TEXT,
     canned_reply,
+    accepted_nickname,
     clarify_reply,
     disambiguate,
     forced_slots,
@@ -33,7 +34,12 @@ from api.services.realmshark import retrieve_build_knowledge
 from api.services.stored_answers import try_stored_reply
 from api.services.wiki_scaling import write_cached_item
 from api.tests.test_dps_specialist import _seed_turbine_bard
-from api.tests.test_stored_answers import CALLER, _FakeClient, _read_sse_text
+from api.tests.test_stored_answers import (
+    CALLER,
+    _FakeClient,
+    _read_sse_chunks,
+    _read_sse_text,
+)
 
 from .conftest import build_request
 
@@ -407,9 +413,11 @@ async def test_player_name_runs_stored_lookup(
             "/chat/stream",
             json={"message": "Who is samridelli", "session_id": "jev-player"},
         )
-        text = await _read_sse_text(response)
+        chunks = await _read_sse_chunks(response)
+        text = "".join(chunk.get("content") or "" for chunk in chunks)
     assert calls == []
-    assert "samridelli" in text.lower() or "Fame" in text
+    assert "Fame" in text
+    assert any(chunk.get("player_ign") == "samridelli" for chunk in chunks)
 
 
 @pytest.mark.asyncio
@@ -430,6 +438,7 @@ async def test_used_history_flag(redis_client, monkeypatch):
     assert followed is not None
     assert followed.kind == "player"
     assert followed.used_history is True
+    assert followed.player_ign == "Turbine"
     direct = await try_stored_reply(
         redis_client,
         "Look up player Turbine",
@@ -439,6 +448,7 @@ async def test_used_history_flag(redis_client, monkeypatch):
     )
     assert direct is not None
     assert direct.used_history is False
+    assert direct.player_ign == "Turbine"
 
 
 @pytest.mark.asyncio
@@ -871,6 +881,106 @@ def test_boss_or_player_question_needs_both_signals():
     assert clarify_reply(night, "who is Nightmvre", terms=[]) is None
 
 
+def test_what_is_unknown_nickname_asks_instead_of_guessing():
+    item = JevDecision(
+        called=True,
+        gate="stored",
+        intent="item_info",
+        intent_confidence=0.88,
+        probabilities={"item_info": 0.88, "other": 0.05},
+    )
+    assert clarify_reply(item, "What is jugg?") == "Do you mean Helm of the Juggernaut?"
+    assert clarify_reply(item, "What is blorf?") == (
+        'I don\'t know "blorf". Which item, boss, or dungeon do you mean?'
+    )
+    assert clarify_reply(item, "What is a white bag?") is None
+    assert clarify_reply(item, "What is fame?") is None
+    assert clarify_reply(item, "What is Thessal?", terms=THESSAL) is None
+    player = JevDecision(
+        called=True,
+        gate="standalone",
+        intent="player",
+        intent_confidence=0.9,
+        probabilities={"player": 0.9},
+        player_name="Nutz",
+        player_name_p=0.9,
+    )
+    assert clarify_reply(player, "What is Nutz?") is None
+    assert reply_kind("Do you mean Helm of the Juggernaut?") == "clarify"
+    assert reply_kind('I don\'t know "blorf". Which item, boss, or dungeon do you mean?') == "clarify"
+    assert clarify_reply(item, "What is jugg?", prior_reply_kind="clarify") is None
+    assert accepted_nickname("yes", "Do you mean Helm of the Juggernaut?") == (
+        "Helm of the Juggernaut\n\n[item:Helm of the Juggernaut]"
+    )
+    assert accepted_nickname(
+        "yes",
+        "Do you mean the boss Thessal the Mermaid Goddess, or a player named Thessal?",
+    ) is None
+    assert accepted_nickname("no", "Do you mean Helm of the Juggernaut?") is None
+
+
+def _gap(kind: str, confidence: float = 0.85, intent: str = "item_info") -> JevDecision:
+    return JevDecision(
+        called=True,
+        gate="followup",
+        intent=intent,
+        intent_confidence=0.88,
+        probabilities={intent: 0.88, "other": 0.05},
+        missing=kind,
+        missing_confidence=confidence,
+    )
+
+
+def test_missing_gap_asks_only_when_the_catalog_agrees():
+    from api.services.jev_route import DUNGEON_CLARIFY_TEXT, ITEM_CLARIFY_TEXT, PLAYER_CLARIFY_TEXT, _questions_for
+
+    item = _gap("item")
+    assert clarify_reply(item, "is jugg good on a new warrior?") == (
+        "Do you mean Helm of the Juggernaut?"
+    )
+    assert clarify_reply(item, "is blorf worth using?") == (
+        'I don\'t know "blorf". Which item do you mean?'
+    )
+    assert clarify_reply(item, "is cbow or lbow better?") is None
+    assert clarify_reply(item, "what is a white bag?") is None
+    assert clarify_reply(item, "What is Thessal?", terms=THESSAL) is None
+    assert clarify_reply(item, "how do I complete it?") is None
+    weak = _gap("item", 0.4)
+    assert clarify_reply(weak, "is jugg good?") is None
+
+    klass = _gap("class", intent="dps")
+    assert clarify_reply(klass, "how much damage does this do") == CLASS_CLARIFY_TEXT
+    assert clarify_reply(klass, "best attack wizard") is None
+    nest = [
+        {"name": "The Nest", "kind": "dungeon", "matched": "nest", "where": ""},
+    ]
+    assert clarify_reply(klass, "what rings drop in the nest", terms=nest) is None
+
+    dungeon = _gap("dungeon", intent="dungeon")
+    assert clarify_reply(dungeon, "how do I complete it") == DUNGEON_CLARIFY_TEXT
+    assert clarify_reply(dungeon, "how do I complete the nest", terms=nest) is None
+
+    player = _gap("player", intent="player")
+    assert clarify_reply(player, "what gear does he have") == PLAYER_CLARIFY_TEXT
+    assert clarify_reply(player, "Look up player Turbine") is None
+
+    nothing = _gap("nothing")
+    assert clarify_reply(nothing, "is jugg good?") is None
+    assert reply_kind(DUNGEON_CLARIFY_TEXT) == "clarify"
+    assert reply_kind(PLAYER_CLARIFY_TEXT) == "clarify"
+    assert reply_kind(ITEM_CLARIFY_TEXT) == "clarify"
+
+    for gate in ("standalone", "followup", "conflict", "stored"):
+        questions = _questions_for(gate, "is jugg good on a warrior?", "set")
+        assert set(questions["missing"]["criteria"]) == {
+            "nothing",
+            "class",
+            "item",
+            "dungeon",
+            "player",
+        }
+
+
 def test_close_intents_ask_only_on_a_real_tie():
     tie = JevDecision(
         called=True,
@@ -912,6 +1022,52 @@ async def test_known_terms_are_sent_with_the_jev_request(monkeypatch):
         known_terms="Thessal the Mermaid Goddess (boss, Ocean Trench)",
     )
     assert _Client.payload["state"]["known_game_terms"].startswith("Thessal")
+
+
+@pytest.mark.asyncio
+async def test_what_is_jugg_asks_and_skips_claude(
+    redis_client, anon_settings, monkeypatch
+):
+    _enable(anon_settings)
+    _patch_http(monkeypatch)
+    _Client.body = _answer("item_info", 0.88, {"item_info": 0.88, "other": 0.05})
+    client, calls = _stream_client(redis_client, anon_settings, monkeypatch)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={"message": "What is jugg?", "session_id": "jev-jugg"},
+        )
+        text = await _read_sse_text(response)
+    assert text == "Do you mean Helm of the Juggernaut?"
+    assert calls == []
+    quota = quota_for(None, build_request(peer=CALLER[0]), anon_settings)
+    assert await peek(redis_client, quota) == 0
+
+
+@pytest.mark.asyncio
+async def test_yes_after_nickname_skips_claude(
+    redis_client, anon_settings, monkeypatch
+):
+    _enable(anon_settings)
+    client, calls = _stream_client(redis_client, anon_settings, monkeypatch)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={
+                "message": "yes",
+                "session_id": "jev-yes",
+                "history": [
+                    {"role": "user", "content": "What is jugg?"},
+                    {
+                        "role": "assistant",
+                        "content": "Do you mean Helm of the Juggernaut?",
+                    },
+                ],
+            },
+        )
+        text = await _read_sse_text(response)
+    assert "[item:Helm of the Juggernaut]" in text
+    assert calls == []
 
 
 @pytest.mark.asyncio

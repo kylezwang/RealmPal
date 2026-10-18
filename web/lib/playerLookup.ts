@@ -152,6 +152,16 @@ export function extractPlayerLookup(message: string): string | null {
   return null;
 }
 
+/**
+ * IGN named on a stored player reply. "Who is Nutz" does not match
+ * extractPlayerLookup, so the character card only attaches when the
+ * stream says which account it looked up.
+ */
+export function storedPlayerCardIgn(raw: string | undefined | null): string | null {
+  const ign = sanitizeIgn(raw ?? "");
+  return isPlausibleIgn(ign) ? ign : null;
+}
+
 /** Reuse the last attached card on exalt / DPS / gear follow-ups that omit the IGN. */
 export function shouldReusePlayerCard(message: string): boolean {
   if (/exalt/i.test(message)) return true;

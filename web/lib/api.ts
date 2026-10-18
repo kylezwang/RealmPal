@@ -166,6 +166,8 @@ export interface ChatChunk {
   content: string;
   done: boolean;
   error?: string;
+  /** Set when this turn is a player lookup the UI should card. */
+  player_ign?: string;
 }
 
 /** Which bucket a quota was counted against: an account, or a client IP. */

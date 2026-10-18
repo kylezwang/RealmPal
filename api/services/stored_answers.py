@@ -326,6 +326,10 @@ class StoredReply:
     kind: str
     key: str = ""
     used_history: bool = False
+    # Set on kind="player" so the client can fetch the character card.
+    # "Who is Nutz" does not match the lookup regex, so the page otherwise
+    # renders only the fact bullets.
+    player_ign: str = ""
 
 
 def _noted(reply: Optional[StoredReply], used_history: bool) -> Optional[StoredReply]:
@@ -1544,6 +1548,7 @@ async def _player_reply(
         text=format_player_stored_reply(profile),
         kind="player",
         key=f"player:profile:v3:{ign.lower()}",
+        player_ign=(profile.username or ign).strip(),
     )
 
 
