@@ -35,6 +35,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Asking who a player is now shows their characters and gear, the same card as Look up player.",
       "A short \"what is\" question now asks which item you mean when the name is not already known, instead of guessing one.",
       "If a question is missing a class, item, dungeon, or player, RealmPal asks for that piece instead of guessing it.",
+      "A known item nickname, such as cbow for Coral Bow, is no longer treated as an off-topic question.",
     ],
   },
   {

@@ -954,23 +954,46 @@ def keep_stored(decision: JevDecision, stored_kind: str) -> bool:
     return decision.probabilities.get(label, 0.0) >= STORE_KEEP_MIN
 
 
-def canned_reply(decision: Optional[JevDecision], message: str = "") -> Optional[str]:
+def _known_game_token(message: str, terms: Optional[list[dict]] = None) -> bool:
+    """True when a word is already a wiki name or a community item nickname.
+
+    Off-topic must not win over that word. "cbow" is Coral Bow in the
+    nickname list even when Jev scores the sentence off-topic.
+    """
+    hits = list(terms or [])
+    token = _what_is_token(message)
+    if token and _term_covers_token(token, hits):
+        return True
+    from .item_aliases import COMMUNITY_ALIASES
+
+    return any(word in COMMUNITY_ALIASES for word in _words(message))
+
+
+def canned_reply(
+    decision: Optional[JevDecision],
+    message: str = "",
+    *,
+    terms: Optional[list[dict]] = None,
+) -> Optional[str]:
     """Canned text for a confident off-topic or about-RealmPal label.
 
     Never on the conflict gate: two RotMG detectors already fired. A
     message of a few words with off_topic as the top label uses a lower
     bar, because "Hu" carries too little text for a high score and a
-    Claude turn on it is pure cost.
+    Claude turn on it is pure cost. A known nickname or wiki name is not
+    off-topic. The clarifying reply gets that turn instead.
     """
     if decision is None or not decision.called:
         return None
     if decision.gate not in ("standalone", "followup"):
         return None
     off_topic = decision.probabilities.get("off_topic", 0.0)
-    if off_topic >= CANNED_MIN:
-        return OFF_TOPIC_TEXT
     if decision.probabilities.get("about_realmpal", 0.0) >= CANNED_MIN:
         return ABOUT_TEXT
+    if _known_game_token(message, terms):
+        return None
+    if off_topic >= CANNED_MIN:
+        return OFF_TOPIC_TEXT
     if (
         0 < len(_words(message)) <= SHORT_WORDS
         and decision.no_request is not None
@@ -1015,7 +1038,7 @@ def clarify_reply(
         return None
     if decision.gate not in ("standalone", "followup", "conflict", "stored"):
         return None
-    if canned_reply(decision, message):
+    if canned_reply(decision, message, terms=terms):
         return None
     hits = list(terms or [])
     named = _name_clarify(decision, message, hits)

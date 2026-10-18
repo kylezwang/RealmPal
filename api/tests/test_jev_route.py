@@ -881,6 +881,19 @@ def test_boss_or_player_question_needs_both_signals():
     assert clarify_reply(night, "who is Nightmvre", terms=[]) is None
 
 
+def test_known_nickname_is_not_called_off_topic():
+    decision = JevDecision(
+        called=True,
+        gate="followup",
+        intent="off_topic",
+        intent_confidence=0.69,
+        probabilities={"off_topic": 0.71, "item_info": 0.2},
+    )
+    assert canned_reply(decision, "What is cbow?") is None
+    assert clarify_reply(decision, "What is cbow?") == "Do you mean Coral Bow?"
+    assert canned_reply(decision, "What is a steroid") == OFF_TOPIC_TEXT
+
+
 def test_what_is_unknown_nickname_asks_instead_of_guessing():
     item = JevDecision(
         called=True,
@@ -1022,6 +1035,24 @@ async def test_known_terms_are_sent_with_the_jev_request(monkeypatch):
         known_terms="Thessal the Mermaid Goddess (boss, Ocean Trench)",
     )
     assert _Client.payload["state"]["known_game_terms"].startswith("Thessal")
+
+
+@pytest.mark.asyncio
+async def test_cbow_off_topic_label_still_asks(
+    redis_client, anon_settings, monkeypatch
+):
+    _enable(anon_settings)
+    _patch_http(monkeypatch)
+    _Client.body = _answer("off_topic", 0.69, {"off_topic": 0.71, "item_info": 0.2})
+    client, calls = _stream_client(redis_client, anon_settings, monkeypatch)
+    async with client as http:
+        response = await http.post(
+            "/chat/stream",
+            json={"message": "What is cbow?", "session_id": "jev-cbow"},
+        )
+        text = await _read_sse_text(response)
+    assert text == "Do you mean Coral Bow?"
+    assert calls == []
 
 
 @pytest.mark.asyncio
