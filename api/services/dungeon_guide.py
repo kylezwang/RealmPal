@@ -137,13 +137,13 @@ _KNOWN_PORTALS = (
 _HM_SHATTERS_TIP = (
     "To keep hardmode, kill the Source (the purple dome) during the clear to "
     "the second boss, Nox the Wild Shadow. After the dome, drag all 4 "
-    "branches/flames to the center. Do not mention wings — that mechanic is "
+    "branches/flames to the center. Do not mention wings - that mechanic is "
     "regular The Shatters, not Hardmode."
 )
 _HM_CHRYSALIS_NOTE = (
     "Chrysalis of Eternity is a very low chance from King Azamoth. "
     "Never call it a high chance, common, likely, or a high drop rate. "
-    "If the wiki says high chance, that is wrong — say very low chance."
+    "If the wiki says high chance, that is wrong - say very low chance."
 )
 _HM_AZAMOTH_NOTE = (
     "For your fight against King Azamoth, patience will be almost twice as "
@@ -1112,7 +1112,7 @@ def _media_instructions(media: dict) -> str:
         lines.append(
             "HARDMODE SHATTERS CORRECTIONS. These override RealmEye if it "
             "conflicts. Structure the route around the three Hard Mode bosses "
-            "only — Valen, then Nox, then King Azamoth and The Shattered Queen. "
+            "only - Valen, then Nox, then King Azamoth and The Shattered Queen. "
             "Do not write separate sections for The Bridge Sentinel, Twilight "
             "Archmage, or The Forgotten King as if they are still the bosses."
         )

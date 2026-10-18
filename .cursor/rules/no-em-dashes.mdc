@@ -5,14 +5,14 @@ alwaysApply: true
 
 # No em dashes
 
-Never use an em dash (—) anywhere: UI copy, changelog items, comments,
+Never use an em dash (U+2014) anywhere: UI copy, changelog items, comments,
 docs, commit messages, or replies to the user.
 
 Use a period, a comma, a colon, or a hyphen with spaces (` - `) instead.
 
 Good: "All done. Extra message unlocked for today."
-Bad: "All done — extra message unlocked for today."
+Bad: "All done" followed by an em dash and "extra message unlocked for today."
 
-Do not "clean up" an existing em dash by swapping in an en dash (–).
+Do not "clean up" an existing em dash by swapping in an en dash (U+2013).
 The only exception is matching punctuation that already exists in
 outside data (for example a RealmEye title), never in text we write.

@@ -2,7 +2,7 @@
 
 Chat reads Redis only. Weekly refresh / warm_specialists scrape
 https://www.realmeye.com/wiki/enchanting. Umi general-tab BIS is
-supplementary — RealmEye is the source of truth for numbers.
+supplementary - RealmEye is the source of truth for numbers.
 """
 from __future__ import annotations
 
@@ -567,7 +567,7 @@ async def retrieve_enchanting_brief(
     slot = infer_gear_slot(item_name or message)
     matched = filter_rolls(rolls, stat=stat, slot=slot, item_name=item_name)
     parts = [
-        "ENCHANTMENT AGENT — RealmEye /wiki/enchanting tables. "
+        "ENCHANTMENT AGENT - RealmEye /wiki/enchanting tables. "
         "Copy numbers from this chunk only. One unique enchant per item; "
         "single-stat flats cannot stack with another single-stat flat. "
         "Awakened enchants (e.g. Infernal Anger, Hellfire Edge) each only "
@@ -612,7 +612,7 @@ async def retrieve_enchanting_brief(
         excerpt = umi_enchant_excerpt(umi, item_name=item_name)
         if excerpt:
             parts.append(
-                "SUPPLEMENTARY — UmiEnjoyers BIS enchant notes "
+                "SUPPLEMENTARY - UmiEnjoyers BIS enchant notes "
                 "(community picks, not RealmEye numbers).\n" + excerpt
             )
     return "\n".join(parts)

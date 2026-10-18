@@ -4,7 +4,7 @@ Chat LLM client.
 Production uses Microsoft Foundry's Anthropic Messages surface
 (`https://<resource>.services.ai.azure.com/anthropic`). Direct Anthropic is
 the local fallback until that resource exists. The OpenAI-shaped Foundry
-path (`/openai/deployments/...`) is rejected — mixing those produces 404s
+path (`/openai/deployments/...`) is rejected - mixing those produces 404s
 and is also a way to point prompts at the wrong host.
 
 Endpoint strings are allowlisted so a poisoned FOUNDRY_BASE_URL cannot

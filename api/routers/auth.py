@@ -8,7 +8,7 @@ that is wired, a password is cheaper and simpler.
 
 A successful register or sign-in mints the same session JWT that
 `/payments/verify` does. `paid` is always looked up in
-api/services/entitlements.py — registering does not grant the paid tier.
+api/services/entitlements.py - registering does not grant the paid tier.
 """
 from typing import Annotated
 
@@ -73,7 +73,7 @@ async def sign_in(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict:
     # `email` on the body is the login identifier: a real email, or the
-    # account IGN. Length-check only on the password — a miss and a wrong
+    # account IGN. Length-check only on the password - a miss and a wrong
     # password must look the same, so we do not reject a too-short password
     # before the dummy verify.
     identifier = (body.email or "").strip()
@@ -106,7 +106,7 @@ async def request_sign_in_link(
 ) -> dict:
     """
     Email a sign-in link for `body.email`. Optional fallback, not the
-    primary path — that is `/auth/signin`.
+    primary path - that is `/auth/signin`.
 
     Always reports success. This is passwordless and open to any address,
     so there is no "account already exists" state worth leaking, and no
@@ -148,7 +148,7 @@ async def get_preferences(
 ) -> dict:
     """
     Default is on. Guests without a session get the default rather than an
-    error — Settings can render the toggle before anyone has signed in.
+    error - Settings can render the toggle before anyone has signed in.
     """
     email = email_from_session_header(authorization, settings)
     if not email:

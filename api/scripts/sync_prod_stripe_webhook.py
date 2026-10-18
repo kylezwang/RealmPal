@@ -1,10 +1,18 @@
-"""Point Stripe at the production webhook and store the signing secret.
+"""Point Stripe at a webhook URL and store the signing secret.
 
 Does not print secrets. Uses the Stripe key already in Settings, then
 writes only the webhook signing secret onto the Container App.
+
+Required environment variables. There are no defaults, because this script
+changes a live Stripe account:
+
+  STRIPE_WEBHOOK_URL      full URL, including /payments/webhook
+  AZURE_CONTAINER_APP     Container App name
+  AZURE_RESOURCE_GROUP    resource group name
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -12,26 +20,25 @@ import stripe
 
 from api.config import Settings
 
-WEBHOOK_URL = (
-    "https://realmpal-api.mangoflower-33aeb683.eastus2.azurecontainerapps.io"
-    "/payments/webhook"
-)
 EVENTS = (
     "checkout.session.completed",
     "customer.subscription.updated",
     "customer.subscription.deleted",
 )
-APP = "realmpal-api"
-GROUP = "rg-realmpal"
 # Container App secret names cannot be longer than 20 characters.
 SECRET_NAME = "stripe-whsec"
+
+
+def _required(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"{name} is not set")
+    return value
 
 
 def _az(args: list[str], extra_env: dict[str, str] | None = None) -> None:
     env = None
     if extra_env:
-        import os
-
         env = os.environ.copy()
         env.update(extra_env)
     az = "az.cmd" if sys.platform == "win32" else "az"
@@ -50,6 +57,10 @@ def _az(args: list[str], extra_env: dict[str, str] | None = None) -> None:
 
 
 def main() -> None:
+    webhook_url = _required("STRIPE_WEBHOOK_URL")
+    app = _required("AZURE_CONTAINER_APP")
+    group = _required("AZURE_RESOURCE_GROUP")
+
     settings = Settings()
     key = settings.stripe_secret_key.strip()
     if not key or "..." in key:
@@ -58,7 +69,7 @@ def main() -> None:
 
     existing = None
     for endpoint in stripe.WebhookEndpoint.list(limit=20).auto_paging_iter():
-        if endpoint.url == WEBHOOK_URL:
+        if endpoint.url == webhook_url:
             existing = endpoint
             break
         if "/payments/webhook" in (endpoint.url or ""):
@@ -66,7 +77,7 @@ def main() -> None:
 
     if existing is None:
         created = stripe.WebhookEndpoint.create(
-            url=WEBHOOK_URL,
+            url=webhook_url,
             enabled_events=list(EVENTS),
             description="RealmPal production API",
         )
@@ -82,7 +93,7 @@ def main() -> None:
         print("webhook already existed; recreate to mint a new secret")
         stripe.WebhookEndpoint.delete(existing.id)
         created = stripe.WebhookEndpoint.create(
-            url=WEBHOOK_URL,
+            url=webhook_url,
             enabled_events=list(EVENTS),
             description="RealmPal production API",
         )
@@ -98,9 +109,9 @@ def main() -> None:
             "secret",
             "set",
             "--name",
-            APP,
+            app,
             "--resource-group",
-            GROUP,
+            group,
             "--secrets",
             f"{SECRET_NAME}={secret}",
             "--output",
@@ -112,9 +123,9 @@ def main() -> None:
             "containerapp",
             "update",
             "--name",
-            APP,
+            app,
             "--resource-group",
-            GROUP,
+            group,
             "--set-env-vars",
             f"STRIPE_WEBHOOK_SECRET=secretref:{SECRET_NAME}",
             "--output",

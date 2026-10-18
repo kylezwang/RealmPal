@@ -111,7 +111,7 @@ async def warm_hub_indexes(
 
 
 def should_warm_item(row: dict) -> bool:
-    """T7 / ST / UT only. Skip T0–T6, rehearsal clones, and dotted acronyms."""
+    """T7 / ST / UT only. Skip T0-T6, rehearsal clones, and dotted acronyms."""
     name = (row.get("name") or "").strip()
     if not name or _SKIP_NAME.search(name):
         return False

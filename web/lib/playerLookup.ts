@@ -19,7 +19,7 @@ import { CLASS_NAMES } from "./loadoutShowcase";
 
 export const PLAYER_LOOKUP_RE = /(?:\/player|look\s*up\s*player|player)\s+([A-Za-z0-9_]{1,20})\b/i;
 
-/** RotMG IGNs are 1–20 letters, digits, or underscore. Nothing else. */
+/** RotMG IGNs are 1-20 letters, digits, or underscore. Nothing else. */
 export const IGN_MAX_LENGTH = 20;
 const IGN_SAFE = /[^A-Za-z0-9_]/g;
 

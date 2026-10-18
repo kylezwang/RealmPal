@@ -132,7 +132,7 @@ async def test_player_lookup_skips_wiki_and_uses_short_ttl(
         seen["player_ttl"] = kwargs.get("player_ttl_seconds")
         seen["class_name"] = kwargs.get("class_name")
         seen["player_ign"] = kwargs.get("player_ign")
-        return "PLAYER AGENT — Turbine"
+        return "PLAYER AGENT - Turbine"
 
     monkeypatch.setattr(realmshark, "load_graph", boom)
     monkeypatch.setattr(realmshark, "cached_class_wiki_scaling", boom)

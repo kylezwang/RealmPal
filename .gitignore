@@ -110,5 +110,6 @@ playwright/.auth/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 *.swp
 *~

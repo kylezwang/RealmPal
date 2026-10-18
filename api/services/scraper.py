@@ -960,7 +960,7 @@ _ITEM_PAGE_JS = """
 
 
 # Only the Name-column link on dedicated equipment hubs (/wiki/lutes, /wiki/traps).
-# Effect cells link status pages like "DEF Decrease" — those are not items.
+# Effect cells link status pages like "DEF Decrease" - those are not items.
 _ABILITY_HUB_JS = """
 (root) => {
   const abs = (href) => {

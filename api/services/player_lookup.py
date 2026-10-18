@@ -1,7 +1,7 @@
 """Player-lookup specialist helpers.
 
 Detects a RealmEye IGN in chat and formats the scraped account summary
-(Fame, Guild, etc.). Character loadouts stay on the UI card — they are
+(Fame, Guild, etc.). Character loadouts stay on the UI card - they are
 not handed to the model, so it cannot reprint them as a gear table.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from .scraper import scrape_player_profile, scrape_player_pet
 PLAYER_CACHE_PREFIX = "player:profile:v3:"
 PLAYER_PET_CACHE_PREFIX = "player:pet:v1:"
 # Wiki specialist stores last a week. A player row must never inherit that
-# TTL — fame/gear change constantly and are scraped on lookup.
+# TTL - fame/gear change constantly and are scraped on lookup.
 MAX_PLAYER_CACHE_SECONDS = 15 * 60
 
 PLAYER_LOOKUP_RE = re.compile(

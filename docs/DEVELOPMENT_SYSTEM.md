@@ -7,7 +7,7 @@
 
 ## The Three-Changelog System
 
-### 1️⃣ BACKLOG.md (Forward-Looking Product Roadmap)
+### 1. BACKLOG.md (Forward-Looking Product Roadmap)
 
 **Role:** Where are we going? What's next?
 
@@ -25,7 +25,7 @@
 
 ---
 
-### 2️⃣ CHANGELOG.md (Developer Technical Archive)
+### 2. CHANGELOG.md (Developer Technical Archive)
 
 **Role:** What changed? How? Migration guide?
 
@@ -45,7 +45,7 @@
 
 ---
 
-### 3️⃣ web/lib/changelog.ts (User-Facing UI Changelog)
+### 3. web/lib/changelog.ts (User-Facing UI Changelog)
 
 **Role:** What's new in the app?
 
@@ -122,17 +122,17 @@ Delete the entire "Enchantment specialist" section from BACKLOG.md. It now lives
 
 | File | Purpose | Audience | Tracked? |
 |---|---|---|---|
-| **BACKLOG.md** | Forward roadmap, current work | Team leads, product | ✅ YES |
-| **CHANGELOG.md** | Technical release notes, migrations | Developers, DevOps | ✅ YES |
-| **web/lib/changelog.ts** | User-facing "What's new" | End users (app UI) | ✅ YES |
-| **README.md** | Project overview, setup | Developers, new readers | ✅ YES |
-| **docs/DEPLOYMENT_*.md** | Azure portal steps, architecture | DevOps | ✅ YES |
-| **docs/chat-quality-benchmarks.md** | Performance traces, stored-answer map | Developers | ✅ YES |
-| **docs/pricing.md** (gitignored) | Unit-econ, business logic | Internal only | ❌ NO |
-| **docs/business.md** (gitignored) | Business assumptions | Internal only | ❌ NO |
-| **.cursor/rules/development-workflow.mdc** | This workflow guide | Developers | ✅ YES |
-| **.cursor/rules/doc-history.mdc** | Date-stamped history preservation | Developers | ✅ YES |
-| **.cursor/rules/changelog.mdc** | User changelog entry rules | Developers | ✅ YES |
+| **BACKLOG.md** | Forward roadmap, current work | Team leads, product | YES |
+| **CHANGELOG.md** | Technical release notes, migrations | Developers, DevOps | YES |
+| **web/lib/changelog.ts** | User-facing "What's new" | End users (app UI) | YES |
+| **README.md** | Project overview, setup | Developers, new readers | YES |
+| **docs/DEPLOYMENT_*.md** | Azure portal steps, architecture | DevOps | YES |
+| **docs/chat-quality-benchmarks.md** | Performance traces, stored-answer map | Developers | YES |
+| **docs/pricing.md** (gitignored) | Unit-econ, business logic | Internal only | NO |
+| **docs/business.md** (gitignored) | Business assumptions | Internal only | NO |
+| **.cursor/rules/development-workflow.mdc** | This workflow guide | Developers | YES |
+| **.cursor/rules/doc-history.mdc** | Date-stamped history preservation | Developers | YES |
+| **.cursor/rules/changelog.mdc** | User changelog entry rules | Developers | YES |
 
 ---
 
@@ -173,7 +173,7 @@ Paid Claude pool was 90. Daily fuse was 200.
 
 ## Anti-Patterns (Don't Do These)
 
-### ❌ Stale BACKLOG
+### Stale BACKLOG
 
 ```markdown
 ## Enchantment specialist (started, not finished)
@@ -186,7 +186,7 @@ Paid Claude pool was 90. Daily fuse was 200.
 
 **Fix:** Remove it entirely once complete. It's in CHANGELOG.md now.
 
-### ❌ User Details in CHANGELOG.md
+### User Details in CHANGELOG.md
 
 ```markdown
 ### Added
@@ -199,7 +199,7 @@ Paid Claude pool was 90. Daily fuse was 200.
 - CHANGELOG: "Entitlements store subscription status; on-demand spend cap configurable"
 - UI: "Pro now lets you set a spending limit for extra messages"
 
-### ❌ History Duplication
+### History Duplication
 
 ```markdown
 # BACKLOG.md
@@ -218,7 +218,7 @@ Wire warm_enchanting_store...
 
 **Fix:** Remove "Done" section and history from BACKLOG. Link to CHANGELOG.md if needed later.
 
-### ❌ Forgetting Commits in CHANGELOG.md
+### Forgetting Commits in CHANGELOG.md
 
 ```markdown
 ## [2026.09.15]

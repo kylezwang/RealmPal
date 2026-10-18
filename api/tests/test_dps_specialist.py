@@ -787,11 +787,11 @@ def test_reconstruct_weapon_damage_uses_shark_debug_multipliers():
 
 
 def test_en_dash_wiki_damage_range():
-    lo, hi = parse_damage_range("155–185 (average: 170 / total: 680)")
+    lo, hi = parse_damage_range("155-185 (average: 170 / total: 680)")
     assert lo == 155
     assert hi == 185
     triangle = parse_ability_formula(
-        {"Damage": "300–450 (+25 per ATT over 55) (average: 375)", "Shots": "3"}
+        {"Damage": "300-450 (+25 per ATT over 55) (average: 375)", "Shots": "3"}
     )
     assert triangle is not None
     assert triangle["avg"] == 375
@@ -990,8 +990,8 @@ def test_ability_damage_comes_from_the_damage_row_not_an_effect_boost():
                 "ATT Boost Duration: 4 seconds"
             ),
             "Shots": "3",
-            "Damage": "300–450 (+25 per ATT over 55) (average: 375)",
-            "Total Damage": "900–1,350 (average: 1,125)",
+            "Damage": "300-450 (+25 per ATT over 55) (average: 375)",
+            "Total Damage": "900-1,350 (average: 1,125)",
         }
     )
     assert triangle is not None
@@ -1810,7 +1810,7 @@ def test_flavor_cursed_is_not_the_curse_status():
                 "Self Only: On use, quadruples shot speed for 4 seconds.\n"
                 "ATT Boost: +5 (+1 per 8 WIS over 75) ATT"
             ),
-            "Damage": "300–450 (+25 per ATT over 55) (average: 375)",
+            "Damage": "300-450 (+25 per ATT over 55) (average: 375)",
             "Shots": "3",
             "MP Cost": "100",
         },

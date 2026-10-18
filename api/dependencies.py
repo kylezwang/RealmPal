@@ -85,7 +85,7 @@ async def consume_lookup_quota(
     Count one scrape-triggering lookup, or raise 429.
 
     Cache hits must not call this. The limiter exists because a miss launches
-    Playwright behind a single-Chromium semaphore — not because reading Redis
+    Playwright behind a single-Chromium semaphore - not because reading Redis
     is expensive. A dungeon guide that fans out 30 warmed item cards used to
     burn the anonymous 12/min window and 429 the rest of the grid.
     """
@@ -121,7 +121,7 @@ async def enforce_lookup_rate_limit(
     FastAPI dependency for routes that always scrape-or-equivalent.
 
     Item cards check the warm store first and call `consume_lookup_quota`
-    only on a miss — see api/routers/items.py.
+    only on a miss - see api/routers/items.py.
     """
     await consume_lookup_quota(request, settings, redis, user)
 

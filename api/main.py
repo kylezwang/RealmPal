@@ -101,7 +101,7 @@ def _warn_on_default_secrets(settings) -> None:
         logger.warning(
             "JWT_SECRET is still the shipped placeholder. Sessions, magic links, "
             "and (via its fallback) hashed rate-limit keys are only as strong as "
-            "this secret — rotate it before this deployment is publicly reachable."
+            "this secret - rotate it before this deployment is publicly reachable."
         )
     if not settings.pii_hash_secret:
         logger.warning(
@@ -169,7 +169,7 @@ async def _ensure_specialist_stores(settings) -> None:
     """Fill empty wiki/DPS specialist stores in the background.
 
     Chat never scrapes. A new Redis (first deploy, new namespace) starts
-    empty — warm those stores once. Already-filled keys are left alone
+    empty - warm those stores once. Already-filled keys are left alone
     until the weekly refresh job. Player profiles are never warmed.
     """
     from .dependencies import _get_redis

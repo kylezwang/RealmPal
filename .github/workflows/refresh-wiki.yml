@@ -1,5 +1,5 @@
 # Not a PR check. A full specialist warm (hubs, items, dungeons, DPS)
-# can take over an hour and writes to the deployment Redis/Qdrant —
+# can take over an hour and writes to the deployment Redis/Qdrant -
 # it must not run on every push.
 #
 # Once a week (Monday 08:00 UTC) plus manual "Run workflow".

@@ -28,7 +28,7 @@ function isLoadoutTableHeader(line: string): boolean {
   return n.includes("|") && /\brank\b/.test(n) && /\b(player|dps)\b/.test(n) && /\bring\b/.test(n);
 }
 
-/** RealmShark tables and their section stay verbatim — worn T6 rings are real. */
+/** RealmShark tables and their section stay verbatim - worn T6 rings are real. */
 function partitionLoadoutRegions(content: string): { keep: boolean; text: string }[] {
   const lines = content.split("\n");
   const parts: { keep: boolean; text: string }[] = [];

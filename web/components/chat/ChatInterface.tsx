@@ -902,7 +902,7 @@ export function ChatInterface() {
             return updated;
           });
           // Drops render on the dungeon card. Do not also fetch each one
-          // as an item profile — HMS has 20+ uniques and trips the lookup cap.
+          // as an item profile - HMS has 20+ uniques and trips the lookup cap.
         })
         .catch(() => {
           // Text guide still streams from the dungeon specialist.
@@ -1141,7 +1141,7 @@ export function ChatInterface() {
       try {
         window.localStorage.setItem(SUGGESTIONS_HIDDEN_KEY, next ? "0" : "1");
       } catch {
-        // Private mode / storage disabled — not worth failing over.
+        // Private mode / storage disabled - not worth failing over.
       }
       return next;
     });

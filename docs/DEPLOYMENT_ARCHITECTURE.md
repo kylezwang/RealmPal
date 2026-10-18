@@ -155,15 +155,15 @@ Post-Launch
 
 | Resource | Est. Cost | Notes |
 |---|---|---|
-| Container Apps | $50–100 | 1-3 replicas, auto-scale |
-| PostgreSQL | $50–150 | Single server, flexible compute |
-| Redis | $40–80 | Included in Container Apps or standalone |
-| Qdrant | $30–100 | Self-hosted on VM or managed service |
+| Container Apps | $50-100 | 1-3 replicas, auto-scale |
+| PostgreSQL | $50-150 | Single server, flexible compute |
+| Redis | $40-80 | Included in Container Apps or standalone |
+| Qdrant | $30-100 | Self-hosted on VM or managed service |
 | Key Vault | $1 | Per vault, minimal |
-| Foundry (Sonnet 4.6) | $0.003/1K tokens | Depends on usage; ~$200–500/mo if 100K messages |
-| Entra CIAM | Free–$5 | Free up to 50K active users |
+| Foundry (Sonnet 4.6) | $0.003/1K tokens | Depends on usage; ~$200-500/mo if 100K messages |
+| Entra CIAM | Free-$5 | Free up to 50K active users |
 | Stripe | 2.9% + $0.30 | Per transaction (billing) |
-| **Total** | ~**$200–800/mo** | Depends on usage (Foundry is biggest variable) |
+| **Total** | ~**$200-800/mo** | Depends on usage (Foundry is biggest variable) |
 
 ---
 

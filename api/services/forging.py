@@ -327,7 +327,7 @@ async def retrieve_forging_brief(
     url = store.get("url") or SOURCE_URL
 
     parts = [
-        "FORGE AGENT — RealmEye /wiki/forge only. "
+        "FORGE AGENT - RealmEye /wiki/forge only. "
         "Forging (Blacksmith / Kanayama) is not Enchanting (Enchanter). "
         "Never cite /wiki/enchanting or enchant roll rarity for forge answers. "
         "Copy rules from this chunk only. "

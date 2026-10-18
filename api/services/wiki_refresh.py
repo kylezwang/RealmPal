@@ -4,7 +4,7 @@ Weekly RealmEye wiki refresh.
 Hubs and item/dungeon pages barely change. Specialists should read the
 Qdrant/Redis corpus instead of launching Chromium on every chat turn.
 This job re-scrapes the seeded hubs and stamps Redis so you can see when
-the last pass ran. It never scrapes player profiles — those stay on the
+the last pass ran. It never scrapes player profiles - those stay on the
 live on-request path with a short TTL.
 """
 from __future__ import annotations

@@ -30,7 +30,7 @@ def _print_status(snapshot: dict) -> None:
     missing = []
     for row in snapshot["abilities"]:
         hours = row["ttl_seconds"] / 3600
-        ttl = f"{hours:.1f}h" if row["ttl_seconds"] else "—"
+        ttl = f"{hours:.1f}h" if row["ttl_seconds"] else "-"
         print(f"  {row['class_name']:<14} {row['abilities']:>9}  {ttl}")
         if row["abilities"] <= 0:
             missing.append(row["class_name"])
