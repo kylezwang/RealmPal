@@ -28,6 +28,21 @@ export interface ChangelogEntry {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2026.10.18",
+    date: "Oct 18, 2026",
+    items: [
+      "If a question needs a class, or a name could be a boss or a player, RealmPal asks a short question instead of guessing.",
+    ],
+  },
+  {
+    version: "2026.10.17",
+    date: "Oct 17, 2026",
+    items: [
+      "Asking for a full class build, such as best Attack Sorcerer, no longer repeats an earlier answer about a single item.",
+      "Correcting a class name after a build question no longer opens the skin preview.",
+    ],
+  },
+  {
     version: "2026.09.22",
     date: "Sep 22, 2026",
     items: [

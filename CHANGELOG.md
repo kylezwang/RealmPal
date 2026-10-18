@@ -11,6 +11,53 @@ Format: each version has technical notes, linked commits, migration guides (if n
 
 ---
 
+## [2026.10.18] - Oct 18, 2026
+
+### Changed
+- **Jev router hardened for production** (`api/services/jev_route.py`, `api/routers/chat.py`), still `JEV_MODE=off` by default:
+  - Stored follow-up cards keep or drop on a per-kind `stored_fits` yes/no (`STORED_FIT_MIN` 0.50). The intent probability (`STORE_KEEP_MIN` 0.18) is only a fallback
+  - Short messages (3 words or fewer) add a `no_request` yes/no. Greetings and noise get the canned reply. Short game phrases do not
+  - Player lookups key on `probabilities["player"]` (0.62) and the name probability (0.65; it was 0.70 until the three-repeat run, where Nightmvre's name score hit 0.65 once), and skip names on the wiki list when that list exists. Before the first warm, `is_game_name` still falls back to the item cache, dungeon index, and cached drop tables
+  - A confident `build` intent or a `dps` continuation no longer blocks class and stat inheritance
+  - Cache key includes the question text, so criteria edits never serve an old label
+  - `disambiguate` and `verify_stored` never raise
+  - `Jev shadow` log uses the same inherited parse as the real route and adds `would_player`, `would_skin_store`, `would_drop_stored`
+  - `off_topic` and `other` criteria name pets, trading, guilds, fame, bags, events, and the realm as in-game
+- **Live eval** scores routing effect and repeats each call. One repeat: 29/29 tuned, 24/24 held out. Three repeats the same afternoon: 29/29 tuned, 24/25 held out (Nightmvre name probability 0.65 once). The script sets `use_cache=False`, so those repeats are why the TypeSafe day total climbed. One request is about 1,100 tokens. `known_game_terms` added 48 characters on the Thessal row
+
+### Added
+- **Wiki name list** (`api/services/game_names.py`): `wiki:game-names:v1`, rebuilt from Redis at the end of specialist warm and the weekly refresh. No Playwright on that path. Chat sends at most six matched names to Jev
+- **Clarifying replies** when `JEV_MODE=on`, stored and free, and never twice in a row: which class, boss-or-player, a one-line wiki identity for "who is X", or a tie between two intents. Guild lookup is not included
+
+### Tests
+- New in `api/tests/test_jev_route.py`: short-message rule, player-probability rule, `stored_fits` keep, cache key, inheritance, never-raise, game-name guard
+- Full suite: 769 passed on Oct 18, 2026
+
+## [2026.10.17] - Oct 17, 2026
+
+### Added
+- **Jev routing disambiguator** (`api/services/jev_route.py`):
+  - `JEV_MODE` is `off`, `shadow`, or `on`. Default `off`. Pinned model `jev-1.13.0`, official `https://api.typesafe.ai/v1/systemone` only
+  - Calls only when regex detectors conflict, a short follow-up matches nothing, or the sentence names no class and no stat. A stored hit is checked only when it matched because of an earlier turn
+  - Canned off-topic and about-RealmPal replies skip Claude and quota when `on` and the probability clears `CANNED_MIN` (0.70)
+  - A confident player name is sent through the stored player lookup
+  - Redis cache `jev:route:v1:{sha256}` for one day. Timeout, 429, 529, and bad JSON leave today's route in place
+  - Shadow logs `Jev route` and `Jev shadow` with gate, intent, and slot lists. Message text is not logged
+- **Live eval** `api/scripts/eval_jev_routing.py` (real TypeSafe calls, not pytest)
+
+### Fixed
+- **"I meant wizard" after a build no longer opens the skin preview.** `_history_has_outfit` is true only when an earlier turn was itself a skin question or already contains a `[skin:` token
+- **"Look up player IGN"** no longer scrapes a player named IGN. `ign`, `name`, and `username` are stopwords
+- **One-item scaling briefs** are not replayed as a full class build. A single-item scaling paragraph saved under `wiki:build:v3:{class}:{stat}` is deleted, and `maybe_mint_brief` refuses to store another one
+
+### Ops
+- New Container App settings when this is deployed: `JEV_MODE` and `TYPESAFE_API_KEY`. Keep the key in Key Vault once Key Vault references exist (BACKLOG item 6). Leave `JEV_MODE=shadow` for a week before `on`
+- Chat text is sent to TypeSafe on gated turns only. There is no privacy page listing processors yet. If one is added, list TypeSafe
+
+### Tests
+- `api/tests/test_jev_route.py`, `api/tests/test_player_lookup.py`, and two skin cases in `api/tests/test_skin_visualizer.py`
+- Full suite: 760 passed on Oct 17, 2026
+
 ## [2026.09.22] - Sep 22, 2026
 
 ### Added

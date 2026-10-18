@@ -10,7 +10,7 @@ This directory contains all project documentation. Most files are tracked in git
 | `DEPLOYMENT_QUICK_REFERENCE.md` | Quick summary of priorities and commands |
 | `DEPLOYMENT_ARCHITECTURE.md` | Infrastructure diagrams and data flows |
 | `chat-quality-benchmarks.md` | Chat response quality traces and stored-answer map |
-| `jev-routing-plan.md` | Saved plan (Sep 23, 2026): optional Jev disambiguator for ambiguous chat routing |
+| `jev-routing-plan.md` | Build spec (wiki list and clarifying replies Oct 18, 2026; first saved Sep 23): optional Jev disambiguator for ambiguous chat routing |
 
 ## Private Documentation (Gitignored)
 
@@ -41,4 +41,12 @@ This directory contains all project documentation. Most files are tracked in git
 - **Developers (you):** Read `CHANGELOG.md`, `BACKLOG.md`, and these docs
 - **Users:** See "What's new" in the app (from `web/lib/changelog.ts`)
 - **Operators:** See `DEPLOYMENT_GUIDE.md` for production setup
+
+## History
+
+### Until Oct 18, 2026
+The `jev-routing-plan.md` row read: "Build spec (revised Oct 17, 2026; first saved Sep 23): optional Jev disambiguator for ambiguous chat routing".
+
+### Until Oct 17, 2026
+The `jev-routing-plan.md` row read: "Saved plan (Sep 23, 2026): optional Jev disambiguator for ambiguous chat routing".
 

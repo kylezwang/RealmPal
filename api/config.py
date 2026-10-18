@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     # Cheaper pass when the wiki/RAG store already has the facts.
     claude_light_model: str = "claude-haiku-4-5"
 
+    # Jev (TypeSafe System One) only disambiguates routing. "shadow" calls
+    # it and logs what it would change without acting. Needs
+    # TYPESAFE_API_KEY. The model id is pinned so thresholds stay valid.
+    jev_mode: str = "off"  # "off" | "shadow" | "on"
+    typesafe_api_key: str = ""
+    jev_model: str = "jev-1.13.0"
+    jev_timeout_seconds: float = 0.8
+    jev_cache_seconds: int = 86400
+
     # Foundry resource name *or* full base URL, never both. Resource becomes
     # https://<resource>.services.ai.azure.com/anthropic/
     foundry_resource: str = ""

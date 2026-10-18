@@ -811,13 +811,21 @@ async def retrieve_build_knowledge(
     ttl_seconds: int,
     player_ttl_seconds: int = 120,
     history: Optional[list[str]] = None,
+    jev=None,
+    player_ign_override: Optional[str] = None,
 ) -> str:
     """
     Structured graph slice for build/item questions. Empty string when the
     message isn't about gear or a class/stat, so we don't spend tokens.
     """
-    class_name, stat, buildish = parse_query(message, history=history)
-    player_ign = extract_player_ign(message, history=history)
+    from .jev_route import dps_continues, forced_slots, specialist_overrides
+    from .slot_graph import named_slots
+
+    if jev is not None and jev.block_class_stat_inherit:
+        class_name, stat, buildish = parse_query(message)
+    else:
+        class_name, stat, buildish = parse_query(message, history=history)
+    player_ign = player_ign_override or extract_player_ign(message, history=history)
     dungeon_name = extract_dungeon_query(message, history=history)
     portal_ask = extract_portal_source_query(message)
     if portal_ask:
@@ -866,6 +874,18 @@ async def retrieve_build_knowledge(
         and not (class_name and stat)
         and not dps_follow_up
     )
+    overrides = specialist_overrides(jev)
+    if overrides:
+        dps_follow_up = overrides["dps_follow_up"]
+        set_visualize = overrides["set_visualize"]
+        skin_visualize = overrides["skin_visualize"]
+        item_scale_only = overrides["item_scale_only"]
+        forge_only = overrides["forge_only"]
+        enchant_only = overrides["enchant_only"]
+        if overrides["buildish"]:
+            buildish = True
+        elif jev is not None and jev.intent == "ability":
+            buildish = False
     numbers_only = is_stat_number_query(message, history=history)
     if (
         not buildish
@@ -903,6 +923,20 @@ async def retrieve_build_knowledge(
             logger.bind(error=str(e)).warning("RotMG Hub specialist unavailable")
         # New-item asks fall through to RealmEye when Hub has nothing.
 
+    forced_route = None
+    dps_flag = False
+    if jev is not None:
+        forced_route = forced_slots(
+            jev,
+            message,
+            class_name=class_name,
+            stat=stat,
+            player_ign=player_ign,
+            dungeon_name=dungeon_name,
+            named=named_slots(message),
+        )
+        dps_flag = dps_continues(jev)
+
     if biome_ask and biome_ask.survey:
         try:
             return await retrieve_biome_context(
@@ -923,6 +957,8 @@ async def retrieve_build_knowledge(
                 ttl_seconds=ttl_seconds,
                 player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
+                forced=forced_route,
+                dps_continue=dps_flag,
                 class_name=class_name,
                 stat=stat,
                 player_ign=player_ign,
@@ -940,6 +976,8 @@ async def retrieve_build_knowledge(
                 ttl_seconds=ttl_seconds,
                 player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
+                forced=forced_route,
+                dps_continue=dps_flag,
                 class_name=class_name,
                 stat=stat,
                 player_ign=player_ign,
@@ -961,6 +999,8 @@ async def retrieve_build_knowledge(
                 ttl_seconds=ttl_seconds,
                 player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
+                forced=forced_route,
+                dps_continue=dps_flag,
                 class_name=None,
                 stat=None,
                 player_ign=player_ign or extract_player_ign(message),
@@ -995,6 +1035,8 @@ async def retrieve_build_knowledge(
                 ttl_seconds=ttl_seconds,
                 player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
+                forced=forced_route,
+                dps_continue=dps_flag,
                 class_name=class_name,
                 stat=stat,
                 player_ign=None,
@@ -1074,6 +1116,8 @@ async def retrieve_build_knowledge(
                 ttl_seconds=ttl_seconds,
                 player_ttl_seconds=player_ttl_seconds,
                 user_history=history,
+                forced=forced_route,
+                dps_continue=dps_flag,
                 class_name=class_name,
                 stat=stat,
                 player_ign=player_ign,
@@ -1108,6 +1152,8 @@ async def retrieve_build_knowledge(
             ttl_seconds=ttl_seconds,
             player_ttl_seconds=player_ttl_seconds,
             user_history=history,
+            forced=forced_route,
+            dps_continue=dps_flag,
             class_name=class_name,
             stat=effective_stat,
             player_ign=player_ign,

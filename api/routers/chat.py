@@ -78,6 +78,24 @@ from ..services.rate_limit import (
 from ..services.budget import cost_micros, disabled_reason, record_llm_failure, record_usage
 from ..services.llm import build_chat_client
 from ..services.model_route import pick_chat_model
+from ..services.game_names import format_known_terms, match_message_terms
+from ..services.jev_route import (
+    STORED_KIND_INTENT,
+    JevDecision,
+    canned_reply,
+    clarify_reply,
+    confident_player_name,
+    disambiguate,
+    forced_slots,
+    is_game_name,
+    jev_skips_rag,
+    keep_stored,
+    reply_kind,
+    upgrade_model,
+    verify_stored,
+)
+from ..services.skin_visualizer import compose_skin_stored_reply
+from ..services.slot_graph import named_slots, route_slots
 from ..services import admin_events
 from ..services import entitlements
 from ..services import product_feedback
@@ -352,6 +370,71 @@ async def _stream_stored(text: str) -> AsyncGenerator[str, None]:
     chunk = json.dumps({"content": text, "done": False, "stored": True})
     yield f"data: {chunk}\n\n"
     yield f"data: {json.dumps({'content': '', 'done': True, 'stored': True})}\n\n"
+
+
+def _log_jev_shadow(
+    mode: str,
+    jev: JevDecision,
+    query_text: str,
+    user_history: list[str],
+    *,
+    forced_player: Optional[str],
+    dropped_stored: bool,
+    term_hits: Optional[list] = None,
+    prior_reply_kind: str = "none",
+) -> None:
+    """One line comparing the regex slots with what Jev would force. Never raises."""
+    try:
+        regex_class, regex_stat, _regex_build = parse_query(query_text, history=user_history)
+        regex_slots, _regex_depth = route_slots(
+            query_text, regex_class, regex_stat, history=user_history
+        )
+        jev_slot_list = None
+        if jev.called:
+            shadow_history = None if jev.block_class_stat_inherit else user_history
+            shadow_class, shadow_stat, _shadow_build = parse_query(
+                query_text, history=shadow_history
+            )
+            chosen = forced_slots(
+                jev,
+                query_text,
+                class_name=shadow_class,
+                stat=shadow_stat,
+                player_ign=forced_player or confident_player_name(jev),
+                named=named_slots(query_text),
+            )
+            jev_slot_list = chosen[0] if chosen else None
+        logger.bind(
+            jev_mode=mode,
+            jev_gate=jev.gate,
+            regex_slots=regex_slots,
+            jev_slots=jev_slot_list,
+            would_canned=canned_reply(jev, query_text) is not None,
+            would_clarify=clarify_reply(
+                jev,
+                query_text,
+                terms=term_hits or [],
+                history=user_history,
+                prior_reply_kind=prior_reply_kind,
+            )
+            is not None,
+            would_player=bool(confident_player_name(jev)),
+            would_skin_store=bool(jev.intent_wins and jev.intent == "skin"),
+            would_drop_stored=dropped_stored,
+        ).info("Jev shadow")
+    except Exception as exc:
+        logger.bind(error=type(exc).__name__).warning("Jev shadow log failed")
+
+
+def _stored_response(text: str) -> StreamingResponse:
+    return StreamingResponse(
+        _stream_stored(text),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 async def _stream_response(
@@ -695,11 +778,20 @@ async def chat_stream(
         and await entitlements.is_active(user.email, settings)
     ) or await _has_legacy_paid_token(authorization, settings)
 
+    query_text = body.message.strip()
+    if not query_text and attachments:
+        query_text = attachments[0].filename
+    prior_reply_kind = "none"
+    for msg in reversed(body.history[-10:]):
+        if msg.role == "assistant":
+            prior_reply_kind = reply_kind(msg.content)
+            break
+
     stored = None
     try:
         stored = await try_stored_reply(
             redis,
-            body.message,
+            query_text,
             history=visual_history,
             ttl_seconds=settings.wiki_ttl_seconds,
             player_ttl_seconds=settings.player_ttl_seconds,
@@ -708,7 +800,50 @@ async def chat_stream(
     except Exception:
         logger.exception("Stored-answer lookup failed; falling through to Claude")
         stored = None
-    if stored:
+
+    term_hits: list = []
+    known_terms = ""
+    if settings.jev_mode != "off":
+        try:
+            term_hits = await match_message_terms(redis, query_text)
+            known_terms = format_known_terms(term_hits)
+        except Exception:
+            logger.exception("Game name list unavailable")
+            term_hits = []
+            known_terms = ""
+
+    jev = JevDecision(called=False, reason="disabled")
+    jev_from_stored = False
+    if stored and stored.used_history and settings.jev_mode != "off":
+        checked = await verify_stored(
+            redis,
+            settings,
+            query_text,
+            user_history,
+            prior_reply_kind,
+            stored_kind=stored.kind,
+            known_terms=known_terms,
+        )
+        kept = keep_stored(checked, stored.kind)
+        label = STORED_KIND_INTENT.get(stored.kind, "")
+        logger.bind(
+            stored_kind=stored.kind,
+            jev_intent=checked.intent,
+            kept_p=checked.probabilities.get(label, 0),
+            stored_fits=checked.stored_fits,
+            would_drop=bool(checked.called and not kept),
+        ).info("Jev stored check")
+        if settings.jev_mode == "shadow" or kept:
+            logger.bind(
+                session_id=body.session_id[:8],
+                kind=stored.kind,
+                stored_key=stored.key,
+            ).info("Chat served from stored answer")
+            return _stored_response(stored.text)
+        jev = checked
+        jev_from_stored = True
+        stored = None
+    elif stored:
         # No Claude call. Daily quota and the paid Claude meter stay put
         # for guests, free accounts, and Pro. Only a real model turn spends.
         logger.bind(
@@ -716,14 +851,70 @@ async def chat_stream(
             kind=stored.kind,
             stored_key=stored.key,
         ).info("Chat served from stored answer")
-        return StreamingResponse(
-            _stream_stored(stored.text),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
+        return _stored_response(stored.text)
+
+    if not jev_from_stored:
+        jev = await disambiguate(
+            redis,
+            settings,
+            query_text,
+            user_history,
+            prior_reply_kind=prior_reply_kind,
+            has_attachment=bool(attachments),
+            known_terms=known_terms,
         )
+
+    acting = settings.jev_mode == "on" and jev.called
+    forced_player = None
+    if acting and jev.gate != "stored":
+        canned = canned_reply(jev, query_text)
+        if canned:
+            return _stored_response(canned)
+    if acting:
+        clarified = clarify_reply(
+            jev,
+            query_text,
+            terms=term_hits,
+            history=user_history,
+            prior_reply_kind=prior_reply_kind,
+        )
+        if clarified:
+            logger.bind(session_id=body.session_id[:8]).info("Jev clarifying reply")
+            return _stored_response(clarified)
+    if acting and jev.gate != "stored":
+        named_player = confident_player_name(jev)
+        if named_player and await is_game_name(redis, named_player):
+            logger.bind(jev_player_name=named_player).info("Jev player name is a game name")
+            named_player = None
+        if named_player:
+            looked = None
+            try:
+                looked = await try_stored_reply(
+                    redis,
+                    f"Look up player {named_player}",
+                    history=[],
+                    ttl_seconds=settings.wiki_ttl_seconds,
+                    player_ttl_seconds=settings.player_ttl_seconds,
+                )
+            except Exception:
+                logger.exception("Jev player lookup failed")
+                looked = None
+            if looked:
+                return _stored_response(looked.text)
+            forced_player = named_player
+        if jev.intent_wins and jev.intent == "skin":
+            try:
+                skin_text = await compose_skin_stored_reply(
+                    redis,
+                    query_text,
+                    ttl_seconds=settings.wiki_ttl_seconds,
+                    history=outfit_history,
+                )
+            except Exception:
+                logger.exception("Jev skin lookup failed")
+                skin_text = ""
+            if skin_text and "[skin:" in skin_text:
+                return _stored_response(skin_text)
 
     await _enforce_quota(quota, redis, settings, authorization, user)
     await consume_claude_reply(redis, user, settings, paid=paid)
@@ -735,12 +926,20 @@ async def chat_stream(
     dungeon_only = False
     player_only = False
     hub_only = False
+    item_scale_only = False
+    this_class = None
+    this_stat = None
+    this_build = False
+    dps_ask = False
+    numbers_only = False
+    enchant_only = False
+    forge_only = False
     try:
-        query_text = body.message.strip()
-        if not query_text and attachments:
-            query_text = attachments[0].filename
-        class_name, stat, buildish = parse_query(query_text, history=user_history)
-        this_class, _this_stat, _this_build = parse_query(query_text)
+        parse_history = (
+            None if acting and jev.block_class_stat_inherit else user_history
+        )
+        class_name, stat, buildish = parse_query(query_text, history=parse_history)
+        this_class, this_stat, this_build = parse_query(query_text)
         hub_preview = ""
         if extract_hub_query(query_text, history=user_history) and not extract_player_ign(
             query_text
@@ -767,6 +966,12 @@ async def chat_stream(
         enchant_only = is_enchant_query(query_text) and not (class_name and stat)
         numbers_only = is_stat_number_query(query_text)
         dps_ask = is_dps_query(query_text)
+        if acting and jev.intent_wins:
+            item_scale_only = jev.intent == "item_scale"
+            forge_only = jev.intent == "forge"
+            enchant_only = jev.intent == "enchant"
+            if jev.intent == "dps":
+                dps_ask = True
         # This-turn IGN lookups stay off the wiki/DPS path even if an
         # earlier Bard/Huntress question would inherit as buildish.
         # A player's class DPS ask still has an IGN, but it is a numbers
@@ -779,6 +984,8 @@ async def chat_stream(
                 and not this_class
             )
         )
+        if forced_player:
+            player_only = True
         # Specialists already inject the right chunk. Extra wiki RAG pads
         # the bill and, if we glue on the previous user turn, mixes topics
         # (player lookup + Bard attack → off-class bows). Class+stat and
@@ -798,6 +1005,7 @@ async def chat_stream(
             or is_stat_class_shiny_divine_query(query_text, class_name, stat)
             or (class_name and stat)
             or (buildish and class_name)
+            or (acting and jev_skips_rag(jev))
         ):
             context = ""
         else:
@@ -836,6 +1044,8 @@ async def chat_stream(
             ttl_seconds=settings.wiki_ttl_seconds,
             player_ttl_seconds=settings.player_ttl_seconds,
             history=history_texts,
+            jev=jev if acting else None,
+            player_ign_override=forced_player,
         )
         set_or_skin = (
             is_skin_visualize_query(query_text, history=outfit_history)
@@ -867,24 +1077,63 @@ async def chat_stream(
     except Exception as e:
         logger.bind(error=str(e)).warning("RealmShark build knowledge unavailable")
 
+    if settings.jev_mode != "off":
+        _log_jev_shadow(
+            settings.jev_mode,
+            jev,
+            query_text,
+            user_history,
+            forced_player=forced_player,
+            dropped_stored=jev_from_stored,
+            term_hits=term_hits,
+            prior_reply_kind=prior_reply_kind,
+        )
+
     system_prompt = build_system_prompt(context, ign=ign)
 
     # Build message history for Claude. Both the turn count and the size of
     # each turn are capped: input tokens are billed, and a long conversation
     # would otherwise grow the cost of every subsequent message.
+    # A self-contained class+stat build ("best attack sorc") must not see
+    # the previous assistant essay. Found live Sep 22: that essay was the
+    # Scepter of Devastation scaling paragraph, and the model copied it
+    # instead of writing weapon, ability, armor, and ring. Scaling
+    # follow-ups keep the user's earlier turns (so the item name is still
+    # there) but drop the assistant text that may have named only one stat.
+    standalone_build = bool(
+        this_class and this_stat and this_build
+        and not item_scale_only
+        and not forge_only
+        and not enchant_only
+        and not numbers_only
+        and not dps_ask
+    )
+    prior_turns = [] if standalone_build else list(body.history[-10:])
+    if item_scale_only:
+        prior_turns = [msg for msg in body.history[-10:] if msg.role == "user"]
     messages = [
         {"role": msg.role, "content": msg.content[:HISTORY_CONTENT_CAP]}
-        for msg in body.history[-10:]
+        for msg in prior_turns
     ] + [{"role": "user", "content": _user_content(body, attachments)}]
 
-    model = pick_chat_model(
+    picked = pick_chat_model(
         body.message,
         settings,
-        history=user_history,
+        history=None if acting and jev.block_class_stat_inherit else user_history,
         context=context,
         dungeon_only=dungeon_only,
         player_only=player_only,
         has_attachment=bool(attachments),
+    )
+    model = (
+        upgrade_model(
+            picked,
+            jev,
+            settings.claude_model,
+            settings.claude_light_model,
+        )
+        if acting
+        else picked
     )
     logger.bind(
         session_id=body.session_id[:8],

@@ -252,4 +252,18 @@ def test_followup_and_small_sentinel_cloth_too_is_skin_query():
     assert query.skin_name == "Vampire Slayer"
     assert query.clothing and "sentinel" in query.clothing.lower()
     assert query.accessory and "small" in query.accessory.lower()
-    assert "too" not in (query.skin_name or "").lower()
+
+
+def test_correction_after_build_is_not_a_skin_turn():
+    assert is_skin_visualize_query(
+        "I meant wizard",
+        history=["best attack sorcerer build"],
+    ) is False
+
+
+def test_correction_after_skin_turn_is_still_a_skin_turn():
+    history = ["What does Vampire Slayer Archer look like with Large Crown Cloth?"]
+    assert is_skin_visualize_query(
+        "Sorry I mean Mini Royal Crossbowman Archer",
+        history=history,
+    ) is True

@@ -20,6 +20,7 @@ from api.services.item_aliases import CATALOG_PREFIX
 from api.services.stored_answers import (
     _ability_reply,
     _build_reply,
+    _write_brief,
     _compose_guide_brief,
     _shiny_divine_flags,
     _shiny_divine_item_name,
@@ -32,6 +33,7 @@ from api.services.stored_answers import (
     is_ability_ask,
     is_retry_query,
     maybe_mint_brief,
+    reply_is_single_item_scaling,
     try_stored_reply,
 )
 from api.services.wiki_scaling import CACHE_PREFIX, HUB_PREFIX, write_cached_item
@@ -615,6 +617,58 @@ async def test_cached_build_does_not_resurface_on_an_unrelated_follow_up(
         redis_client, "Tell me a fun fact about the weather"
     )
     assert slipped is None
+
+
+async def test_attack_sorcerer_build_does_not_replay_a_scepter_scaling_essay(
+    redis_client, anon_settings
+):
+    """Found live Sep 22. After "does scepter of devastation scale with
+    attack?", "best attack sorc?" / "Best attack sorcerer build?" replayed
+    that one-item paragraph. "scepter" is a Sorcerer alias and "attack" is
+    the stat, so the essay landed on the Attack Sorcerer build key. A
+    build ask has to miss that key (and drop it) so the next turn can
+    write weapon, ability, armor, and ring."""
+    essay = (
+        "Yes! The Scepter of Devastation scales directly with Attack. "
+        "Shockblast Damage: 250 base, +25 per ATT over 65. "
+        "[item:Scepter of Devastation]"
+    )
+    assert reply_is_single_item_scaling(essay)
+    await _seed_class_scaling(
+        redis_client, "Sorcerer", "Scepter of Devastation", "Attack"
+    )
+    minted = await maybe_mint_brief(
+        redis_client,
+        "best attack sorc?",
+        essay,
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert minted is None
+
+    key = build_brief_key("Sorcerer", "Attack")
+    await _write_brief(
+        redis_client, key, essay, anon_settings.wiki_ttl_seconds, kind="build"
+    )
+    replay = await _build_reply(redis_client, "Best attack sorcerer build?")
+    assert replay is None
+    assert await redis_client.get(key) is None
+
+    loadout = (
+        "Attack Sorcerer. [item:Lumiaire] [item:Scepter of Devastation] "
+        "[item:Tlatoani's Shroud] [item:Ring of Transcendent Attack]. "
+        "The scepter scales with Attack on the shockblast lines."
+    )
+    assert not reply_is_single_item_scaling(loadout)
+    stored = await maybe_mint_brief(
+        redis_client,
+        "Best attack sorcerer build?",
+        loadout,
+        ttl_seconds=anon_settings.wiki_ttl_seconds,
+    )
+    assert stored == key
+    again = await _build_reply(redis_client, "best attack sorc")
+    assert again is not None
+    assert "Lumiaire" in again.text
 
 
 async def test_guest_at_limit_gets_paywall_not_a_prior_build_brief(

@@ -209,7 +209,12 @@ async def retrieve_item_scaling_brief(
         else:
             parts.append(
                 f"User asked about {asked}: no formula row on this item uses "
-                f"{asked} (only {stat_list or 'none listed'})."
+                f"{asked} (only {stat_list or 'none listed'}). "
+                "On Equip bonuses are not scaling."
             )
+        parts.append(
+            "If an earlier reply listed only one of these stats, ignore that "
+            "reply. The rows above are the full infobox."
+        )
 
     return "\n\n".join(parts)
