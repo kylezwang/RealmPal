@@ -423,7 +423,7 @@ def _log_jev_shadow(
             jev_gate=jev.gate,
             regex_slots=regex_slots,
             jev_slots=jev_slot_list,
-            would_canned=canned_reply(jev, query_text) is not None,
+            would_canned=canned_reply(jev, query_text, terms=term_hits) is not None,
             would_clarify=clarify_reply(
                 jev,
                 query_text,
@@ -890,7 +890,7 @@ async def chat_stream(
     acting = settings.jev_mode == "on" and jev.called
     forced_player = None
     if acting and jev.gate != "stored":
-        canned = canned_reply(jev, query_text)
+        canned = canned_reply(jev, query_text, terms=term_hits)
         if canned:
             return _stored_response(canned)
     if acting:

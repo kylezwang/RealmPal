@@ -394,6 +394,7 @@ When `JEV_MODE=on`, these free replies can replace a Claude turn. They do not fi
 - A name is both a wiki boss, dungeon, or item and a plausible player (`player` probability at least 0.45, or a confident player name): "Do you mean the boss Thessal the Mermaid Goddess, or a player named Thessal?"
 - "who is X" matches exactly one wiki name and the player probability is under 0.45: one sentence, no question. With the term in the request, "who is thessal" and "who is oryx" both did this on all three repeats (player probability 0.05 to 0.09). Without the term, Oryx still resolves to `none` and is not looked up.
 - Two specialist intents both at least 0.40, within 0.12, and neither at 0.80: "Are you asking about damage numbers, or about an item?" No tuned or held-out row hit this on the Oct 18 runs.
+- Off-topic does not win when a word is a community nickname or a wiki name. "What is cbow?" scored off-topic at 0.71 on Oct 18, which cleared the 0.70 canned bar and skipped the nickname. The canned reply now stays quiet for that word, and the clarifying reply asks "Do you mean Coral Bow?" "What is a steroid" still gets the canned reply.
 - A one-word "what is X?" whose token is not on the wiki list. An exact community nickname asks "Do you mean Helm of the Juggernaut?" (`jugg` is that nickname in `COMMUNITY_ALIASES`). "Yes" to that question returns the item and an `[item:]` token, with no Claude call. A token with no nickname and no wiki hit asks which item, boss, or dungeon they mean. "What is Thessal?" still answers, because Thessal is on the list. "What is a white bag?" is more than one word, so it stays on the normal path. This is the guard against a model inventing Jug of the Undead for jugg. A player lookup ("What is Nutz?" with intent `player`) is not asked this way.
 - On every gated call, including a stored-card check, Jev also answers `missing`: `nothing`, `class`, `item`, `dungeon`, or `player`. A low intent score does not ask. `missing` has to clear `MISSING_MIN` (0.70), and the catalog has to agree the piece is unnamed. A class already in the sentence, a dungeon on the wiki list, a player name the lookup regex found, or an item word that is only English or a gear noun does not ask. One uncovered nickname proposes that item ("is jugg good on a new warrior?"). Two known nicknames ("cbow or lbow") do not ask. A sentence Jev marks `nothing` is not asked, even if a nickname is present.
 
@@ -443,6 +444,10 @@ First run, original criteria: 22/29 strict passes. "What data were you trained o
 Second run, criteria revised as noted above: 25/29 strict passes. With `STORE_KEEP_MIN` 0.18 the guild row is a keep, so the routing effect is 26/29. The other three misses do not change slots, as listed above. Model `jev-1.13.0`. `bool(typesafe_api_key)` was True. The key was not printed.
 
 ## History
+
+### Until Oct 18, 2026, before nicknames blocked the off-topic reply
+
+`canned_reply` returned the off-topic text whenever `off_topic` was at least 0.70, including when the sentence contained a community nickname. "What is cbow?" took that path.
 
 ### Until Oct 18, 2026, before the missing-piece question
 
