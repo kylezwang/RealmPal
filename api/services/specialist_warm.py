@@ -614,6 +614,13 @@ async def warm_all_specialists(
             redis, ttl_seconds=ttl_seconds, force=force
         ),
     )
+
+    async def _game_names():
+        from .game_names import rebuild_game_names
+
+        return await rebuild_game_names(redis)
+
+    await _phase("game_names", _game_names)
     logger.bind(
         abilities=len(result.get("abilities") or {}),
         hubs=len(result.get("hubs") or {}),

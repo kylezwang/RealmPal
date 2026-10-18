@@ -32,12 +32,16 @@ async def refresh_wiki_corpus(
     specialists = await warm_all_specialists(
         redis, ttl_seconds=settings.wiki_ttl_seconds, force=True
     )
+    from .game_names import rebuild_game_names
+
+    game_names = await rebuild_game_names(redis)
     await invalidate_briefs(redis)
     now = int(time.time())
     await redis.set(LAST_REFRESH_KEY, str(now))
     return {
         "hubs": counts,
         "specialists": specialists,
+        "game_names": game_names,
         "refreshed_at": now,
         "next_due_at": now + settings.wiki_ttl_seconds,
     }

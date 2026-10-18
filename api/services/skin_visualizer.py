@@ -306,11 +306,16 @@ def _outfit_from_skin_token(text: str) -> Optional[OutfitQuery]:
 
 
 def _history_has_outfit(history: list[str]) -> bool:
+    """True only when an earlier turn was itself a skin preview.
+
+    A class name inside a build question ("best attack sorcerer build")
+    is not an outfit. Found live Oct 7: "I meant wizard" after that
+    question opened the skin visualizer.
+    """
     for prev in history:
-        if _outfit_from_skin_token(prev):
+        if "[skin:" in (prev or ""):
             return True
-        prior = _extract_outfit_from_text(prev)
-        if prior.skin_name or prior.class_name:
+        if is_skin_visualize_query(prev):
             return True
     return False
 

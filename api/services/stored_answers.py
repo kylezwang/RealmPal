@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import redis.asyncio as aioredis
@@ -176,6 +176,19 @@ _MAKE_IT_VISUAL = re.compile(
     re.I,
 )
 _ITEM_TOKEN = re.compile(r"\[item:([^\]]+)\]")
+# A class+stat build brief is a weapon/ability/armor/ring loadout. A
+# one-item scaling paragraph ("the Scepter of Devastation scales directly
+# with Attack... +25 per ATT") is not that brief. Found live Sep 22: after
+# "does scepter of devastation scale with attack?", "best attack sorc?"
+# and "Best attack sorcerer build?" replayed that paragraph because it had
+# been stored under wiki:build for Sorcerer/Attack. Three item tokens is
+# the floor for a real set (the scepter essay has one).
+_SINGLE_ITEM_SCALE = re.compile(
+    r"\bscales?\s+(?:directly\s+)?(?:off|with)\b"
+    r"|\bscaling\s+(?:off|with)\b"
+    r"|\bper\s+(?:ATT|ATK|WIS|DEX|VIT|DEF|SPD|HP|MP)\b",
+    re.I,
+)
 _FILLER_ITEM = frozenset(
     {
         "please",
@@ -312,6 +325,14 @@ class StoredReply:
     text: str
     kind: str
     key: str = ""
+    used_history: bool = False
+
+
+def _noted(reply: Optional[StoredReply], used_history: bool) -> Optional[StoredReply]:
+    """Mark a stored card that matched only because of an earlier turn."""
+    if reply is None or not used_history:
+        return reply
+    return replace(reply, used_history=True)
 
 
 def is_retry_query(message: str) -> bool:
@@ -339,6 +360,18 @@ def is_ability_ask(message: str) -> bool:
 
 def build_brief_key(class_name: str, stat: str) -> str:
     return f"{BUILD_PREFIX}:{class_name.lower()}:{stat.lower()}"
+
+
+def reply_is_single_item_scaling(text: str) -> bool:
+    """True when a reply is one item's formula, not a four-slot loadout."""
+    if not _SINGLE_ITEM_SCALE.search(text or ""):
+        return False
+    names = {
+        name.strip().lower()
+        for name in _ITEM_TOKEN.findall(text or "")
+        if name.strip()
+    }
+    return len(names) < 3
 
 
 def ability_brief_key(class_name: str, stat: Optional[str] = None) -> str:
@@ -1351,6 +1384,12 @@ async def _build_reply(
         text = raw.decode() if isinstance(raw, bytes) else str(raw)
     if not text:
         return None
+    if reply_is_single_item_scaling(text):
+        # Drop it so the next real loadout can be minted. Leaving the key
+        # in place makes maybe_mint_brief refuse to overwrite it.
+        await redis.delete(key)
+        logger.bind(key=key).info("Dropped single-item scaling brief")
+        return None
     return StoredReply(text=text, kind="build", key=key)
 
 
@@ -1553,24 +1592,24 @@ async def try_stored_reply(
                 ttl_seconds=player_ttl_seconds,
             )
             if player:
-                return player
+                return _noted(player, extract_player_ign(message) is None)
     skin = await _skin_reply(
         redis, message, history=history, ttl_seconds=ttl_seconds
     )
     if skin:
-        return skin
+        return _noted(skin, not is_skin_visualize_query(message))
 
     visualized = await _set_visualize_reply(
         redis, message, ttl_seconds, history=history
     )
     if visualized:
-        return visualized
+        return _noted(visualized, not extract_set_item_names(message))
 
     shiny = await _shiny_divine_reply(
         redis, message, ttl_seconds, history=history
     )
     if shiny:
-        return shiny
+        return _noted(shiny, _shiny_divine_item_name(message) is None)
 
     biome = await _biome_reply(redis, message, ttl_seconds)
     if biome:
@@ -1586,7 +1625,7 @@ async def try_stored_reply(
         return source_drop
     guide = await _guide_reply(redis, message, history, ttl_seconds)
     if guide:
-        return guide
+        return _noted(guide, extract_dungeon_query(message) is None)
     progression = await _progression_reply(
         redis, message, ttl_seconds=ttl_seconds
     )
@@ -1648,6 +1687,8 @@ async def maybe_mint_brief(
         await _write_brief(redis, key, text, ttl_seconds, kind="ability")
         return key
     if not (buildish and class_name and stat):
+        return None
+    if reply_is_single_item_scaling(text):
         return None
     if not await _specialist_ready_to_mint(redis, class_name, stat, text):
         return None

@@ -25,6 +25,7 @@ from loguru import logger
 from .community_knowledge import store_ranking_brief
 from .chunks import wrap_slot_chunk
 from .dps_specialist import (
+    class_in_text,
     dps_subject_from_history,
     is_dps_follow_up,
     is_dps_query,
@@ -85,10 +86,31 @@ class SlotState(TypedDict, total=False):
     primary_stat: Optional[str]
     slots: list[str]
     depth: Depth
+    forced: Optional[tuple[list[str], str]]
+    dps_continue: bool
     ttl_seconds: int
     player_ttl_seconds: int
     reports: Annotated[list[str], operator.add]
     combined: str
+
+
+def named_slots(message: str) -> list[SlotName]:
+    """Gear slots named by a noun in this sentence (ring, armor, weapon, ability)."""
+    lower = (message or "").lower()
+    named: list[SlotName] = []
+    if re.search(r"\b(rings?|amulet|bracer|scarf|mask)\b", lower):
+        named.append("ring")
+    if re.search(r"\b(armou?r|robe|leather|heavy)\b", lower):
+        named.append("armor")
+    if re.search(r"\b(weapons?|bows?|daggers?|staves|staff|wands?|swords?|katanas?)\b", lower):
+        named.append("weapon")
+    if re.search(
+        r"\b(abilit(?:y|ies)|quiver|lute|cloak|spell|tome|helm|shield|seal|"
+        r"poison|skull|trap|orb|prism|scepter|star|wakizashi|mace|sheath|sigil)\b",
+        lower,
+    ):
+        named.append("ability")
+    return named
 
 
 def route_slots(
@@ -98,6 +120,7 @@ def route_slots(
     player_ign: Optional[str] = None,
     dungeon_name: Optional[str] = None,
     history: Optional[list[str]] = None,
+    forced: Optional[tuple[list[str], str]] = None,
 ) -> tuple[list[SlotName], Depth]:
     """Full builds use every gear slot. Named-slot follow-ups stay narrow.
     A named shiny/divine set uses the set visualizer instead of the four
@@ -107,7 +130,11 @@ def route_slots(
     is_stat_class_shiny_divine_query / top_build_items), same visual
     output either way. A skin/outfit dye preview uses the skin visualizer.
     A player lookup adds the player specialist. A guide question adds
-    dungeon."""
+    dungeon. forced, when set, is a Jev slot list and replaces this regex."""
+    if forced is not None:
+        slots, depth = forced
+        return list(slots), depth  # type: ignore[return-value]
+
     lower = message.lower()
     # A breakdown or what-if turn continues the previous DPS answer, so it must
     # be settled before the set/skin branches: they match on wording a
@@ -147,19 +174,7 @@ def route_slots(
             extras.append("dungeon")
         return [*forge_slots, *extras], "deep"
 
-    named: list[SlotName] = []
-    if re.search(r"\b(rings?|amulet|bracer|scarf|mask)\b", lower):
-        named.append("ring")
-    if re.search(r"\b(armou?r|robe|leather|heavy)\b", lower):
-        named.append("armor")
-    if re.search(r"\b(weapons?|bows?|daggers?|staves|staff|wands?|swords?|katanas?)\b", lower):
-        named.append("weapon")
-    if re.search(
-        r"\b(abilit(?:y|ies)|quiver|lute|cloak|spell|tome|helm|shield|seal|"
-        r"poison|skull|trap|orb|prism|scepter|star|wakizashi|mace|sheath|sigil)\b",
-        lower,
-    ):
-        named.append("ability")
+    named = named_slots(message)
 
     # A what-if names the swapped-in piece ("a Doom Bow" -> weapon), and that
     # slot's wiki page is what lets the reconstruct be rescaled, so keep it
@@ -236,6 +251,7 @@ def _intent(state: SlotState) -> dict:
         player_ign,
         dungeon_name,
         history=state.get("user_history"),
+        forced=state.get("forced"),
     )
     return {
         "class_name": class_name,
@@ -265,6 +281,8 @@ async def run_slot_agents(
     stat: Optional[str] = None,
     player_ign: Optional[str] = None,
     dungeon_name: Optional[str] = None,
+    forced: Optional[tuple[list[str], str]] = None,
+    dps_continue: bool = False,
 ) -> str:
     """Run the slot graph; fall back to the same specialists without LangGraph."""
     seed: SlotState = {
@@ -280,6 +298,8 @@ async def run_slot_agents(
         "primary_stat": None,
         "ttl_seconds": ttl_seconds,
         "player_ttl_seconds": player_ttl_seconds,
+        "forced": forced,
+        "dps_continue": dps_continue,
         "reports": [],
         "combined": "",
     }
@@ -552,7 +572,9 @@ def _join_reports(state: SlotState) -> str:
                 "Weapon may use the overall family base. Do not use general "
                 "robe or leather cores. After the recommended set, SLOT "
                 "ALTERNATIVES from a matching Umi tab if one exists. Never "
-                "list a T7 robe or armor as an alternative."
+                "list a T7 robe or armor as an alternative. This turn wants "
+                "the full set: name weapon, ability, armor, and ring. Do not "
+                "answer with only one item from an earlier message."
             )
         elif unique:
             header = (
@@ -560,7 +582,9 @@ def _join_reports(state: SlotState) -> str:
                 "or matching Umi tab already has this full set. Copy that "
                 "community loadout. Overall family cores are general "
                 "gameplay only. After that, SLOT ALTERNATIVES from Umi. "
-                "Never list a T7 robe or armor as an alternative."
+                "Never list a T7 robe or armor as an alternative. This turn "
+                "wants the full set: name weapon, ability, armor, and ring. "
+                "Do not answer with only one item from an earlier message."
             )
         else:
             header = (
@@ -573,7 +597,9 @@ def _join_reports(state: SlotState) -> str:
                 "alternative. Use slot chunks only for a short why and "
                 "for overall / Umi / wiki disagreements. Do not recap every "
                 "source or list five rings. Enchant rolls come from the "
-                "enchantment chunk only."
+                "enchantment chunk only. This turn wants the full set: name "
+                "weapon, ability, armor, and ring. Do not answer with only "
+                "one item from an earlier message."
             )
     else:
         header = (
@@ -773,10 +799,13 @@ async def _dps_agent(redis: aioredis.Redis, state: SlotState) -> str:
     # what the conversation's last DPS turn was about. Without this the slot
     # answers with a class-ceiling board and no worn set, which reads to the
     # model as "I have no numbers" right after it gave the user real ones.
-    if is_dps_follow_up(state["message"], history=history):
+    if is_dps_follow_up(state["message"], history=history) or state.get("dps_continue"):
         prior_ign, prior_class = dps_subject_from_history(history)
         ign = ign or prior_ign
-        class_name = class_name or prior_class
+        # "and his priest?" names the new class. Keep that class and only
+        # fill one in when this sentence names none.
+        if not class_in_text(state["message"]):
+            class_name = class_name or prior_class
     try:
         return await retrieve_dps_brief(
             redis,
